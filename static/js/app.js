@@ -952,7 +952,7 @@ function mediaWidget(root, variant) {
       <div class="mw-top">
         <div class="mw-text"><div class="mw-title">--</div><div class="mw-sub"></div></div>
         <button class="btn mw-source-btn" title="Tap to change source"><small>SOURCE</small><span>--</span></button>
-        ${full ? `<button class="btn icon mw-boost-btn" aria-label="RPM volume boost settings" title="RPM volume boost"><svg viewBox="0 0 24 24">${ICON.gear}</svg></button>` : ""}
+        <button class="btn icon mw-boost-btn" aria-label="RPM volume boost settings" title="RPM volume boost"><svg viewBox="0 0 24 24">${ICON.gear}</svg></button>
         <button class="btn icon mw-power" aria-label="Power"><svg viewBox="0 0 24 24">${ICON.power}</svg></button>
       </div>
       <div class="mw-progress"><span class="t t-el">0:00</span><div class="bar"><i></i></div><span class="t t-left">-0:00</span></div>
@@ -972,30 +972,24 @@ function mediaWidget(root, variant) {
   let artKey = null;
   let sourcesKey = "";
 
-  // ---- volume per zone ----
-  // Full size: one row per zone, each with its own mute button and volume bar.
-  // Compact: numbered zone chips choose which zone the one volume bar controls.
+  // ---- volume ----
+  // Full size: a Master row (all zones together) plus one row per zone, each with its own mute
+  // button and volume bar. Compact (Helm): Master only, nothing per-zone -- fine-grained mixing
+  // belongs on the full Media screen (one tap away), this is a quick "louder/quieter overall"
+  // control for while underway, not a place to manage individual zones.
   const zoneOf = (id) => (mediaState && mediaState.zones ? mediaState.zones.find((z) => z.id === id) : null);
   const zoneMax = (id) => { const z = zoneOf(id); return z ? z.limit : mediaState ? mediaState.max_volume : 24; };
-  const zoneLabel = (id) => { const z = zoneOf(id); return z ? z.name : `Zone ${id}`; };
-  const shortName = (name) => (name.length > 7 ? name.slice(0, 6) + "…" : name);
   const masterMax = () => (mediaState ? mediaState.max_volume : 24);
   const zoneArea = q(".mw-zones");
   let zoneKey = null;
   let rows = [];           // full: { id, control, row, name, btn }
-  let master = null;       // full: the "Master" row (all zones together); only when there's more than one zone
-  let chips = [];          // compact: chip buttons
-  let single = null;       // compact: the one volume control
-  let selectedZone = 1;
+  let master = null;       // both variants: the Master control (only omitted in full mode with a single zone)
 
   function buildZones(zones) {
     zoneArea.replaceChildren();
     rows = [];
     master = null;
-    chips = [];
-    single = null;
     const list = zones.length ? zones : [{ id: 1, name: "Zone 1" }];  // no stereo yet: a disabled placeholder
-    zoneArea.classList.toggle("multi", list.length > 1);
     if (full) {
       if (list.length > 1) {
         const row = document.createElement("div");
@@ -1025,38 +1019,15 @@ function mediaWidget(root, variant) {
       });
       return;
     }
-    // No "ALL" chip here (unlike the full-size Master row): with up to 4 zones the compact
-    // widget is already tight for one slider plus numbered chips, and the full Media screen's
-    // Master row (one tap away, via Home -> Media) has plenty of room to do it properly.
-    if (!list.some((z) => z.id === selectedZone)) selectedZone = list[0].id;
-    if (list.length > 1) {
-      const holder = document.createElement("div");
-      holder.className = "zone-chips";
-      list.forEach((z) => {
-        const chip = document.createElement("button");
-        chip.className = "zone-chip";
-        chip.dataset.zone = z.id;
-        chip.textContent = z.id;
-        chip.addEventListener("click", () => {
-          selectedZone = z.id;
-          const cur = zoneOf(z.id);
-          if (cur) single.control.set(cur.volume, true);
-          renderZones(mediaState);
-        });
-        holder.appendChild(chip);
-        chips.push(chip);
-      });
-      zoneArea.appendChild(holder);
-    }
     const holder = document.createElement("div");
-    holder.innerHTML = levelMarkup("Volume down", "Volume up");
+    holder.innerHTML = levelMarkup("All zones down", "All zones up");
     const ctl = holder.firstChild;
     zoneArea.appendChild(ctl);
-    single = {
+    master = {
       control: levelControl(ctl, {
-        getMax: () => zoneMax(selectedZone),
-        text: (v) => (list.length > 1 ? `${shortName(zoneLabel(selectedZone))} ${v}` : String(v)),
-        onChange: (v) => mediaCommand("volume", v, selectedZone),
+        getMax: masterMax,
+        text: (v) => String(v),
+        onChange: (v) => mediaCommand("master_volume", v),
       }),
     };
   }
@@ -1066,13 +1037,14 @@ function mediaWidget(root, variant) {
     const key = JSON.stringify(zones.map((z) => [z.id, z.name]));
     if (key !== zoneKey) { zoneKey = key; buildZones(zones); }
     const live = media.connected && media.power;
-    root.querySelectorAll(".zone-btn, .zone-chip").forEach((b) => (b.disabled = !live));
+    root.querySelectorAll(".zone-btn").forEach((b) => (b.disabled = !live));
+    if (master) {
+      const vols = zones.map((z) => z.volume);
+      master.control.setEnabled(live && vols.length > 0);
+      if (vols.length) master.control.set(Math.max(...vols));
+      master.control.refresh();
+    }
     if (full) {
-      if (master) {
-        const vols = zones.map((z) => z.volume);
-        master.control.setEnabled(live && vols.length > 0);
-        if (vols.length) master.control.set(Math.max(...vols));
-      }
       rows.forEach((r) => {
         const z = zones.find((x) => x.id === r.id);
         r.control.setEnabled(live && !!z);
@@ -1081,22 +1053,11 @@ function mediaWidget(root, variant) {
         r.row.classList.toggle("muted", !!(z && z.muted));
         if (z) r.control.set(z.volume);
       });
-    } else if (single) {
-      const z = zones.find((x) => x.id === selectedZone);
-      single.control.setEnabled(live && !!z);
-      chips.forEach((c) => {
-        const cz = zones.find((x) => x.id === Number(c.dataset.zone));
-        c.classList.toggle("selected", Number(c.dataset.zone) === selectedZone);
-        c.classList.toggle("muted", !!(cz && cz.muted));
-        c.title = cz ? cz.name : "";
-      });
-      if (z) single.control.set(z.volume);
-      single.control.refresh();
     }
   }
 
   q(".mw-power").addEventListener("click", () => mediaCommand("power", mediaState.power ? 0 : 1));
-  if (full) q(".mw-boost-btn").addEventListener("click", openVolumeBoostMenu);
+  q(".mw-boost-btn").addEventListener("click", openVolumeBoostMenu);
   q(".mw-prev").addEventListener("click", () => mediaCommand("prev"));
   q(".mw-next").addEventListener("click", () => mediaCommand("next"));
   q(".mw-play").addEventListener("click", () => mediaCommand(mediaState.playing ? "pause" : "play"));

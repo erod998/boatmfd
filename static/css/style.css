@@ -428,11 +428,6 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 .mw.full .mw-zones .zone-row:not(.master-row) .step-btn { width: 3.6rem; font-size: 1.8rem; }
 .mw.full .mw-zones .zone-row:not(.master-row) .level-text { font-size: 1.3rem; }
 .mw:not(.full) .level-text { font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 0.3rem; }
-.zone-chips { flex: none; display: flex; gap: 0.25rem; }
-.zone-chip { flex: none; width: 2.6rem; height: 3.2rem; padding: 0; background: var(--btn); border: 0; border-radius: 0.3rem; color: #fff; font-size: 1.15rem; font-weight: 600; }
-.zone-chip.selected { background: var(--blue); }
-.zone-chip.muted { text-decoration: line-through; opacity: 0.6; }
-.zone-chip:disabled { opacity: 0.4; }
 .zone-row { display: flex; align-items: center; gap: 0.5rem; }
 .zone-btn { flex: none; width: 11rem; height: 4.4rem; display: flex; align-items: center; gap: 0.6rem; padding: 0 0.9rem; background: var(--btn); border: 0; border-radius: 0.3rem; color: #fff; font-size: 1.15rem; text-align: left; }
 .zone-btn svg { flex: none; width: 1.9rem; height: 1.9rem; fill: currentColor; }
@@ -446,8 +441,3 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 .master-row { padding-bottom: 0.6rem; margin-bottom: 0.4rem; border-bottom: 1px solid #3a3d42; }
 .master-label { background: var(--blue); justify-content: center; font-weight: 700; }
 .mw.full .mw-transport .mute-btn { margin-left: 1rem; }
-
-/* with two or more zones the compact volume row has to share its width with the zone chips */
-.mw:not(.full) .mw-zones.multi .step-btn { width: 2.8rem; font-size: 1.6rem; }
-.mw:not(.full) .mw-zones.multi .level-text { font-size: 0.95rem; padding: 0 0.2rem; }
-.mw:not(.full) .zone-chip { width: 2.3rem; }
