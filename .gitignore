@@ -1,4 +1,9 @@
 venv/
 __pycache__/
 *.pyc
-data/
+
+# Runtime state (tracks, waypoints, settings) stays local to each boat...
+data/*
+# ...but the charts are the one thing the Pi cannot re-create for itself: it lives offline and
+# fetch_charts.py needs the internet. 2 MB, and a plain `git pull` now delivers them at the dock.
+!data/charts/

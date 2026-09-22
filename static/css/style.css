@@ -138,9 +138,7 @@ button.overlay-box:active { background: rgba(59, 123, 232, 0.28); }
 .map-slot { position: absolute; inset: 0; }
 #map { position: absolute; inset: 0; background: #dfe7ea; }
 #map.night { background: #05080b; }
-#map.night .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.8) contrast(0.95); }
 #map.dusk { background: #0e0c0a; }
-#map.dusk .leaflet-tile-pane { filter: brightness(0.75) saturate(0.8) sepia(0.25) hue-rotate(-10deg); }
 #screen-chart.active { padding: 0; display: block; }
 .map-boxes { position: absolute; top: 0.5rem; left: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; z-index: 500; }
 .helm-map .map-boxes { flex-direction: row; }
@@ -358,6 +356,12 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 
 #linkBanner { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 #soundHint { position: absolute; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
+
+/* Shown when there is no chart to draw, so an empty map reads as a diagnosable state and not a crash. */
+#chartNotice { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000;
+  max-width: 80%; text-align: center; line-height: 1.5; background: rgba(10, 11, 13, 0.94);
+  border: 1px solid #4a4d52; border-radius: 0.4rem; padding: 0.8rem 1rem; font-size: 0.95rem; color: #d7dade; }
+#chartNotice[hidden] { display: none; }
 
 /* Tap a charted feature (buoy, beacon, depth area) and it reports itself here. */
 /* Sits inside the Leaflet container (see showChartFeature) so it follows the chart between screens;

@@ -109,7 +109,12 @@ function updateBanner() {
     const text = showing[0].message || showing[0].text;
     $("alarmText").textContent = text + (showing.length > 1 ? `   +${showing.length - 1} more` : "");
   }
-  alarmAudio.set(showing.length > 0 && alarmSoundOn);
+  const wantSound = showing.length > 0 && alarmSoundOn;
+  alarmAudio.set(wantSound);
+  // Only worth saying when the lock is actually costing something right now: an alarm is trying
+  // to sound and the browser is still holding audio shut. Clears itself the moment either half
+  // stops being true.
+  soundHint.hidden = !(wantSound && !alarmAudio.unlocked());
 }
 
 $("alarmSilence").addEventListener("click", async () => {
@@ -167,20 +172,22 @@ const alarmAudio = (() => {
   };
 })();
 
-// iOS/Safari (and any browser not launched with the kiosk --autoplay-policy flag below) blocks
-// all Web Audio output until the page has been touched at least once. A Pi running its own kiosk
-// Chromium gets that flag and never hits this; a phone or tablet loading the dashboard over WiFi
-// doesn't, and would otherwise sit through a real alarm in total silence with no clue why. This
-// hint shows once per page load if sound is still locked a couple seconds in, and disappears the
-// instant any tap/click/key does the unlocking (same gesture list as unlock() itself, above).
+// iOS/Safari (and any browser not launched with the kiosk --autoplay-policy flag) blocks all Web
+// Audio output until the page has been touched at least once. A phone or tablet loading the
+// dashboard over the boat's WiFi would otherwise sit through a real alarm in total silence with
+// no clue why, so this hint says what to do about it.
+//
+// Its visibility is derived from live state in updateBanner() every frame, never latched by a
+// timer: an earlier version showed it on a 1.5s timeout and dismissed it with `once: true`
+// listeners armed at load, so any tap in that first second and a half burned the listeners before
+// the timer had even fired and the hint stuck on screen permanently with nothing left to clear
+// it. That same version also fired on a perfectly healthy kiosk, because unlocked() is false
+// until some gesture creates the AudioContext -- true of any page nobody has touched yet.
 const soundHint = document.createElement("div");
 soundHint.id = "soundHint";
 soundHint.textContent = "Tap anywhere to enable alarm sound";
 soundHint.hidden = true;
 $("stage").appendChild(soundHint);
-setTimeout(() => { if (!alarmAudio.unlocked()) soundHint.hidden = false; }, 1500);
-["pointerdown", "keydown", "touchstart"].forEach((ev) =>
-  addEventListener(ev, () => (soundHint.hidden = true), { passive: true, once: true }));
 
 // ---------- Hold a gauge to open a menu (the alarm menu, or the gauge-display menu below) ----------
 // attachHold() itself lives in app.js now (loaded before this file): the overlay boxes there need

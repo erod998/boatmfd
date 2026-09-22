@@ -1,0 +1,182 @@
+{
+  "area": "old-hickory",
+  "bbox": [
+    -86.62,
+    36.24,
+    -86.44,
+    36.36
+  ],
+  "fetched_at": 1790106712.0225942,
+  "source": "https://ienccloud.us/arcgis/rest/services/IENC/USACE_IENC_Master_Service/MapServer",
+  "layers": {
+    "land": {
+      "kind": "area",
+      "counts": {
+        "detail": 45,
+        "overview": 45
+      }
+    },
+    "depth_area": {
+      "kind": "depth",
+      "counts": {
+        "detail": 20,
+        "overview": 20
+      }
+    },
+    "rivers": {
+      "kind": "area",
+      "counts": {
+        "detail": 13,
+        "overview": 13
+      }
+    },
+    "built_up": {
+      "kind": "area",
+      "counts": {
+        "detail": 1,
+        "overview": 1
+      }
+    },
+    "harbour": {
+      "kind": "area",
+      "counts": {
+        "detail": 6,
+        "overview": 6
+      }
+    },
+    "berths": {
+      "kind": "area",
+      "counts": {
+        "detail": 1,
+        "overview": 1
+      }
+    },
+    "bridge": {
+      "kind": "area",
+      "counts": {
+        "detail": 8,
+        "overview": 8
+      }
+    },
+    "dam": {
+      "kind": "area",
+      "counts": {
+        "detail": 1,
+        "overview": 1
+      }
+    },
+    "shoreline_construction": {
+      "kind": "area",
+      "counts": {
+        "detail": 63,
+        "overview": 63
+      }
+    },
+    "pylons_area": {
+      "kind": "area",
+      "counts": {
+        "detail": 2,
+        "overview": 2
+      }
+    },
+    "caution": {
+      "kind": "caution",
+      "counts": {
+        "detail": 17,
+        "overview": 17
+      }
+    },
+    "coastline": {
+      "kind": "coastline",
+      "counts": {
+        "detail": 69,
+        "overview": 69
+      }
+    },
+    "depth_contour": {
+      "kind": "contour",
+      "counts": {
+        "detail": 4,
+        "overview": 4
+      }
+    },
+    "recommended_track": {
+      "kind": "track",
+      "counts": {
+        "detail": 1,
+        "overview": 1
+      }
+    },
+    "overhead_cable": {
+      "kind": "hazard_line",
+      "counts": {
+        "detail": 10,
+        "overview": 10
+      }
+    },
+    "submarine_pipeline": {
+      "kind": "hazard_line",
+      "counts": {
+        "detail": 2,
+        "overview": 2
+      }
+    },
+    "lateral_beacon": {
+      "kind": "beacon",
+      "counts": {
+        "detail": 10,
+        "overview": 10
+      }
+    },
+    "daymark": {
+      "kind": "beacon",
+      "counts": {
+        "detail": 12,
+        "overview": 12
+      }
+    },
+    "light": {
+      "kind": "light",
+      "counts": {
+        "detail": 15,
+        "overview": 15
+      }
+    },
+    "distance_mark": {
+      "kind": "distance_mark",
+      "counts": {
+        "detail": 19,
+        "overview": 19
+      }
+    },
+    "pile": {
+      "kind": "danger_point",
+      "counts": {
+        "detail": 5,
+        "overview": 5
+      }
+    },
+    "pylons": {
+      "kind": "danger_point",
+      "counts": {
+        "detail": 42,
+        "overview": 42
+      }
+    },
+    "landmark": {
+      "kind": "landmark",
+      "counts": {
+        "detail": 3,
+        "overview": 3
+      }
+    },
+    "shoreline_construction_point": {
+      "kind": "landmark",
+      "counts": {
+        "detail": 42,
+        "overview": 42
+      }
+    }
+  },
+  "failed": []
+}

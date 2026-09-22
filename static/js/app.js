@@ -247,6 +247,7 @@ async function loadChart(area, detail) {
     chartArea = area;
     chartDetail = detail;
     renderChartBundle(bundle);
+    setChartNotice(null);
   } catch (e) {
     // No charts on disk yet, or the file is unreadable: the boat, track and everything else still
     // work, there's just no chart under them. `python -m app.fetch_charts <area>` fixes it.
@@ -258,9 +259,14 @@ async function loadChart(area, detail) {
 async function initCharts() {
   try {
     const { areas } = await (await fetch("/api/chart/areas")).json();
-    if (!areas || !areas.length) return;
+    if (!areas || !areas.length) {
+      setChartNotice("No chart data on this device -- run:  python -m app.fetch_charts old-hickory");
+      return;
+    }
     await loadChart(areas[0].name, DETAIL_FROM_ZOOM(map.getZoom()));
-  } catch (e) { /* offline or nothing fetched yet */ }
+  } catch (e) {
+    setChartNotice("Chart data could not be read -- check the boat-dashboard service log");
+  }
 }
 
 // Swap between the generalised overview and the full-detail chart as the zoom crosses the threshold.
@@ -350,6 +356,23 @@ function chartFeatureSummary(kind, props) {
   if (props.Source_Dataset) rows.push(["Chart", props.Source_Dataset.replace(/\.000$/, "")]);
   return { title: name || CHART_KIND_LABELS[kind] || "Charted feature",
            subtitle: name ? CHART_KIND_LABELS[kind] || "" : "", rows };
+}
+
+// A chart-less install used to render as a flat empty panel -- the #map background colour and
+// nothing else -- which looks identical to a crash and tells you nothing. `data/` was gitignored
+// as a whole, so the Pi pulled the vector-chart code with none of the vector charts. Says what is
+// wrong and how to fix it instead. Lives inside mapEl for the same reason #chartFeature does.
+function setChartNotice(msg) {
+  let el = document.getElementById("chartNotice");
+  if (!msg) { if (el) el.hidden = true; return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "chartNotice";
+    mapEl.appendChild(el);
+  }
+  if (el.parentElement !== mapEl) mapEl.appendChild(el);
+  el.textContent = msg;
+  el.hidden = false;
 }
 
 function showChartFeature(layerName, kind, props) {
