@@ -716,7 +716,11 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Then `sudo systemctl enable --now boat-dashboard`. Show it full-screen by
+Then `sudo systemctl enable --now boat-dashboard`. To pick up new code later,
+from an SSH session on the Pi itself: `./update.sh` (pulls, then restarts the
+service -- one-time `chmod +x update.sh` first, or just `bash update.sh`).
+
+Show it full-screen by
 starting Chromium in kiosk mode from your desktop's autostart (the file depends
 on your Pi OS version; on Bookworm it is `~/.config/labwc/autostart`):
 
