@@ -241,8 +241,14 @@ venv/bin/python -m app.fetch_charts --name my-lake --bbox -86.62,36.24,-86.44,36
 
 Charts land in `data/charts/<area>/` as GeoJSON, two levels of detail (the
 zoomed-out one is generalised server-side, which turns 2.1 MB of raw shoreline
-into 207 KB without any visible difference at that zoom). `data/` is
-gitignored — charts are a per-Pi artifact, not project source.
+into 207 KB without any visible difference at that zoom).
+
+**`data/charts/` is committed**, so Old Hickory arrives with a plain `git pull`
+and you only need the command above for a new area or a refresh. Everything else
+under `data/` — tracks, waypoints, trips, settings — stays gitignored, since
+that is per-boat state rather than project source. Charts are the exception
+because the Pi cannot re-create them for itself: it is offline, and
+`fetch_charts.py` needs the internet.
 
 USACE reissues IENCs bi-monthly, so re-running this occasionally at the dock is
 worth doing. It simply overwrites what's there.
@@ -865,6 +871,31 @@ No build step on the frontend — it's a static page served by FastAPI,
 talking to the backend over REST (waypoints, lighting, media, trips) and one
 WebSocket (telemetry stream: GPS fix, computed nav, engine, boat info, media
 state, LED frame).
+
+### The offline guard
+
+The boat has no internet, so anything the UI loads from a CDN works in testing —
+where the machine is online, or the browser still has it cached — and is simply
+gone on the water. Leaflet itself shipped that way for a while: every test
+passed, the chart drew fine, and a reload out of range would have produced no map
+at all, because without `L` the first `L.map()` call throws and takes the whole
+chart screen with it.
+
+`app/offline_check.py` scans `static/` for references that need the internet —
+HTML `src`/`href`, CSS `url()` and `@import`, and URLs in JS string literals
+(comments are skipped, so citing a source in prose is free, and `xmlns` SVG
+namespaces are not mistaken for fetches). It runs two places:
+
+- **`tests/test_offline_check.py`** fails the suite. This is the real gate; a
+  CDN reference never reaches the Pi.
+- **Startup**, which prints `[offline] …` with file and line into the journal
+  and carries on. That covers what the test cannot see — a file hand-edited over
+  SSH, or restored from an old backup. It deliberately does not refuse to boot:
+  a helm display that will not start because of a lint finding is a worse bug
+  than the one being guarded against.
+
+Browser libraries therefore live in `static/vendor/`, committed. See
+`static/vendor/README.md` for versions and how to upgrade them.
 
 ## What's genuinely POC-grade (next steps for a real boat)
 

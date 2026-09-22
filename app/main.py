@@ -33,6 +33,7 @@ from .media import make_media_source
 from .n2k import make_n2k_node
 from .nav import relative_bearing, waypoint_nav
 from .nav_alarms import NavAlarmManager
+from .offline_check import report as report_offline_assets
 from .quickdraw import QuickdrawRecorder
 from .routes import RouteTracker
 from .sensors import make_sensor_sources
@@ -91,6 +92,10 @@ FULL_PERIOD_S = 1.0   # everything else
 
 @contextlib.asynccontextmanager
 async def lifespan(_app):
+    # Names anything in static/ that needs the internet, which the boat does not have. Prints
+    # and carries on: the helm display refusing to boot over a lint finding would be worse than
+    # whatever it found. tests/test_offline_check.py is the gate that actually stops these.
+    report_offline_assets(STATIC_DIR)
     lighting.start()  # applies light changes at once and keeps the rainbow moving; see lighting.py
     _read_engine_and_boat()  # so the very first full frame already has engine and boat readings
     tasks = [asyncio.create_task(_fast_loop()), asyncio.create_task(_full_loop())]

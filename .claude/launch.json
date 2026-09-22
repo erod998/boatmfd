@@ -4,8 +4,8 @@
     {
       "name": "boat-dashboard",
       "runtimeExecutable": "venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--port", "8000"],
-      "port": 8000
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--port", "8090"],
+      "port": 8090
     }
   ]
 }
