@@ -240,19 +240,28 @@ service on a cache miss, saving the result for next time (`app/chart_tiles.py`).
 Ordinary use fills the cache one tile at a time as the boat moves, but only
 for water it's actually been near.
 
-To top up a whole area ahead of time — run this over WiFi at the dock, not
-expecting it to work on the water:
+To top up a whole area ahead of time — run this **on the Pi**, over WiFi at
+the dock, not expecting it to work on the water:
 
 ```bash
-venv/Scripts/python -m app.seed_tiles old-hickory --dry-run   # tile count/size first
-venv/Scripts/python -m app.seed_tiles old-hickory              # then for real
-venv/Scripts/python -m app.seed_tiles --center 36.30,-86.55 --radius-nm 10 --zoom 11-15
+venv/bin/python -m app.seed_tiles old-hickory --dry-run   # tile count/size first
+venv/bin/python -m app.seed_tiles old-hickory              # then for real
+venv/bin/python -m app.seed_tiles --center 36.30,-86.55 --radius-nm 10 --zoom 11-15
 ```
 
 It also does a quick sample fetch before committing to the rest, and warns if
 the center of the requested area comes back as an empty (out-of-coverage)
 tile rather than real chart content — this is how the Center Hill Lake gap
 below was actually found, not guessed at.
+
+**This hits a shared government map server, not a CDN built for bulk
+scraping**, and there's no published rate limit to calibrate against (no
+`robots.txt`, no terms page found either) — so it's deliberately slow (one
+request every few seconds) and capped at a few hundred tiles per run
+(`--max-tiles`, default in `app/seed_tiles.py`) rather than a fast,
+unattended, whole-lake sweep. Covering a full lake takes several separate
+runs, spread out, not one long pass — that's intentional, not a bug to
+speed up.
 
 **Coverage is real but not universal.** IENC charts the commercially-navigable
 federal waterway system (Cumberland, Tennessee, Ohio, Mississippi and

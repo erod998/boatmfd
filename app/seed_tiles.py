@@ -3,19 +3,28 @@ already on disk before heading out -- run this over WiFi at the dock, not expect
 the water. Ordinary use (just driving the boat around with the dashboard open) also fills the
 cache one tile at a time as you go, but only for water you've actually already been near; this is
 for topping up a whole lake (or checking whether one even has any chart data, like Center Hill
-turned out not to) in one pass ahead of time.
+turned out not to) ahead of time.
 
     python -m app.seed_tiles old-hickory                       # a named spot, sensible defaults
     python -m app.seed_tiles old-hickory --dry-run              # see the tile count/size first
     python -m app.seed_tiles --center 36.037,-85.797 --radius-nm 12 --zoom 11-17
 
+This hits the Corps of Engineers' own public map server, a shared resource this app has no
+special allowance to lean on -- there's no published rate limit or robots.txt to calibrate
+against (checked, neither exists), so REQUEST_DELAY_S below is deliberately slow (one request
+every few seconds, not several a second) and MAX_TILES_PER_RUN below refuses to fetch more than a
+few hundred tiles in a single run without explicitly raising --max-tiles. That means covering a
+whole lake takes several separate, deliberate runs (spread over time, ideally not back to back
+either), not one long unattended pass -- slower, on purpose. If that's still not conservative
+enough, turn REQUEST_DELAY_S up further or ask for the whole bulk-fetch capability to be removed
+in favor of only the organic per-tile caching that happens while actually driving the boat.
+
 Zoom 11-15 (the default) is a "regional overview down to individual coves" range that stays a
-sane size for a 12-15 nm radius (tens of MB, minutes, not hours). Each level down roughly
-quadruples the tile count for the same area, and it compounds fast: for Old Hickory Lake's own
-15 nm-radius default, zoom 15 alone is ~3,400 tiles, 16 is ~13,000, and 17 is over 50,000 (close
-to a gigabyte) by itself. Going past 15 is realistic for a small sub-area (a marina, a favorite
-cove) with an explicit --center/--radius-nm, not for a whole lake -- always --dry-run first
-before going there.
+sane tile count for a 12-15 nm radius. Each level down roughly quadruples the tile count for the
+same area, and it compounds fast: for Old Hickory Lake's own 15 nm-radius default, zoom 15 alone
+is ~3,400 tiles, 16 is ~13,000, and 17 is over 50,000 by itself. Going past 15 is realistic for a
+small sub-area (a marina, a favorite cove) with an explicit --center/--radius-nm, not a whole
+lake -- always --dry-run first before going there.
 """
 import argparse
 import math
@@ -64,6 +73,13 @@ def tile_for_point(lat, lon, zoom):
 # of location. Checked empirically against several known-good and known-empty spots, not assumed.
 BLANK_TILE_BYTES = 5000
 
+# Deliberately slow: a shared government map server, not a CDN built to take bulk scraping, and
+# there's no published rate limit to calibrate against instead of this guess (see the module
+# docstring). Raise --max-tiles for a bigger single run; there's no flag to shorten the delay --
+# that one's meant to be annoying to change.
+REQUEST_DELAY_S = 3.0
+MAX_TILES_PER_RUN = 300
+
 
 def parse_zoom_range(text):
     lo, hi = text.split("-")
@@ -77,6 +93,9 @@ def main(argv=None):
     parser.add_argument("--radius-nm", type=float, help="overrides the preset's radius")
     parser.add_argument("--zoom", default="11-15", help="e.g. 11-15 (default)")
     parser.add_argument("--cache-dir", default="data/tiles")
+    parser.add_argument("--max-tiles", type=int, default=MAX_TILES_PER_RUN,
+                         help=f"refuse to fetch more than this in one run (default {MAX_TILES_PER_RUN}); "
+                              "raise it deliberately, there's no flag to speed up the delay between requests")
     parser.add_argument("--dry-run", action="store_true", help="just report the tile count, fetch nothing")
     args = parser.parse_args(argv)
 
@@ -119,11 +138,19 @@ def main(argv=None):
 
     already, _ = cache.stats()
     to_fetch = [t for t in tiles if not cache.is_cached(*t)]
+    est_minutes = len(to_fetch) * REQUEST_DELAY_S / 60
     print(f"{len(tiles) - len(to_fetch)} already cached, {len(to_fetch)} to fetch"
-          f" (~{len(to_fetch) * 20 / 1024:.1f} MB at a rough 20 KB/tile average, and roughly"
-          f" {len(to_fetch) * 0.3 / 60:.1f} minutes at ~0.3s/tile)")
+          f" (~{len(to_fetch) * 20 / 1024:.1f} MB at a rough 20 KB/tile average, and at least"
+          f" {est_minutes:.0f} minutes at one request every {REQUEST_DELAY_S:g}s, deliberately slow --"
+          " see the module docstring)")
     if args.dry_run or not to_fetch:
         return 0
+
+    if len(to_fetch) > args.max_tiles:
+        print(f"That's more than --max-tiles ({args.max_tiles}) for one run -- fetching the first "
+              f"{args.max_tiles} now. Run this again (later, not immediately back to back) to keep going; "
+              "it picks up where it left off since already-cached tiles are skipped.")
+        to_fetch = to_fetch[:args.max_tiles]
 
     start = time.monotonic()
     ok = fail = 0
@@ -136,7 +163,8 @@ def main(argv=None):
         if i % 25 == 0 or i == len(to_fetch):
             elapsed = time.monotonic() - start
             print(f"  {i}/{len(to_fetch)} ({ok} ok, {fail} failed) -- {elapsed:.0f}s elapsed", file=sys.stderr)
-        time.sleep(0.05)  # don't hammer a shared government server
+        if i < len(to_fetch):
+            time.sleep(REQUEST_DELAY_S)
 
     count, total_bytes = cache.stats()
     print(f"Done: {ok} fetched, {fail} failed (probably offline, or no data at that spot -- Center"
