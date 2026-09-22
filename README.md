@@ -682,12 +682,16 @@ so the Helm screen and a phone always agree):
   survive a restart. Changing a level starts that alarm afresh against the new
   level.
 
-**Sound** comes out of whatever audio the Pi is using (HDMI audio, a USB speaker,
-or the 3.5 mm jack on a Pi 4; the Pi 5 has no jack). Browsers only allow sound after the page
-has been touched once, so the kiosk command below adds
-`--autoplay-policy=no-user-gesture-required`; the **Test sound** button in the
-alarm menu plays the pattern so you can check the volume. The banner and
-flashing work without any sound.
+**Sound** is generated in the browser (Web Audio, two alternating tones), so it comes out of
+whatever device is actually showing the dashboard: the Pi's own audio (HDMI, a USB speaker, or
+the 3.5 mm jack on a Pi 4 -- the Pi 5 has no jack) if it's running in kiosk mode on the boat, or
+that device's own speaker if it's a phone or tablet loading the dashboard over the boat's WiFi.
+Browsers only allow sound after the page has been touched once; the kiosk command below adds
+`--autoplay-policy=no-user-gesture-required` so the Pi's own kiosk browser never hits this, but a
+phone or tablet still needs one tap anywhere first -- a "Tap anywhere to enable alarm sound" hint
+appears a couple seconds after load if it hasn't happened yet, and disappears on the first tap.
+The **Test sound** button in the alarm menu plays the pattern so you can check the volume. The
+banner and flashing work without any sound, on every device, regardless of the above.
 
 ### Run it on the Pi at boot
 
@@ -817,8 +821,7 @@ state, LED frame).
   captures and the signalk-fusion-stereo plugin, not from a real head unit on
   the bench. If Zone 1's dial moves Zone 2 on the boat, that is the first
   thing to look at.
-- Alarm sound needs audio hardware behind the Pi, and has not been heard on a
-  real Pi. Depth alarms wait for a depth source.
+- Alarm sound is generated per-device in the browser (see "Sound" above); depth
+  alarms wait for a depth source.
 - No auth on the API/WebSocket — fine on an isolated boat WiFi network,
   not fine if exposed further.
-- Single waypoint only, no multi-leg routes/anchor-watch alarm yet.

@@ -357,6 +357,7 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 .wp-form input::placeholder { color: var(--dim); }
 
 #linkBanner { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
+#soundHint { position: absolute; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 
 /* compact widgets (Helm dock) */
 .lw:not(.full) .swatch { max-width: 2.5rem; }

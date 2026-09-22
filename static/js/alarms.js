@@ -131,23 +131,25 @@ const alarmAudio = (() => {
     } catch (e) { /* no audio available: the banner still works */ }
   };
   ["pointerdown", "keydown", "touchstart"].forEach((ev) => addEventListener(ev, unlock, { passive: true }));
-  const beep = (delay = 0) => {
+  const beep = (delay = 0, freq = 880) => {
     if (!ctx || ctx.state !== "running") return;
     const t = ctx.currentTime + delay;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "square";
-    osc.frequency.value = 880;
+    osc.frequency.value = freq;
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    gain.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
     osc.connect(gain).connect(ctx.destination);
     osc.start(t);
-    osc.stop(t + 0.18);
+    osc.stop(t + 0.2);
   };
-  const pattern = () => { beep(0); beep(0.26); };
+  // Two alternating tones read as more "alarm" and less "text message" than one pitch repeated.
+  const pattern = () => { beep(0, 880); beep(0.26, 660); };
   return {
     unlock,
+    unlocked: () => !!ctx && ctx.state === "running",
     test() { unlock(); pattern(); },
     playing: () => !!timer,
     set(on) {
@@ -156,6 +158,21 @@ const alarmAudio = (() => {
     },
   };
 })();
+
+// iOS/Safari (and any browser not launched with the kiosk --autoplay-policy flag below) blocks
+// all Web Audio output until the page has been touched at least once. A Pi running its own kiosk
+// Chromium gets that flag and never hits this; a phone or tablet loading the dashboard over WiFi
+// doesn't, and would otherwise sit through a real alarm in total silence with no clue why. This
+// hint shows once per page load if sound is still locked a couple seconds in, and disappears the
+// instant any tap/click/key does the unlocking (same gesture list as unlock() itself, above).
+const soundHint = document.createElement("div");
+soundHint.id = "soundHint";
+soundHint.textContent = "Tap anywhere to enable alarm sound";
+soundHint.hidden = true;
+$("stage").appendChild(soundHint);
+setTimeout(() => { if (!alarmAudio.unlocked()) soundHint.hidden = false; }, 1500);
+["pointerdown", "keydown", "touchstart"].forEach((ev) =>
+  addEventListener(ev, () => (soundHint.hidden = true), { passive: true, once: true }));
 
 // ---------- Hold a gauge to open a menu (the alarm menu, or the gauge-display menu below) ----------
 // attachHold() itself lives in app.js now (loaded before this file): the overlay boxes there need
