@@ -359,6 +359,21 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 #linkBanner { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 #soundHint { position: absolute; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 
+/* Tap a charted feature (buoy, beacon, depth area) and it reports itself here. */
+/* Sits inside the Leaflet container (see showChartFeature) so it follows the chart between screens;
+   z-index clears Leaflet's own panes, which top out around 700. */
+#chartFeature { position: absolute; left: 0.6rem; bottom: 0.6rem; z-index: 1000; min-width: 15rem; max-width: 22rem;
+  background: rgba(10, 11, 13, 0.94); border: 1px solid #4a4d52; border-radius: 0.4rem; padding: 0.6rem 0.7rem; }
+#chartFeature[hidden] { display: none; }
+.cf-head { display: flex; align-items: flex-start; gap: 0.6rem; margin-bottom: 0.35rem; }
+.cf-title { font-size: 1.1rem; font-weight: 600; line-height: 1.2; }
+.cf-sub { font-size: 0.85rem; color: var(--dim); margin-top: 0.1rem; }
+.cf-close { margin-left: auto; flex: none; width: 2.2rem; height: 2.2rem; background: var(--btn); border: 0;
+  border-radius: 0.3rem; color: #fff; font-size: 1.4rem; line-height: 1; }
+.cf-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.18rem 0; font-size: 0.95rem; }
+.cf-row span { color: var(--dim); }
+.cf-row b { font-weight: 600; text-align: right; }
+
 /* compact widgets (Helm dock) */
 .lw:not(.full) .swatch { max-width: 2.5rem; }
 .lw:not(.full) .lw-head .btn { min-height: 2.5rem; }

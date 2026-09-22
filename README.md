@@ -48,16 +48,17 @@ the boat's current heading points to the top of the screen, the boat icon then a
 pointing straight up), and the position lock that keeps the boat horizontally centered and
 about a third of the way up from the bottom of the map in Heading Up — a single cheap
 `panBy` every frame, not a `setView`, so it holds through the whole rotation instead of only
-correcting once a second. Chart tiles are kept several rings past the edge of what's on
-screen and keep loading while the chart is moving, so rotating or panning rarely shows a
-black square, and the +/- zoom buttons use a shorter transition so zooming feels snappier.
+correcting once a second. The chart itself is vector data held in memory (see **Charts**), so
+panning and rotating never wait on anything to load and never show a blank square — the old
+raster-tile black-square problem went away with the tiles.
 
 **Map layers & colors** (**Options → Map layers & colors**, or the app/gps.py and
-app/state.py simulators' more realistic noise): chart colors are Day/Dusk/Night (Dusk is new:
-a lighter tint than the full inverted Night palette); **Chart** layer toggles (Shallow water &
-warning areas, Aids to navigation, Depths & soundings, Hazards) hide the matching USACE IENC
-layer ids on the tile request (`layers=hide:<ids>`, found from the service's own
-`/MapServer?f=json`) rather than anything drawn locally; **My Vessel** has a Heading Line
+app/state.py simulators' more realistic noise): chart colors are Day/Dusk/Night — three real
+palettes applied to the chart vectors themselves, not a filter smeared over an image, so the
+boat, track and AIS targets keep their own colours while only the chart changes;
+**Chart** layer toggles (Land & shoreline, Depths & contours, Aids to navigation, Hazards &
+caution areas, Landmarks) add and remove the matching vector layers on the spot, with no
+refetching — the data is already local; **My Vessel** has a Heading Line
 (projects ahead of the boat by a fixed distance or by how far it'll travel in a set time at
 its current speed — Distance/Time, matching a real GPSMAP's own Heading Line options) and a
 Compass Rose (a fixed-size ring around the boat marked N/E/S/W — left un-rotated in CSS on
@@ -214,76 +215,90 @@ venv/Scripts/python -m unittest discover -s tests -t . -v
 
 ## Charts
 
-**USACE Inland ENC** (`ienccloud.us`, the Corps of Engineers' inland waterway
-charts, free, no key) — covers lakes and rivers such as Old Hickory Lake and
-the Cumberland, Tennessee, Ohio and Mississippi. It's the only chart service
-loaded: NOAA's own ENC service only covers US coastal waters and the Great
-Lakes, so it has nothing to show on an inland lake — verified empirically
-(an export request over Old Hickory Lake comes back a ~1 KB blank tile) — and
-was dropped rather than left in as a second, unnecessary set of slow
-dynamic-render tile requests on every pan, zoom and rotation. A boat that
-moves to coastal water would need it added back.
+The chart is **vector data drawn by this app**, not pictures downloaded from a
+map server — the same thing a real chartplotter does, and the reason it works
+with no internet, stays sharp at any zoom, restyles for night instantly, and
+can tell you what a buoy is when you tap it.
 
-Outside its coverage, the chart is blank. Night mode is a CSS filter on the
-chart tiles (the service has no night palette). To point the dashboard at a
-different lake, change the map's start position in `static/js/app.js` and
-`ROUTE` in `app/gps.py`.
+Source is **USACE Inland ENC** (`ienccloud.us`, the Corps of Engineers' inland
+waterway charts — free, no key, no account). Their map service exposes every
+S-57 feature class as a queryable layer, so the fetch pulls real GeoJSON:
+depth areas with their actual depth ranges in metres, the shoreline, the
+navigable channel, and every buoy, beacon and light with full attribution.
 
-### Chart tiles are cached locally, not fetched live
+For Old Hickory Lake that is **822 features, 2.1 MB, in about 60 requests,
+taking 36 seconds** — once, ever, until you choose to refresh it.
 
-The boat has WiFi at the dock, not on the water, so the browser doesn't talk
-to `ienccloud.us` directly — it asks this app's own backend
-(`/api/tiles/<z>/<x>/<y>.png`), which serves a tile from
-`data/tiles/<z>/<x>/<y>.png` if it's already there (fast, works with no
-internet at all), and only reaches out to the Corps of Engineers' export
-service on a cache miss, saving the result for next time (`app/chart_tiles.py`).
-Ordinary use fills the cache one tile at a time as the boat moves, but only
-for water it's actually been near.
+### Getting the charts
 
-To top up a whole area ahead of time — run this **on the Pi**, over WiFi at
-the dock, not expecting it to work on the water:
+Run this **on the Pi**, over WiFi at the dock:
 
 ```bash
-venv/bin/python -m app.seed_tiles old-hickory --dry-run   # tile count/size first
-venv/bin/python -m app.seed_tiles old-hickory              # then for real
-venv/bin/python -m app.seed_tiles --center 36.30,-86.55 --radius-nm 10 --zoom 11-15
+venv/bin/python -m app.fetch_charts old-hickory --dry-run   # coverage check first
+venv/bin/python -m app.fetch_charts old-hickory              # then for real
+venv/bin/python -m app.fetch_charts --name my-lake --bbox -86.62,36.24,-86.44,36.36
 ```
 
-It also does a quick sample fetch before committing to the rest, and warns if
-the center of the requested area comes back as an empty (out-of-coverage)
-tile rather than real chart content — this is how the Center Hill Lake gap
-below was actually found, not guessed at.
+Charts land in `data/charts/<area>/` as GeoJSON, two levels of detail (the
+zoomed-out one is generalised server-side, which turns 2.1 MB of raw shoreline
+into 207 KB without any visible difference at that zoom). `data/` is
+gitignored — charts are a per-Pi artifact, not project source.
 
-**This hits a shared government map server, not a CDN built for bulk
-scraping**, and there's no published rate limit to calibrate against (no
-`robots.txt`, no terms page found either) — so it's deliberately slow (one
-request every few seconds) and capped at a few hundred tiles per run
-(`--max-tiles`, default in `app/seed_tiles.py`) rather than a fast,
-unattended, whole-lake sweep. Covering a full lake takes several separate
-runs, spread out, not one long pass — that's intentional, not a bug to
-speed up.
+USACE reissues IENCs bi-monthly, so re-running this occasionally at the dock is
+worth doing. It simply overwrites what's there.
 
-**Coverage is real but not universal.** IENC charts the commercially-navigable
-federal waterway system (Cumberland, Tennessee, Ohio, Mississippi and
-similar) — Old Hickory Lake and the Cumberland River sit right on that
-system and are well covered. Smaller reservoirs off that system may have
-nothing: Center Hill Lake, checked directly against the service, has zero
-IENC features at all, at the dam or up the Caney Fork arm. That's a real data
-gap, not a bug — see "Paid chart data" below for the option that would
-actually close it.
+### What you get on screen
 
-**Paid chart data (Navionics, C-MAP, and similar) is a real option but an
-open question, not something this app does today.** Apps like Savvy Navvy
-license commercial chart data under their own agreements; that data isn't
-generally redistributable into a third-party project like this one without
-its own license, and the exact terms/cost for that aren't something to guess
-at — worth checking directly with a provider before assuming it's viable, and
-worth scoping as its own piece of work if it is (a different data format and
-likely a different tile/serving pipeline than the IENC cache above, not a
-drop-in swap).
+Depth-shaded water in bands (a 0–9 ft polygon shades as the shallow water it
+is), land and shoreline, the recommended track down the channel, caution areas,
+and the aids to navigation on top. Tap any of them:
 
-The tile cache is not committed to git (`data/` is already gitignored) — it's
-a per-Pi, generated-on-demand artifact, not project source.
+| Tap | It says |
+| --- | --- |
+| A beacon | `Spencer Creek Light (236.8)` — Starboard-Hand Lateral Mark, Red |
+| A light | `Fl(2)R 5s` — built from the S-57 characteristic, group and period |
+| A depth area | `0.0 ft to 9.0 ft` |
+| A distance mark | `Mile 225`, Cumberland (CR) |
+
+Day / Dusk / Night are real palettes applied to the vectors, not a CSS filter
+smeared over an image — so the boat, track and AIS targets keep their own
+colours while only the chart changes.
+
+### Coverage: what this data does and does not include
+
+IENC charts the **commercially-navigable federal waterway system** — the
+Cumberland (including Old Hickory Lake), Tennessee, Ohio, Mississippi and
+similar. Those are covered properly, to real chart standard.
+
+Lakes off that system may have **nothing at all**. Center Hill Lake was checked
+three ways — the IENC vector service, the IENC S-57 cell list, and USACE's
+separate eHydro hydrographic survey archive — and has zero USACE data in any of
+them. That is a genuine gap in the free federal data, not a bug here.
+`--dry-run` reports the feature count before downloading, so an uncovered area
+is obvious in seconds.
+
+Closing that gap means commercial data (Navionics, C-MAP and the like, which is
+what apps such as Savvy Navvy license). That data is not redistributable into a
+project like this one without its own licence, and the terms are not something
+to assume — it would need checking with the provider directly, and would be a
+separate data pipeline rather than a drop-in. The other route, once a
+transducer is fitted, is recording your own depths with Quickdraw, which builds
+a personal depth map of exactly the water you actually run.
+
+### Why it is not raster tiles any more
+
+The first version cached rendered tile images. Replacing it with vectors was
+not a tuning change, it was a correction:
+
+| | Raster tiles | Vectors (now) |
+| --- | --- | --- |
+| Requests for one lake | ~4,500, rate-limited | **~60, once** |
+| Time | ~3.75 hours | **36 seconds** |
+| On disk | 88 MB | **2.1 MB** |
+| Zoom | fixed 11–15, blurry between | **any zoom, always sharp** |
+| Night mode | CSS filter over the image | **a real palette** |
+| Tap a feature | nothing | **full chart attributes** |
+| Load with no internet | only pre-cached area | **everything fetched** |
 
 ## Going to real hardware
 
@@ -813,12 +828,12 @@ app/
   switching.py  Simulated digital-switching circuits, saved to data/switching.json
   ais.py       Simulated nearby AIS vessels + CPA/TCPA math -- no real AIS receiver
   quickdraw.py Simplified Quickdraw-style depth-sample recording, saved to data/quickdraw.json
-  chart_tiles.py  Local disk cache for chart tiles, fetching from USACE on a miss; see "Charts" above
-  seed_tiles.py   CLI to pre-download a whole area's tiles over WiFi ahead of time (python -m app.seed_tiles)
+  chart_data.py   Local vector chart store: fetches S-57 features from USACE as GeoJSON; see "Charts" above
+  fetch_charts.py CLI to download an area's charts over WiFi ahead of time (python -m app.fetch_charts)
 static/
   index.html, css/style.css                 The screens, menu bar, Home overlay and side panels
   js/dials.js                               Garmin-style segmented dials and bars (SVG), and the spring animation that smooths every gauge
-  js/app.js                                 Chart (Leaflet + a locally-cached USACE IENC), gauges, trip/media/lights widgets, telemetry rendering
+  js/app.js                                 Chart (Leaflet, drawing local USACE IENC vectors), gauges, trip/media/lights widgets, telemetry rendering
   js/alarms.js                              Hold-a-gauge alarm menus, gauge bands, banner and alarm sound
   js/chrome.js                              Menu bar, Home overlay, screen switching, Alerts / Info / Options panels, WebSocket link
   calibrate.html                         Phone-friendly sensor calibration page (/calibrate)
@@ -841,7 +856,7 @@ tests/
   test_ais.py                            Simulated AIS targets: random-walk motion, range/bearing, CPA/TCPA math
   test_quickdraw.py                      Quickdraw depth recording: enable/disable, distance-based dedup, clear
   test_nav_alarms.py                     Navigation alarms: arrival, off course, anchor drag, GPS accuracy
-  test_chart_tiles.py                    Tile bbox math, export URL building, disk cache hit/miss/hidden-layers behavior
+  test_chart_data.py                     Chart query building, paging, atomic writes, per-layer/detail storage, failure handling
 esp32/
   boat_rgb_node/boat_rgb_node.ino        Optional WiFi RGB lighting node
 ```

@@ -69,101 +69,302 @@ const dials = {};
 const map = L.map("map", { zoomControl: false, attributionControl: false, minZoom: 5, maxZoom: 18, rotate: true, rotateControl: false, shiftKeyRotate: false }).setView([36.306, -86.563], 14);
 L.control.scale({ position: "bottomleft", metric: false, imperial: true, maxWidth: 110 }).addTo(map);
 
-// USACE Inland ENC: Cumberland, Ohio, Tennessee, Mississippi... rivers and lakes. (NOAA's own ENC
-// service only has coastal/Great Lakes coverage -- verified empirically it returns a blank tile
-// for this boat's inland lake -- so it isn't loaded at all: that would be a second full set of
-// slow dynamic-render tile requests for every pan/zoom/rotate with nothing to show for it.)
+// ---------- The chart itself: USACE Inland ENC vectors, drawn here, from local disk ----------
+// This used to be a raster tile layer pulling rendered pictures from the Corps of Engineers' map
+// server -- thousands of throttled requests and ~88 MB to cover one lake at five fixed zooms, and
+// nothing at all without internet. It now draws the actual S-57 feature data (fetched once by
+// `python -m app.fetch_charts`, see app/chart_data.py): 822 features and 2.1 MB for the whole lake,
+// which is why it's fast, works entirely offline, stays crisp at any zoom, restyles for night by
+// changing colours rather than re-rendering, and can tell you what a buoy is when you tap it.
 //
-// Tiles come from this app's own backend (/api/tiles/z/x/y.png), not from ienccloud.us directly --
-// the backend serves them from a local disk cache when it has them (fast, and works with no
-// internet at all, which is the normal case underway) and only reaches out to the Corps of
-// Engineers' export service itself on a cache miss (see app/chart_tiles.py). The bbox/Web Mercator
-// math that used to live here moved server-side with it, since the server is what actually needs
-// it now; the frontend just asks for a tile by z/x/y like any ordinary tile layer would.
-const CachedTileLayer = L.TileLayer.extend({
-  initialize(options) {
-    this._hiddenLayers = [];
-    L.TileLayer.prototype.initialize.call(this, "", options);
+// Canvas renderer rather than SVG: a few hundred chart features plus the boat, track, AIS targets
+// and Quickdraw dots all redraw on every pan and rotation frame, and canvas handles that without
+// the per-element DOM cost SVG pays.
+const chartRenderer = L.canvas({ padding: 0.3 });
+const chartPane = map.createPane("chart");
+chartPane.style.zIndex = 200;   // under every marker pane, over the map background
+
+// Depth shading bands, in metres, shallowest first. IENC gives each depth area a range
+// (Depth_Area_Value_1..2); the band is chosen from the deepest edge, so a 0-2.74 m polygon shades
+// as the shallow water it is. The whole point of a chart at a glance is "can I go there".
+const DEPTH_BANDS = [2.0, 5.0, 10.0];
+
+const CHART_PALETTES = {
+  day: {
+    land: "#e9dcc3", landEdge: "#b9ab8d", builtUp: "#ded2bc", water: ["#8ec9e8", "#b3dcf0", "#d3ebf8", "#e8f4fb"],
+    coast: "#4a4636", contour: "#6f98ad", caution: "#e8d24a", danger: "#d1382f", track: "#b02a8f",
+    hazard: "#e07b20", text: "#1c1c1c", textHalo: "#ffffff", chartBg: "#c9e3f2",
   },
-  // The export service draws every one of its own layers (soundings, buoys, shallow-water shading, ...)
-  // unless told otherwise; passing "hide=<ids>" turns specific ones off. See CHART_LAYER_GROUPS. Hidden-
-  // layer tiles bypass the disk cache server-side (a per-browser preference isn't worth caching per
-  // combination), so this is the one case that still needs a live fetch each time.
-  setHiddenLayers(ids) {
-    this._hiddenLayers = ids;
-    this.redraw();
+  dusk: {
+    land: "#8d8369", landEdge: "#6e664f", builtUp: "#847b63", water: ["#3d6c86", "#4e7f99", "#5e91ab", "#6ea0b9"],
+    coast: "#3a372c", contour: "#7fa5b8", caution: "#c2ae3e", danger: "#c2352c", track: "#a3287f",
+    hazard: "#c46c1c", text: "#f0f0f0", textHalo: "#1a1a1a", chartBg: "#4a7891",
   },
-  getTileUrl(coords) {
-    const url = `/api/tiles/${coords.z}/${coords.x}/${coords.y}.png`;
-    return this._hiddenLayers.length ? `${url}?hide=${this._hiddenLayers.join(",")}` : url;
+  night: {
+    land: "#241f16", landEdge: "#4a412e", builtUp: "#2c261b", water: ["#0d2a3a", "#0a2231", "#071a26", "#05131c"],
+    coast: "#6e6449", contour: "#3f6b82", caution: "#8a7a24", danger: "#a12b22", track: "#7d1f63",
+    hazard: "#8a5416", text: "#d6dade", textHalo: "#000000", chartBg: "#06131c",
   },
-});
-// Zooming (especially out) can briefly show black squares where a newly-needed tile from the ArcGIS
-// export service (a slow dynamic render per request, not a cached tile) hasn't arrived yet. Warming
-// the browser's own HTTP cache for the current view at the next zoom level in each direction, once a
-// zoom settles, means the *next* zoom (in, or back out again) usually finds its tiles already there.
-// Delayed slightly so the zoom the person actually just landed on gets first claim on the connection
-// pool; skips URLs already warmed once, since the export URL for a given tile is always the same.
-const _prefetchedTileUrls = new Set();
-function prefetchAdjacentZooms() {
-  const zoom = map.getZoom();
-  const bounds = map.getBounds();
-  setTimeout(() => {
-    [zoom - 1, zoom + 1].forEach((z) => {
-      if (z < iencLayer.options.minZoom || z > iencLayer.options.maxZoom) return;
-      const nw = map.project(bounds.getNorthWest(), z).divideBy(256).floor();
-      const se = map.project(bounds.getSouthEast(), z).divideBy(256).floor();
-      for (let x = nw.x; x <= se.x; x++) {
-        for (let y = nw.y; y <= se.y; y++) {
-          const url = iencLayer.getTileUrl({ x, y, z });
-          if (_prefetchedTileUrls.has(url)) continue;
-          _prefetchedTileUrls.add(url);
-          new Image().src = url;
-        }
-      }
-    });
-  }, 500);
+};
+
+const palette = () => CHART_PALETTES[chartColorMode] || CHART_PALETTES.day;
+
+function depthBandIndex(props) {
+  const deepest = parseFloat(props.Depth_Area_Value_2);
+  if (!isFinite(deepest)) return DEPTH_BANDS.length;
+  for (let i = 0; i < DEPTH_BANDS.length; i++) if (deepest <= DEPTH_BANDS[i]) return i;
+  return DEPTH_BANDS.length;
 }
 
-// keepBuffer keeps extra rings of tiles loaded outside the visible area (Leaflet's own default is 2), and
-// updateWhenIdle:false (Leaflet otherwise defaults this to true on touchscreens) keeps tiles loading continuously
-// while the chart is panning or rotating rather than waiting for it to stop -- both matter more now that
-// heading-up mode pans the chart every animation frame, and together they're what keeps rotated corners from
-// showing black squares. A tile already in the local cache (see app/chart_tiles.py) is fast regardless, but a
-// cache miss still means a slow live render from the Corps of Engineers' export service behind it, so keepBuffer
-// stays modest -- a wider buffer trades slower first-time exploration of new water for fewer edge cases revisiting
-// water already cached.
-const TILE_OPTS = { minZoom: 5, maxZoom: 18, keepBuffer: 3, updateWhenIdle: false };
-const iencLayer = new CachedTileLayer(TILE_OPTS).addTo(map);
+// Colour for a buoy/beacon from its own charted colour, so a red starboard-hand mark draws red.
+function aidColor(props, p) {
+  const c = String(props.Color || "").toLowerCase();
+  if (c.includes("red")) return "#d1382f";
+  if (c.includes("green")) return "#2f9e44";
+  if (c.includes("yellow")) return "#e8c33a";
+  if (c.includes("white")) return "#f2f2f2";
+  if (c.includes("black")) return "#1a1a1a";
+  return p.hazard;
+}
 
-// ---------- Map Settings: which chart layers to draw (Options -> Map layers & colors) ----------
-// Layer ids are USACE's own (checked against the service's /MapServer?f=json metadata). A per-browser
-// preference (localStorage), like night mode and the gauge smoothing menus, not shared server-side:
-// it's just how this screen likes to look.
+function chartStyle(kind, feature) {
+  const p = palette();
+  const props = feature.properties || {};
+  switch (kind) {
+    case "depth":
+      return { renderer: chartRenderer, pane: "chart", stroke: false,
+               fillColor: p.water[depthBandIndex(props)], fillOpacity: 1 };
+    case "area":
+      return { renderer: chartRenderer, pane: "chart", color: p.landEdge, weight: 1,
+               fillColor: p.land, fillOpacity: 1 };
+    case "caution":
+      return { renderer: chartRenderer, pane: "chart", color: p.caution, weight: 2, dashArray: "6 4",
+               fillColor: p.caution, fillOpacity: 0.16 };
+    case "danger":
+      return { renderer: chartRenderer, pane: "chart", color: p.danger, weight: 2,
+               fillColor: p.danger, fillOpacity: 0.25 };
+    case "coastline":
+      return { renderer: chartRenderer, pane: "chart", color: p.coast, weight: 1.6, fill: false };
+    case "contour":
+      return { renderer: chartRenderer, pane: "chart", color: p.contour, weight: 1, dashArray: "5 4", fill: false };
+    case "track":
+      return { renderer: chartRenderer, pane: "chart", color: p.track, weight: 2, dashArray: "10 6", fill: false, opacity: 0.85 };
+    case "hazard_line":
+      return { renderer: chartRenderer, pane: "chart", color: p.hazard, weight: 2, dashArray: "3 4", fill: false };
+    default:
+      return { renderer: chartRenderer, pane: "chart", color: p.coast, weight: 1, fill: false };
+  }
+}
+
+// Point features become small chart symbols. Kept as canvas circleMarkers rather than DOM icons so
+// hundreds of them cost nothing to redraw while the chart rotates.
+function chartPoint(kind, feature, latlng) {
+  const p = palette();
+  const props = feature.properties || {};
+  const base = { renderer: chartRenderer, pane: "chart" };
+  if (kind === "buoy" || kind === "beacon") {
+    return L.circleMarker(latlng, { ...base, radius: kind === "buoy" ? 5 : 4.5,
+      color: p.textHalo, weight: 1.2, fillColor: aidColor(props, p), fillOpacity: 1 });
+  }
+  if (kind === "light") {
+    return L.circleMarker(latlng, { ...base, radius: 5.5, color: aidColor(props, p), weight: 2,
+      fillColor: aidColor(props, p), fillOpacity: 0.45 });
+  }
+  if (kind === "danger_point") {
+    return L.circleMarker(latlng, { ...base, radius: 4, color: p.danger, weight: 2,
+      fillColor: p.danger, fillOpacity: 0.5 });
+  }
+  if (kind === "distance_mark") {
+    return L.circleMarker(latlng, { ...base, radius: 2.5, color: p.text, weight: 1,
+      fillColor: p.textHalo, fillOpacity: 0.9 });
+  }
+  return L.circleMarker(latlng, { ...base, radius: 2.5, color: p.coast, weight: 1,
+    fillColor: p.coast, fillOpacity: 0.6 });
+}
+
+// Which chart layers each Options toggle controls, by the layer names app/chart_data.py writes.
 const CHART_LAYER_GROUPS = {
-  warn: { label: "Shallow water & warning areas", hint: "Shallow-water shading, caution, restricted and anchorage areas", ienc: [7, 83, 85, 100] },
-  aids: { label: "Aids to navigation", hint: "Buoys, beacons, lights and daymarks", ienc: [2, 6, 9, 14, 15, 16] },
-  depths: { label: "Depths & soundings", hint: "Depth contours and sounding numbers", ienc: [36, 96] },
-  hazards: { label: "Hazards", hint: "Wrecks, obstructions and underwater rocks", ienc: [19, 28, 31, 42, 53, 54, 81] },
+  base: { label: "Land & shoreline", hint: "Land fill, the shoreline, bridges, dams and built-up areas",
+          layers: ["land", "rivers", "built_up", "harbour", "berths", "bridge", "dam", "shoreline_construction", "pylons_area", "coastline"] },
+  depths: { label: "Depths & contours", hint: "Depth-shaded water and depth contour lines",
+            layers: ["depth_area", "depth_contour"] },
+  aids: { label: "Aids to navigation", hint: "Buoys, beacons, lights, daymarks and river mile markers",
+          layers: ["lateral_buoy", "isolated_danger_buoy", "special_purpose_buoy", "lateral_beacon", "daymark", "light", "distance_mark", "recommended_track"] },
+  hazards: { label: "Hazards & caution areas", hint: "Wrecks, rocks, obstructions, cables, pipelines and caution areas",
+             layers: ["caution", "rock_area", "wreck_area", "obstruction_area", "obstruction", "underwater_rock", "wreck", "pile", "pylons", "overhead_cable", "submarine_pipeline", "obstruction_line"] },
+  landmarks: { label: "Landmarks", hint: "Charted landmarks and shoreline structures",
+               layers: ["landmark", "shoreline_construction_point"] },
 };
+
 let chartLayerState = {};
 try { chartLayerState = JSON.parse(localStorage.getItem("chartLayers")) || {}; } catch (e) { /* storage unavailable */ }
 function layerGroupOn(key) {
   return chartLayerState[key] !== false;   // everything is shown by default
 }
-function applyChartLayers() {
-  const hideIenc = [];
-  Object.entries(CHART_LAYER_GROUPS).forEach(([key, g]) => {
-    if (!layerGroupOn(key)) hideIenc.push(...g.ienc);
+const groupForLayer = (name) =>
+  Object.keys(CHART_LAYER_GROUPS).find((k) => CHART_LAYER_GROUPS[k].layers.includes(name));
+
+// ---------- Loading and drawing the chart ----------
+// Draw order matters on a chart: land and depth shading underneath, then lines, then the aids to
+// navigation on top where they can always be seen and tapped.
+const DRAW_ORDER = ["area", "depth", "caution", "danger", "coastline", "contour", "hazard_line",
+                     "track", "landmark", "distance_mark", "danger_point", "beacon", "buoy", "light"];
+
+const chartGroup = L.layerGroup().addTo(map);
+const chartLayers = {};        // layer name -> { kind, leafletLayer }
+let chartArea = null;          // the area currently loaded
+let chartDetail = null;        // "detail" or "overview" -- whichever the zoom calls for
+let chartLoading = false;
+const DETAIL_FROM_ZOOM = (z) => (z >= 13 ? "detail" : "overview");
+
+function renderChartBundle(bundle) {
+  chartGroup.clearLayers();
+  Object.keys(chartLayers).forEach((k) => delete chartLayers[k]);
+  const entries = Object.entries(bundle.layers || {});
+  entries.sort((a, b) => DRAW_ORDER.indexOf(a[1].kind) - DRAW_ORDER.indexOf(b[1].kind));
+  entries.forEach(([name, { kind, geojson }]) => {
+    const layer = L.geoJSON(geojson, {
+      renderer: chartRenderer,
+      pane: "chart",
+      style: (f) => chartStyle(kind, f),
+      pointToLayer: (f, latlng) => chartPoint(kind, f, latlng),
+      onEachFeature: (f, lyr) => lyr.on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        showChartFeature(name, kind, f.properties || {});
+      }),
+    });
+    chartLayers[name] = { kind, layer };
+    if (layerGroupOn(groupForLayer(name))) layer.addTo(chartGroup);
   });
-  iencLayer.setHiddenLayers(hideIenc);
 }
+
+async function loadChart(area, detail) {
+  if (chartLoading) return;
+  chartLoading = true;
+  try {
+    const bundle = await (await fetch(`/api/chart/${area}/${detail}`)).json();
+    if (!bundle || !bundle.layers) return;
+    chartArea = area;
+    chartDetail = detail;
+    renderChartBundle(bundle);
+  } catch (e) {
+    // No charts on disk yet, or the file is unreadable: the boat, track and everything else still
+    // work, there's just no chart under them. `python -m app.fetch_charts <area>` fixes it.
+  } finally {
+    chartLoading = false;
+  }
+}
+
+async function initCharts() {
+  try {
+    const { areas } = await (await fetch("/api/chart/areas")).json();
+    if (!areas || !areas.length) return;
+    await loadChart(areas[0].name, DETAIL_FROM_ZOOM(map.getZoom()));
+  } catch (e) { /* offline or nothing fetched yet */ }
+}
+
+// Swap between the generalised overview and the full-detail chart as the zoom crosses the threshold.
+function refreshChartDetail() {
+  if (!chartArea) return;
+  const wanted = DETAIL_FROM_ZOOM(map.getZoom());
+  if (wanted !== chartDetail) loadChart(chartArea, wanted);
+}
+
+// Night mode is now a real restyle rather than a CSS filter over a picture: same geometry, new colours.
+function restyleChart() {
+  Object.entries(chartLayers).forEach(([name, { kind, layer }]) => {
+    layer.eachLayer((lyr) => {
+      if (lyr.feature && lyr.feature.geometry && lyr.feature.geometry.type.includes("Point")) {
+        const p = palette();
+        const props = lyr.feature.properties || {};
+        if (kind === "buoy" || kind === "beacon") lyr.setStyle({ fillColor: aidColor(props, p), color: p.textHalo });
+        else if (kind === "light") lyr.setStyle({ color: aidColor(props, p), fillColor: aidColor(props, p) });
+        else if (kind === "danger_point") lyr.setStyle({ color: p.danger, fillColor: p.danger });
+        else lyr.setStyle({ color: p.coast, fillColor: p.coast });
+      } else if (lyr.setStyle && lyr.feature) {
+        lyr.setStyle(chartStyle(kind, lyr.feature));
+      }
+    });
+  });
+  mapEl.style.background = palette().chartBg;
+}
+
 function setChartLayerGroup(key, on) {
   chartLayerState[key] = on;
   try { localStorage.setItem("chartLayers", JSON.stringify(chartLayerState)); } catch (e) { /* storage unavailable */ }
-  applyChartLayers();
+  Object.entries(chartLayers).forEach(([name, { layer }]) => {
+    if (groupForLayer(name) !== key) return;
+    if (on) layer.addTo(chartGroup);
+    else chartGroup.removeLayer(layer);
+  });
 }
-applyChartLayers();
+
+// ---------- Identify: tap a charted feature and find out what it is ----------
+// The thing a raster chart fundamentally cannot do. IENC carries the full S-57 attribution, so a
+// beacon can report itself properly: name, what kind of mark it is, and its light characteristic
+// in the notation actually printed on charts ("Fl(2)R 5s").
+const CHART_KIND_LABELS = {
+  buoy: "Buoy", beacon: "Beacon", light: "Light", distance_mark: "River mile marker",
+  danger_point: "Hazard", landmark: "Landmark", depth: "Depth area", contour: "Depth contour",
+  coastline: "Shoreline", track: "Recommended track", caution: "Caution area",
+  danger: "Hazard area", area: "Land", hazard_line: "Hazard",
+};
+
+// "Flashing" + "(2)" + "Red" + "5 Seconds" is how a chart writes Fl(2)R 5s.
+function lightSignature(props) {
+  const abbrev = { Flashing: "Fl", "Quick-Flashing": "Q", Occulting: "Oc", Isophase: "Iso",
+                    "Fixed": "F", "Long-Flashing": "LFl", "Very Quick-Flashing": "VQ" };
+  const ch = props.Light_Characteristics;
+  if (!ch) return null;
+  const colorLetter = { Red: "R", Green: "G", White: "W", Yellow: "Y" }[props.Color] || "";
+  const group = (props.Signal_Group || "").replace(/\s/g, "");
+  const period = (props.Signal_Period || "").match(/([\d.]+)/);
+  return `${abbrev[ch] || ch}${group}${colorLetter}${period ? " " + period[1] + "s" : ""}`;
+}
+
+function chartFeatureSummary(kind, props) {
+  const rows = [];
+  const name = props.Object_Name || props.Information;
+  const sig = lightSignature(props);
+  if (sig) rows.push(["Light", sig]);
+  if (props.Category_of_Lateral_Mark) rows.push(["Mark", props.Category_of_Lateral_Mark]);
+  if (props.Category_of_Light && props.Category_of_Light !== "Unknown") rows.push(["Category", props.Category_of_Light]);
+  if (props.Color && !sig) rows.push(["Colour", props.Color]);
+  if (props.Beacon_Shape) rows.push(["Shape", props.Beacon_Shape.replace(/_/g, " ")]);
+  if (props.Waterway_Distance != null && props.Waterway_Distance !== "") {
+    rows.push(["Mile", `${props.Waterway_Distance} ${props.Horizontal_Units === "Statute Miles" ? "mi" : ""}`.trim()]);
+  }
+  if (kind === "depth") {
+    const lo = parseFloat(props.Depth_Area_Value_1), hi = parseFloat(props.Depth_Area_Value_2);
+    if (isFinite(hi)) {
+      const f = (m) => `${(m * 3.28084).toFixed(1)} ft`;
+      rows.push(["Depth", isFinite(lo) ? `${f(lo)} to ${f(hi)}` : `to ${f(hi)}`]);
+    }
+  }
+  if (kind === "contour" && props.Value_of_Depth_Contour != null) {
+    rows.push(["Contour", `${(parseFloat(props.Value_of_Depth_Contour) * 3.28084).toFixed(0)} ft`]);
+  }
+  if (props.Category_of_Recommended_Track) rows.push(["Track", props.Category_of_Recommended_Track]);
+  if (props.Traffic_Flow) rows.push(["Traffic", props.Traffic_Flow]);
+  if (props.Vertical_Clearance_Value) rows.push(["Clearance", `${props.Vertical_Clearance_Value} m`]);
+  if (props.Source_Dataset) rows.push(["Chart", props.Source_Dataset.replace(/\.000$/, "")]);
+  return { title: name || CHART_KIND_LABELS[kind] || "Charted feature",
+           subtitle: name ? CHART_KIND_LABELS[kind] || "" : "", rows };
+}
+
+function showChartFeature(layerName, kind, props) {
+  // Live inside the map container so the panel travels with the chart between the Helm and the
+  // full Nav. Chart screen (attachMap moves #map between them) instead of covering the Trip widget.
+  const el = $("chartFeature");
+  if (el.parentElement !== mapEl) mapEl.appendChild(el);
+  const { title, subtitle, rows } = chartFeatureSummary(kind, props);
+  const body = rows.map(([k, v]) => `<div class="cf-row"><span>${k}</span><b>${v}</b></div>`).join("");
+  el.innerHTML = `<div class="cf-head"><div><div class="cf-title">${title}</div>` +
+    `${subtitle ? `<div class="cf-sub">${subtitle}</div>` : ""}</div>` +
+    `<button class="cf-close" aria-label="Close">&times;</button></div>${body}`;
+  el.hidden = false;
+  el.querySelector(".cf-close").addEventListener("click", () => (el.hidden = true));
+}
 
 // ---------- My Vessel: heading line and compass rose (Options -> Map layers & colors -> My Vessel) ----------
 // Mirrors Garmin's own "Layers > My Vessel" menu: a heading line projects ahead of the boat, either a fixed
@@ -260,7 +461,7 @@ document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("clic
 // snaps/glitches. isZooming skips those calls until the animation settles, then one corrective call on zoomend.
 let isZooming = false;
 map.on("zoomstart", () => { isZooming = true; });
-map.on("zoomend", () => { isZooming = false; lockBoatFrame(); prefetchAdjacentZooms(); });
+map.on("zoomend", () => { isZooming = false; lockBoatFrame(); refreshChartDetail(); });
 
 let nightMode = false;   // true only for the full night palette; the quick Night button and its label stay binary
 let chartColorMode = "day";
@@ -296,8 +497,10 @@ setInterval(() => { if (quickdrawRecording) loadQuickdrawDots(); }, 5000);  // o
 function setChartMode(mode) {
   chartColorMode = mode === "dusk" ? "dusk" : mode === "night" ? "night" : "day";
   nightMode = chartColorMode === "night";
-  mapEl.classList.toggle("night", chartColorMode === "night");
-  mapEl.classList.toggle("dusk", chartColorMode === "dusk");
+  // Night used to be a CSS filter smeared over rendered tiles, which dimmed the boat and the track
+  // along with the chart. With vectors it's what it should be: the same geometry, drawn in the
+  // night palette, while everything on top keeps its own colours.
+  restyleChart();
   trackLine.setStyle({ color: chartColorMode === "day" ? "#7a2fbf" : "#4db3ff" });
   try { localStorage.setItem("chartMode", chartColorMode); } catch (e) { /* storage unavailable */ }
   document.dispatchEvent(new CustomEvent("chartmode"));
@@ -451,6 +654,7 @@ try { savedMode = localStorage.getItem("chartMode") || "day"; } catch (e) { /* s
 setChartMode(savedMode);
 setTrackVisible(trackVisible);
 applyVesselSettings();
+initCharts();   // load whatever charts are on disk; the rest of the dashboard works without them
 
 // Keep the boat on screen, but leave the chart alone for a while after the driver pans or zooms it.
 let lastUserMove = 0;
@@ -462,6 +666,7 @@ async function setWaypoint(lat, lon, name = "WP") {
 }
 const clearWaypoint = () => fetch("/api/waypoint", { method: "DELETE" });
 map.on("click", async (e) => {
+  $("chartFeature").hidden = true;   // a tap on open water dismisses a stale feature readout
   await setWaypoint(e.latlng.lat, e.latlng.lng);
   if (typeof openPanel === "function") openPanel("waypoint");
 });

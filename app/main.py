@@ -26,7 +26,7 @@ from .ais import SimulatedAIS
 from .alarms import AlarmManager
 from .boundaries import BoundaryManager
 from .celestial import moon_phase, sun_times
-from .chart_tiles import ChartTileCache
+from .chart_data import DETAIL_OFFSETS, ChartStore
 from .gps import make_gps_source
 from .lighting import COLOR_PRESETS, LightingController, PRESET_NAMES, Pca9685RgbDriver, WS281xDriver
 from .media import make_media_source
@@ -65,7 +65,7 @@ switching = SwitchingPanel(DATA_DIR / "switching.json")
 quickdraw = QuickdrawRecorder(DATA_DIR / "quickdraw.json")
 nav_alarms = NavAlarmManager(DATA_DIR / "nav_alarms.json")
 ais = SimulatedAIS(36.306, -86.563)  # no real AIS receiver: a few other boats nearby, for demo purposes
-chart_tiles = ChartTileCache(DATA_DIR / "tiles")
+chart_store = ChartStore(DATA_DIR / "charts")
 
 
 def make_led_driver(settings):
@@ -244,21 +244,39 @@ def calibrate_page():
     return FileResponse(str(STATIC_DIR / "calibrate.html"))
 
 
-@app.get("/api/tiles/{z}/{x}/{y}.png")
-def get_tile(z: int, x: int, y: int, hide: str = ""):
-    """A chart tile, from the local cache if it's already there, else fetched from the Corps of
-    Engineers' export service and cached for next time. See app/chart_tiles.py."""
-    hidden = [int(i) for i in hide.split(",") if i] if hide else []
-    data = chart_tiles.get(z, x, y, hidden)
-    if data is None:
-        return Response(status_code=503)  # not cached, and couldn't fetch it (offline, most likely)
-    return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+@app.get("/api/chart/areas")
+def chart_areas():
+    """Which chart areas are on disk, so the frontend can pick one without being told."""
+    root = DATA_DIR / "charts"
+    areas = []
+    if root.exists():
+        for d in sorted(p for p in root.iterdir() if p.is_dir()):
+            manifest = chart_store.manifest(d.name)
+            if manifest:
+                files, total_bytes = chart_store.stats(d.name)
+                areas.append({"name": d.name, "bbox": manifest.get("bbox"),
+                              "layers": len(manifest.get("layers", {})),
+                              "fetched_at": manifest.get("fetched_at"), "bytes": total_bytes})
+    return {"areas": areas}
 
 
-@app.get("/api/tiles/stats")
-def tile_cache_stats():
-    count, total_bytes = chart_tiles.stats()
-    return {"tiles": count, "bytes": total_bytes}
+@app.get("/api/chart/{area}/{detail}")
+def chart_bundle(area: str, detail: str):
+    """Every chart layer for one area at one detail level, in a single response.
+
+    Bundled rather than a request per layer because this is served off local disk -- one ~1 MB
+    response beats 24 round trips, and the whole point is that it works with no internet."""
+    if detail not in DETAIL_OFFSETS or "/" in area or ".." in area:
+        return Response(status_code=404)
+    manifest = chart_store.manifest(area)
+    if not manifest:
+        return Response(status_code=404)
+    layers = {}
+    for name, entry in manifest.get("layers", {}).items():
+        raw = chart_store.read_layer(area, detail, name)
+        if raw:
+            layers[name] = {"kind": entry["kind"], "geojson": json.loads(raw)}
+    return {"area": area, "detail": detail, "bbox": manifest.get("bbox"), "layers": layers}
 
 
 @app.get("/api/sensors")
