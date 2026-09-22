@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>Boat MFD</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="/static/vendor/leaflet.css" />
 <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
@@ -217,8 +217,9 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+<!-- Vendored, not CDN: the boat has no internet. See static/vendor/README.md. -->
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/vendor/leaflet-rotate.js"></script>
 <script src="/static/js/dials.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/alarms.js"></script>
