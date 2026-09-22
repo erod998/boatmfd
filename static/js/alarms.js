@@ -124,11 +124,12 @@ $("alarmSilence").addEventListener("click", async () => {
 const alarmAudio = (() => {
   let ctx = null;
   let timer = null;
+  let lastError = null;
   const unlock = () => {
     try {
       if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-      if (ctx.state === "suspended") ctx.resume();
-    } catch (e) { /* no audio available: the banner still works */ }
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    } catch (e) { lastError = String(e); /* no audio available: the banner still works */ }
   };
   ["pointerdown", "keydown", "touchstart"].forEach((ev) => addEventListener(ev, unlock, { passive: true }));
   const beep = (delay = 0, freq = 880) => {
@@ -150,11 +151,28 @@ const alarmAudio = (() => {
   return {
     unlock,
     unlocked: () => !!ctx && ctx.state === "running",
-    test() { unlock(); pattern(); },
+    test() {
+      unlock();
+      // resume() is async: firing the pattern in the same tick as a context that was still
+      // suspended can lose the very first test to the race (beep() sees "suspended" and silently
+      // no-ops). Wait for the real resume to land before the one-shot test, so it's never silent
+      // on what's usually someone's very first attempt.
+      if (ctx && ctx.state !== "running") ctx.resume().then(pattern, pattern);
+      else pattern();
+    },
     playing: () => !!timer,
     set(on) {
       if (on && !timer) { pattern(); timer = setInterval(pattern, 1000); }
       else if (!on && timer) { clearInterval(timer); timer = null; }
+    },
+    debug() {
+      return {
+        supported: !!(window.AudioContext || window.webkitAudioContext),
+        contextCreated: !!ctx,
+        state: ctx ? ctx.state : "no context yet",
+        sampleRate: ctx ? ctx.sampleRate : null,
+        lastError,
+      };
     },
   };
 })();
@@ -293,7 +311,15 @@ function buildAlarmMenu() {
     refreshSoundButton();
     updateBanner();
   });
-  sound.querySelector(".al-test").addEventListener("click", () => alarmAudio.test());
+  sound.querySelector(".al-test").addEventListener("click", () => {
+    alarmAudio.test();
+    // A device that plays nothing gives no error to look at -- surface what the Web Audio API
+    // itself thinks is going on, since there's no way to plug this screen into a debugger.
+    setTimeout(() => {
+      const d = alarmAudio.debug();
+      alert(`Didn't hear it? Audio check:\nsupported: ${d.supported}\ncontext created: ${d.contextCreated}\nstate: ${d.state}\nsample rate: ${d.sampleRate}\nlast error: ${d.lastError || "none"}\n\nAlso check: volume up, Control Center not muted, silent switch (if present) off.`);
+    }, 400);
+  });
   refreshSoundButton();
 }
 
