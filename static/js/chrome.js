@@ -28,7 +28,22 @@ const SCREENS = {
   switching: { label: "Switching", thumb: svgThumb(
     `<rect width="160" height="100" fill="#111214"/>` + [0, 1, 2, 3].map((i) => `<rect x="${10 + i * 38}" y="20" width="30" height="60" rx="15" fill="#26282b" stroke="#5a5d62" stroke-width="2"/><circle cx="${25 + i * 38}" cy="${i % 2 ? 62 : 38}" r="10" fill="${i % 2 ? '#3a3d42' : '#3b7be8'}"/>`).join("")) },
 };
+// Which screens the "Pinned" tab and the prev/next swipe (bottom menu bar) cycle through -- a
+// per-browser preference like night mode, editable from Options -> Pinned screens. Mutated in
+// place (splice, not reassigned) so CATEGORIES' own reference to this same array below always
+// sees the current list without needing to be rebuilt.
 const PINNED = ["helm", "chart", "gauges", "media", "trip", "lights"];
+try {
+  const saved = JSON.parse(localStorage.getItem("pinnedScreens"));
+  if (Array.isArray(saved) && saved.length && saved.every((id) => SCREENS[id])) PINNED.splice(0, PINNED.length, ...saved);
+} catch (e) { /* storage unavailable */ }
+
+function setPinned(list) {
+  if (!list.length) return;  // always keep at least one screen pinned
+  PINNED.splice(0, PINNED.length, ...list);
+  try { localStorage.setItem("pinnedScreens", JSON.stringify(PINNED)); } catch (e) { /* storage unavailable */ }
+}
+
 const CATEGORIES = [
   { id: "pinned", label: "Pinned", items: PINNED },
   { id: "charts", label: "Charts", items: ["chart"] },
@@ -124,6 +139,7 @@ function openPanel(name) {
   if (name === "navdata") buildNavDataMenu();
   if (name === "navalarms") buildNavAlarmsMenu();
   if (name === "ais") buildAisMenu();
+  if (name === "pinned") buildPinnedMenu();
 }
 document.querySelectorAll(".p-close").forEach((b) => b.addEventListener("click", closePanels));
 
@@ -154,6 +170,7 @@ document.querySelectorAll("[data-opt]").forEach((b) => b.addEventListener("click
   else if (opt === "navdata") openPanel("navdata");
   else if (opt === "navalarms") openPanel("navalarms");
   else if (opt === "ais") openPanel("ais");
+  else if (opt === "pinned") openPanel("pinned");
   else if (opt === "center") { centerOnBoat(); closePanels(); }
   else if (opt === "clearwp") { clearWaypoint(); closePanels(); }
   else if (opt === "waypoint") openPanel("waypoint");
@@ -410,6 +427,11 @@ async function buildNavDataMenu() {
     loadWaypointList();
     buildRoutePickList();
   });
+  const wpSearchBlock = document.createElement("div");
+  wpSearchBlock.className = "al-block";
+  wpSearchBlock.innerHTML = '<div class="al-row"><input class="track-name" id="wpSearch" placeholder="Search saved waypoints by name..." /></div>';
+  body.appendChild(wpSearchBlock);
+  wpSearchBlock.querySelector("#wpSearch").addEventListener("input", () => loadWaypointList());
   const wpListBlock = document.createElement("div");
   wpListBlock.className = "al-block";
   wpListBlock.innerHTML = '<div id="wpListArea"></div>';
@@ -476,8 +498,13 @@ async function buildNavDataMenu() {
 async function loadWaypointList() {
   const area = $("wpListArea");
   if (!area) return;
-  const { waypoints } = await (await fetch("/api/waypoints")).json();
-  if (!waypoints.length) { area.innerHTML = '<div class="empty-note">No saved waypoints yet.</div>'; return; }
+  const { waypoints: all } = await (await fetch("/api/waypoints")).json();
+  const query = ($("wpSearch") ? $("wpSearch").value : "").trim().toLowerCase();
+  const waypoints = query ? all.filter((w) => w.name.toLowerCase().includes(query)) : all;
+  if (!waypoints.length) {
+    area.innerHTML = `<div class="empty-note">${query ? `No waypoints match "${query}".` : "No saved waypoints yet."}</div>`;
+    return;
+  }
   area.replaceChildren(...waypoints.map((w) => {
     const row = document.createElement("div");
     row.className = "trip-row";
@@ -682,6 +709,38 @@ function buildAisMenu() {
   renderAisList();
 }
 document.addEventListener("telemetry", renderAisList);
+
+// ---------- Pinned screens (Options -> Pinned screens) ----------
+// Which screens the Home overlay's "Pinned" tab and the menu bar's prev/next swipe cycle through.
+function buildPinnedMenu() {
+  const body = $("pinnedBody");
+  body.replaceChildren();
+  const note = document.createElement("p");
+  note.className = "p-note";
+  note.textContent = "Choose which screens show in the Pinned tab and the prev/next swipe at the bottom of every screen. At least one has to stay pinned.";
+  body.appendChild(note);
+  Object.entries(SCREENS).forEach(([id, screen]) => {
+    const block = document.createElement("div");
+    block.className = "al-block";
+    block.innerHTML = `<div class="al-head"><span class="al-name">${screen.label}</span></div><button class="btn al-toggle"></button>`;
+    body.appendChild(block);
+    const toggle = block.querySelector(".al-toggle");
+    const refresh = () => {
+      const on = PINNED.includes(id);
+      toggle.textContent = on ? "Pinned" : "Not pinned";
+      toggle.classList.toggle("primary", on);
+    };
+    refresh();
+    toggle.addEventListener("click", () => {
+      const on = PINNED.includes(id);
+      if (on && PINNED.length <= 1) return;  // keep at least one pinned
+      setPinned(on ? PINNED.filter((x) => x !== id) : [...PINNED, id]);
+      refresh();
+      updateMiniThumbs();
+      if (homeCategory === "pinned") renderHome();
+    });
+  });
+}
 
 // ---------- Alerts ----------
 // Coolant, oil, battery, fuel and depth alarms and warnings come from the server (see app/alarms.py), where their levels

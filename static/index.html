@@ -84,6 +84,7 @@
         <button class="row" data-opt="alarms"><span>Alarms</span><span class="row-val">&rsaquo;</span></button>
         <button class="row" data-opt="orient"><span>Chart orientation</span><span class="row-val" id="optOrient">North Up</span></button>
         <button class="row" data-opt="mapsettings"><span>Map layers &amp; colors</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="pinned"><span>Pinned screens</span><span class="row-val">&rsaquo;</span></button>
         <button class="row" data-opt="telemute"><span>Mute stereo on alarms</span><span class="row-val" id="optTelemute">On</span></button>
         <button class="row" data-opt="center"><span>Center chart on boat</span><span class="row-val">&rsaquo;</span></button>
         <button class="row" data-opt="clearwp"><span>Clear waypoint</span><span class="row-val">&rsaquo;</span></button>
@@ -164,6 +165,11 @@
     <aside class="panel" id="panel-ais" hidden>
       <header><h2>AIS Targets</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
       <div class="p-body" id="aisBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-pinned" hidden>
+      <header><h2>Pinned Screens</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="pinnedBody"></div>
     </aside>
 
     <div id="alarmBanner" hidden role="alert">

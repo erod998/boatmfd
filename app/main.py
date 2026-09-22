@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -26,6 +26,7 @@ from .ais import SimulatedAIS
 from .alarms import AlarmManager
 from .boundaries import BoundaryManager
 from .celestial import moon_phase, sun_times
+from .chart_tiles import ChartTileCache
 from .gps import make_gps_source
 from .lighting import COLOR_PRESETS, LightingController, PRESET_NAMES, Pca9685RgbDriver, WS281xDriver
 from .media import make_media_source
@@ -64,6 +65,7 @@ switching = SwitchingPanel(DATA_DIR / "switching.json")
 quickdraw = QuickdrawRecorder(DATA_DIR / "quickdraw.json")
 nav_alarms = NavAlarmManager(DATA_DIR / "nav_alarms.json")
 ais = SimulatedAIS(36.306, -86.563)  # no real AIS receiver: a few other boats nearby, for demo purposes
+chart_tiles = ChartTileCache(DATA_DIR / "tiles")
 
 
 def make_led_driver(settings):
@@ -240,6 +242,23 @@ def index():
 @app.get("/calibrate")
 def calibrate_page():
     return FileResponse(str(STATIC_DIR / "calibrate.html"))
+
+
+@app.get("/api/tiles/{z}/{x}/{y}.png")
+def get_tile(z: int, x: int, y: int, hide: str = ""):
+    """A chart tile, from the local cache if it's already there, else fetched from the Corps of
+    Engineers' export service and cached for next time. See app/chart_tiles.py."""
+    hidden = [int(i) for i in hide.split(",") if i] if hide else []
+    data = chart_tiles.get(z, x, y, hidden)
+    if data is None:
+        return Response(status_code=503)  # not cached, and couldn't fetch it (offline, most likely)
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@app.get("/api/tiles/stats")
+def tile_cache_stats():
+    count, total_bytes = chart_tiles.stats()
+    return {"tiles": count, "bytes": total_bytes}
 
 
 @app.get("/api/sensors")

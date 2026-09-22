@@ -73,34 +73,29 @@ L.control.scale({ position: "bottomleft", metric: false, imperial: true, maxWidt
 // service only has coastal/Great Lakes coverage -- verified empirically it returns a blank tile
 // for this boat's inland lake -- so it isn't loaded at all: that would be a second full set of
 // slow dynamic-render tile requests for every pan/zoom/rotate with nothing to show for it.)
-const IENC_EXPORT = "https://ienccloud.us/arcgis/rest/services/IENC/USACE_IENC_Master_Service/MapServer/export";
-const WEB_MERCATOR_HALF = 20037508.342789244;
-
-const ArcGisExportLayer = L.TileLayer.extend({
-  initialize(exportUrl, options) {
-    this._exportUrl = exportUrl;
+//
+// Tiles come from this app's own backend (/api/tiles/z/x/y.png), not from ienccloud.us directly --
+// the backend serves them from a local disk cache when it has them (fast, and works with no
+// internet at all, which is the normal case underway) and only reaches out to the Corps of
+// Engineers' export service itself on a cache miss (see app/chart_tiles.py). The bbox/Web Mercator
+// math that used to live here moved server-side with it, since the server is what actually needs
+// it now; the frontend just asks for a tile by z/x/y like any ordinary tile layer would.
+const CachedTileLayer = L.TileLayer.extend({
+  initialize(options) {
     this._hiddenLayers = [];
     L.TileLayer.prototype.initialize.call(this, "", options);
   },
   // The export service draws every one of its own layers (soundings, buoys, shallow-water shading, ...)
-  // unless told otherwise; passing "layers=hide:<ids>" turns specific ones off. See CHART_LAYER_GROUPS.
+  // unless told otherwise; passing "hide=<ids>" turns specific ones off. See CHART_LAYER_GROUPS. Hidden-
+  // layer tiles bypass the disk cache server-side (a per-browser preference isn't worth caching per
+  // combination), so this is the one case that still needs a live fetch each time.
   setHiddenLayers(ids) {
     this._hiddenLayers = ids;
     this.redraw();
   },
   getTileUrl(coords) {
-    const tileM = (2 * WEB_MERCATOR_HALF) / Math.pow(2, coords.z);
-    const x0 = -WEB_MERCATOR_HALF + coords.x * tileM;
-    const y1 = WEB_MERCATOR_HALF - coords.y * tileM;
-    const px = L.Browser.retina ? 512 : 256;
-    const params = new URLSearchParams({
-      bbox: `${x0},${y1 - tileM},${x0 + tileM},${y1}`,
-      bboxSR: 102100, imageSR: 102100,
-      size: `${px},${px}`, dpi: (px / 256) * 96,
-      format: "png32", transparent: true, f: "image",
-    });
-    if (this._hiddenLayers.length) params.set("layers", "hide:" + this._hiddenLayers.join(","));
-    return `${this._exportUrl}?` + params;
+    const url = `/api/tiles/${coords.z}/${coords.x}/${coords.y}.png`;
+    return this._hiddenLayers.length ? `${url}?hide=${this._hiddenLayers.join(",")}` : url;
   },
 });
 // Zooming (especially out) can briefly show black squares where a newly-needed tile from the ArcGIS
@@ -134,11 +129,12 @@ function prefetchAdjacentZooms() {
 // updateWhenIdle:false (Leaflet otherwise defaults this to true on touchscreens) keeps tiles loading continuously
 // while the chart is panning or rotating rather than waiting for it to stop -- both matter more now that
 // heading-up mode pans the chart every animation frame, and together they're what keeps rotated corners from
-// showing black squares. Every tile here is a live dynamic render from the ArcGIS export service (not a cached
-// tile), so keepBuffer is kept modest -- a wider buffer trades a slower initial load and more in-flight requests
-// competing for the browser's connection limit for slightly fewer edge cases, not worth it for a single layer.
+// showing black squares. A tile already in the local cache (see app/chart_tiles.py) is fast regardless, but a
+// cache miss still means a slow live render from the Corps of Engineers' export service behind it, so keepBuffer
+// stays modest -- a wider buffer trades slower first-time exploration of new water for fewer edge cases revisiting
+// water already cached.
 const TILE_OPTS = { minZoom: 5, maxZoom: 18, keepBuffer: 3, updateWhenIdle: false };
-const iencLayer = new ArcGisExportLayer(IENC_EXPORT, TILE_OPTS).addTo(map);
+const iencLayer = new CachedTileLayer(TILE_OPTS).addTo(map);
 
 // ---------- Map Settings: which chart layers to draw (Options -> Map layers & colors) ----------
 // Layer ids are USACE's own (checked against the service's /MapServer?f=json metadata). A per-browser
@@ -491,8 +487,16 @@ function renderGps(gps) {
   }
 }
 
+// A ~600-point polyline was getting fully re-projected and redrawn every second regardless of
+// whether it had actually grown, and doing that while a zoom animation is also transitioning the
+// tile pane's pixel origin made the whole track visibly swim/distort -- "freaks out" while zooming.
+// Skip the rebuild when nothing changed, and defer it until the zoom settles (isZooming, the same
+// flag lockBoatFrame() already respects) rather than fighting the in-progress transform.
+let trackPointCount = 0;
 function renderTrack(track) {
-  if (track && track.length) trackLine.setLatLngs(track.map((p) => [p.lat, p.lon]));
+  if (!track || !track.length || track.length === trackPointCount || isZooming) return;
+  trackPointCount = track.length;
+  trackLine.setLatLngs(track.map((p) => [p.lat, p.lon]));
 }
 
 // ---------- Editable data overlays (Speed/Depth/... boxes on the Helm and Chart screens) ----------
@@ -1278,7 +1282,7 @@ function lightsWidget(root, variant) {
       const fill = q(".level-fill");
       if (fill) {
         const rgb = l.on ? (l.preset === "rainbow" ? l.frame[0] : l.solid_color) : null;
-        fill.style.background = rgb ? `linear-gradient(90deg, rgb(${rgb.map((c) => Math.round(c * 0.35)).join(",")}), rgb(${rgb.join(",")}))` : "";
+        fill.style.background = rgb ? `linear-gradient(90deg, rgb(${rgb.map((c) => Math.round(c * 0.35)).join(",")}), rgb(${rgb.join(",")}))` : "#2a2c30";
       }
       const strip = q(".led-strip");
       if (strip.children.length !== l.frame.length) {

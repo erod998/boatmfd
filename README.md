@@ -22,9 +22,12 @@ of it, to switch):
 | **Switching** | A grid of simulated digital-switching circuits (nav lights, anchor light, cabin lights, livewell, bilge pump, two accessories, horn) — no real switching module, just remembers on/off |
 
 **Also reachable from Options** (not full screens, but full features): **Waypoints, Routes &
-Boundaries** (mark/save/rename/delete waypoints, build and follow multi-leg routes, circular
-geofence alarms), **Navigation Alarms** (Arrival, Off Course, Anchor Drag, GPS Accuracy), and
-**AIS Targets** (a live list of simulated nearby vessels with range/bearing/CPA).
+Boundaries** (mark/save/rename/delete waypoints, search saved waypoints by name and go straight
+to one — like a GPS — build and follow multi-leg routes, circular geofence alarms), **Navigation
+Alarms** (Arrival, Off Course, Anchor Drag, GPS Accuracy), **AIS Targets** (a live list of
+simulated nearby vessels with range/bearing/CPA), and **Pinned Screens** (choose which screens
+show in the Home overlay's Pinned tab and the prev/next swipe at the bottom of every screen — at
+least one has to stay pinned).
 
 **Home** is a translucent overlay like Garmin's: a clock (tap **Home** any time to check
 it), a row of screen thumbnails above category tabs (Pinned, Charts, Combo, Vessel, Media,
@@ -226,8 +229,52 @@ chart tiles (the service has no night palette). To point the dashboard at a
 different lake, change the map's start position in `static/js/app.js` and
 `ROUTE` in `app/gps.py`.
 
-This is a hobby project; it also needs an internet connection — offline
-charts (downloaded ENC/MBTiles) would be the next step for real use.
+### Chart tiles are cached locally, not fetched live
+
+The boat has WiFi at the dock, not on the water, so the browser doesn't talk
+to `ienccloud.us` directly — it asks this app's own backend
+(`/api/tiles/<z>/<x>/<y>.png`), which serves a tile from
+`data/tiles/<z>/<x>/<y>.png` if it's already there (fast, works with no
+internet at all), and only reaches out to the Corps of Engineers' export
+service on a cache miss, saving the result for next time (`app/chart_tiles.py`).
+Ordinary use fills the cache one tile at a time as the boat moves, but only
+for water it's actually been near.
+
+To top up a whole area ahead of time — run this over WiFi at the dock, not
+expecting it to work on the water:
+
+```bash
+venv/Scripts/python -m app.seed_tiles old-hickory --dry-run   # tile count/size first
+venv/Scripts/python -m app.seed_tiles old-hickory              # then for real
+venv/Scripts/python -m app.seed_tiles --center 36.30,-86.55 --radius-nm 10 --zoom 11-15
+```
+
+It also does a quick sample fetch before committing to the rest, and warns if
+the center of the requested area comes back as an empty (out-of-coverage)
+tile rather than real chart content — this is how the Center Hill Lake gap
+below was actually found, not guessed at.
+
+**Coverage is real but not universal.** IENC charts the commercially-navigable
+federal waterway system (Cumberland, Tennessee, Ohio, Mississippi and
+similar) — Old Hickory Lake and the Cumberland River sit right on that
+system and are well covered. Smaller reservoirs off that system may have
+nothing: Center Hill Lake, checked directly against the service, has zero
+IENC features at all, at the dam or up the Caney Fork arm. That's a real data
+gap, not a bug — see "Paid chart data" below for the option that would
+actually close it.
+
+**Paid chart data (Navionics, C-MAP, and similar) is a real option but an
+open question, not something this app does today.** Apps like Savvy Navvy
+license commercial chart data under their own agreements; that data isn't
+generally redistributable into a third-party project like this one without
+its own license, and the exact terms/cost for that aren't something to guess
+at — worth checking directly with a provider before assuming it's viable, and
+worth scoping as its own piece of work if it is (a different data format and
+likely a different tile/serving pipeline than the IENC cache above, not a
+drop-in swap).
+
+The tile cache is not committed to git (`data/` is already gitignored) — it's
+a per-Pi, generated-on-demand artifact, not project source.
 
 ## Going to real hardware
 
@@ -757,10 +804,12 @@ app/
   switching.py  Simulated digital-switching circuits, saved to data/switching.json
   ais.py       Simulated nearby AIS vessels + CPA/TCPA math -- no real AIS receiver
   quickdraw.py Simplified Quickdraw-style depth-sample recording, saved to data/quickdraw.json
+  chart_tiles.py  Local disk cache for chart tiles, fetching from USACE on a miss; see "Charts" above
+  seed_tiles.py   CLI to pre-download a whole area's tiles over WiFi ahead of time (python -m app.seed_tiles)
 static/
   index.html, css/style.css                 The screens, menu bar, Home overlay and side panels
   js/dials.js                               Garmin-style segmented dials and bars (SVG), and the spring animation that smooths every gauge
-  js/app.js                                 Chart (Leaflet + USACE IENC), gauges, trip/media/lights widgets, telemetry rendering
+  js/app.js                                 Chart (Leaflet + a locally-cached USACE IENC), gauges, trip/media/lights widgets, telemetry rendering
   js/alarms.js                              Hold-a-gauge alarm menus, gauge bands, banner and alarm sound
   js/chrome.js                              Menu bar, Home overlay, screen switching, Alerts / Info / Options panels, WebSocket link
   calibrate.html                         Phone-friendly sensor calibration page (/calibrate)
@@ -783,6 +832,7 @@ tests/
   test_ais.py                            Simulated AIS targets: random-walk motion, range/bearing, CPA/TCPA math
   test_quickdraw.py                      Quickdraw depth recording: enable/disable, distance-based dedup, clear
   test_nav_alarms.py                     Navigation alarms: arrival, off course, anchor drag, GPS accuracy
+  test_chart_tiles.py                    Tile bbox math, export URL building, disk cache hit/miss/hidden-layers behavior
 esp32/
   boat_rgb_node/boat_rgb_node.ino        Optional WiFi RGB lighting node
 ```
