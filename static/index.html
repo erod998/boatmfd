@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Boat MFD</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+<div id="app">
+  <main id="stage">
+
+    <!-- HELM: chart + gauges + trip / media / lights on one screen -->
+    <section class="screen active" id="screen-helm">
+      <div class="helm-top">
+        <div class="pane dial-pane" id="helmSpeedCard" title="Tap to switch between mph and knots"><svg id="dialHelmSpeed" class="dial"></svg></div>
+        <div class="pane dial-pane"><svg id="dialHelmRpm" class="dial"></svg></div>
+        <div class="helm-tiles" id="helmTiles"></div>
+      </div>
+      <div class="pane helm-map">
+        <div class="map-slot"><div id="map"></div></div>
+        <div class="map-boxes" id="overlayHelm"></div>
+        <div class="zoom"><button class="orient" data-act="orient" aria-label="Toggle chart orientation (North Up / Heading Up)" title="North Up / Heading Up"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2.2A7.8 7.8 0 1 1 4.2 12 7.8 7.8 0 0 1 12 4.2z"/><path d="M12 6.5l3.2 8-3.2-1.7-3.2 1.7z"/></svg></button><button data-zoom="in" aria-label="Zoom in">+</button><button data-zoom="out" aria-label="Zoom out">&minus;</button></div>
+        <div class="chart-credit">USACE IENC</div>
+      </div>
+      <div class="helm-dock">
+        <div class="pane" data-widget="trip" data-variant="compact"></div>
+        <div class="pane" data-widget="media" data-variant="compact"></div>
+        <div class="pane" data-widget="lights" data-variant="compact"></div>
+      </div>
+    </section>
+
+    <!-- CHART: full-screen navigation chart -->
+    <section class="screen" id="screen-chart">
+      <div class="map-slot"></div>
+      <div class="map-boxes" id="overlayChart"></div>
+      <div class="zoom"><button class="orient" data-act="orient" aria-label="Toggle chart orientation (North Up / Heading Up)" title="North Up / Heading Up"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2.2A7.8 7.8 0 1 1 4.2 12 7.8 7.8 0 0 1 12 4.2z"/><path d="M12 6.5l3.2 8-3.2-1.7-3.2 1.7z"/></svg></button><button data-zoom="in" aria-label="Zoom in">+</button><button data-zoom="out" aria-label="Zoom out">&minus;</button></div>
+      <div class="chart-credit">USACE IENC</div>
+    </section>
+
+    <!-- GAUGES: engine and vessel dials -->
+    <section class="screen" id="screen-gauges">
+      <div class="g-row g-small">
+        <div class="gd"><svg id="dialCool" class="dial"></svg></div>
+        <div class="gd"><svg id="dialOil" class="dial"></svg></div>
+        <div class="gd"><svg id="dialBatt" class="dial"></svg></div>
+        <div class="gd"><svg id="dialFuel" class="dial"></svg></div>
+        <div class="gd"><svg id="dialTrim" class="dial"></svg></div>
+      </div>
+      <div class="g-row g-big">
+        <div class="gd"><svg id="dialRpm" class="dial"></svg></div>
+        <div class="gd center" id="gaugeSpeedCard" title="Tap to switch between mph and knots"><svg id="dialSpeed" class="dial"></svg></div>
+        <div class="gd"><svg id="dialFlow" class="dial"></svg></div>
+      </div>
+      <div class="g-row g-boxes">
+        <div class="gbox"><span class="gb-label">Fuel Economy</span><span class="gb-val"><b data-bind="mpg">--</b><small data-bind="mpgUnit">MPG</small></span></div>
+        <div class="gbox"><span class="gb-label">Fuel Remaining</span><span class="gb-val"><b data-bind="fuelPct">--</b><small>%</small></span></div>
+        <div class="gbox"><span class="gb-label">Water Temp</span><span class="gb-val"><b data-bind="wtemp">--</b><small>&deg;F</small></span></div>
+      </div>
+    </section>
+
+    <!-- TRIP -->
+    <section class="screen" id="screen-trip"><div class="pane fill" data-widget="trip" data-variant="full"></div></section>
+
+    <!-- MEDIA -->
+    <section class="screen" id="screen-media"><div class="pane fill" data-widget="media" data-variant="full"></div></section>
+
+    <!-- LIGHTS -->
+    <section class="screen" id="screen-lights"><div class="pane fill" data-widget="lights" data-variant="full"></div></section>
+
+    <!-- SWITCHING: simulated digital-switching relay circuits -->
+    <section class="screen" id="screen-switching">
+      <div class="sw-head"><h2 class="wtitle">Switching</h2><p class="p-note">No real switching module is wired up -- these circuits just remember their own on/off state, the way NMEA 2000 digital switching would control them for real.</p></div>
+      <div class="sw-grid" id="switchGrid"></div>
+    </section>
+
+    <!-- side panels -->
+    <aside class="panel" id="panel-options" hidden>
+      <header><h2>Options</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body">
+        <button class="row" data-opt="night"><span>Night mode</span><span class="row-val" id="optNight">Off</span></button>
+        <button class="row" data-opt="units"><span>Speed &amp; distance units</span><span class="row-val" id="optUnits">mph / mi</span></button>
+        <button class="row" data-opt="alarms"><span>Alarms</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="orient"><span>Chart orientation</span><span class="row-val" id="optOrient">North Up</span></button>
+        <button class="row" data-opt="mapsettings"><span>Map layers &amp; colors</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="telemute"><span>Mute stereo on alarms</span><span class="row-val" id="optTelemute">On</span></button>
+        <button class="row" data-opt="center"><span>Center chart on boat</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="clearwp"><span>Clear waypoint</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="waypoint"><span>Waypoint / go to&hellip;</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="navdata"><span>Waypoints, Routes &amp; Boundaries</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="navalarms"><span>Navigation Alarms</span><span class="row-val">&rsaquo;</span></button>
+        <button class="row" data-opt="ais"><span>AIS Targets</span><span class="row-val">&rsaquo;</span></button>
+        <a class="row" href="/calibrate"><span>Sensor calibration</span><span class="row-val">&rsaquo;</span></a>
+      </div>
+    </aside>
+
+    <aside class="panel" id="panel-alerts" hidden>
+      <header><h2>Alerts</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="alertList"></div>
+    </aside>
+
+    <aside class="panel" id="panel-alarm" hidden>
+      <header><h2 id="alarmTitle">Alarms</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="alarmBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-gauge" hidden>
+      <header><h2 id="gaugeTitle">Gauge</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="gaugeBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-mapsettings" hidden>
+      <header><h2>Map Layers &amp; Colors</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="mapSettingsBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-overlaypick" hidden>
+      <header><h2>Choose Data</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="overlayPickBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-boost" hidden>
+      <header><h2>RPM Volume Boost</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="boostBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-info" hidden>
+      <header><h2>System Information</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="infoList"></div>
+    </aside>
+
+    <aside class="panel" id="panel-waypoint" hidden>
+      <header><h2>Waypoint</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body">
+        <p class="p-note" id="wpEmpty">Tap the chart to drop a waypoint, press Mark to drop one at the boat, or enter coordinates.</p>
+        <div id="wpInfo" hidden>
+          <div class="wp-grid">
+            <div class="gbox"><span class="gb-label">Bearing</span><span class="gb-val"><b id="wpBearing">--</b><small>&deg;</small></span></div>
+            <div class="gbox"><span class="gb-label">Distance</span><span class="gb-val"><b id="wpDist">--</b><small class="u-dist">mi</small></span></div>
+            <div class="gbox"><span class="gb-label">ETA</span><span class="gb-val"><b id="wpEta">--</b><small>min</small></span></div>
+            <div class="gbox"><span class="gb-label">XTE</span><span class="gb-val"><b id="wpXte">--</b><small class="u-dist">mi</small></span></div>
+          </div>
+        </div>
+        <div class="wp-form">
+          <input id="wpLat" placeholder="Latitude e.g. 36.30" inputmode="decimal" />
+          <input id="wpLon" placeholder="Longitude e.g. -86.56" inputmode="decimal" />
+          <button class="btn primary" id="setWpBtn">Go to</button>
+          <button class="btn" id="clearWp">Clear</button>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="panel" id="panel-navdata" hidden>
+      <header><h2>Waypoints, Routes &amp; Boundaries</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="navDataBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-navalarms" hidden>
+      <header><h2>Navigation Alarms</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="navAlarmsBody"></div>
+    </aside>
+
+    <aside class="panel" id="panel-ais" hidden>
+      <header><h2>AIS Targets</h2><button class="p-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header>
+      <div class="p-body" id="aisBody"></div>
+    </aside>
+
+    <div id="alarmBanner" hidden role="alert">
+      <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+      <span id="alarmText"></span>
+      <button class="btn" id="alarmSilence">Silence</button>
+    </div>
+
+  </main>
+
+  <nav id="menubar">
+    <div class="mb-group">
+      <button class="mb" data-act="mark"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg><span>Mark</span></button>
+      <button class="mb" data-act="info"><svg viewBox="0 0 24 24"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg><span>Info</span></button>
+      <button class="mb" data-act="night"><svg viewBox="0 0 24 24"><path d="M9 2c-1.05 0-2.05.16-3 .46 4.06 1.27 7 5.06 7 9.54 0 4.48-2.94 8.27-7 9.54.95.3 1.95.46 3 .46 5.52 0 10-4.48 10-10S14.52 2 9 2z"/></svg><span id="nightLabel">Night</span></button>
+    </div>
+    <div class="mb-nav">
+      <button class="mb thumb" data-act="prev"><svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg><span class="mini" id="miniPrev"></span></button>
+      <button class="mb home" data-act="home" aria-label="Home"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg></button>
+      <button class="mb thumb" data-act="next"><span class="mini" id="miniNext"></span><svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
+    </div>
+    <div class="mb-group right">
+      <button class="mb" data-act="alerts" id="mbAlerts"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg><span>Alerts</span><i class="badge" hidden></i></button>
+      <button class="mb" data-act="options"><svg viewBox="0 0 24 24"><path d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg><span>Options</span></button>
+    </div>
+  </nav>
+
+  <!-- HOME overlay (slides up over the current screen, like Garmin's) -->
+  <div id="home" hidden>
+    <div class="home-clock" id="homeClock"><span id="homeTime">--:--</span><span id="homeDate"></span></div>
+    <div class="home-features" id="homeFeatures"></div>
+    <div class="home-tabs">
+      <button class="ht-btn" id="homeSettings">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        <span>Settings</span>
+      </button>
+      <div class="ht-cats" id="homeCats"></div>
+      <button class="ht-btn" id="homeClose">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        <span>Close</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+<script src="/static/js/dials.js"></script>
+<script src="/static/js/app.js"></script>
+<script src="/static/js/alarms.js"></script>
+<script src="/static/js/chrome.js"></script>
+</body>
+</html>

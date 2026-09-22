@@ -1,0 +1,11 @@
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic>=2.6
+
+# Optional — only needed on real hardware:
+# pyserial>=3.5        # SerialGPS (real NMEA GPS module)
+# pynmea2>=1.19         # NMEA 0183 sentence parsing
+# rpi_ws281x>=5.0        # real WS2812B/NeoPixel strip on a Raspberry Pi
+# python-can>=4.3        # NMEA 2000 / Fusion stereo control over a CAN interface (also used by tests)
+# smbus2>=0.4            # I2C: ADS1115 analog inputs (BOAT_SENSORS=real) and PCA9685 PWM lights
+# lgpio>=0.2             # tach pulse timing on a GPIO (on Raspberry Pi OS: apt install python3-lgpio)

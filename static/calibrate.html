@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Boat Calibration</title>
+<style>
+  :root { --bg:#04121c; --panel:#0a2233; --panel2:#0e2c40; --border:#163b52; --text:#dcf1fa; --dim:#8fb0c2; --accent:#26d3e0; --green:#35d07f; --red:#ff5a5f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui,sans-serif; padding:12px; max-width:720px; margin-inline:auto; }
+  h1 { font-size:20px; margin:4px 0 2px; } h2 { font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); margin:0 0 8px; }
+  a { color:var(--accent); } p { color:var(--dim); font-size:14px; line-height:1.45; margin:4px 0 10px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px; margin:10px 0; }
+  .reading { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; } .reading small { font-size:14px; color:var(--dim); font-weight:400; margin-left:6px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  button { font:inherit; min-height:46px; padding:0 14px; border-radius:8px; border:1px solid var(--border); background:var(--panel2); color:var(--text); cursor:pointer; }
+  button.primary { background:#17838c; border-color:var(--accent); color:#04121c; font-weight:600; }
+  button.on { background:var(--green); border-color:var(--green); color:#04240f; font-weight:600; }
+  input { font:inherit; min-height:46px; width:9em; padding:0 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel2); color:var(--text); }
+  .saved { color:var(--dim); font-size:13px; margin-top:6px; }
+  #message { position:sticky; top:0; z-index:5; margin:8px 0; padding:10px 12px; border-radius:8px; display:none; font-size:14px; }
+  #message.ok { display:block; background:#0f3b26; border:1px solid var(--green); } #message.err { display:block; background:#40161a; border:1px solid var(--red); }
+  .heard p { margin:2px 0; font-size:13px; }
+</style>
+</head>
+<body>
+<h1>Boat calibration</h1>
+<p><a href="/">&larr; Back to the dashboard</a> &middot; Readings update every second and are smoothed, so let a number settle for a few seconds before you save it. Nothing here changes what the boat does; it only teaches the dashboard what your senders mean.</p>
+<div id="message"></div>
+<div id="simNote" class="card" style="display:none"><p>The sensors are simulated (BOAT_SENSORS is not "n2k" or "real"), so there is nothing to calibrate.</p></div>
+
+<div id="cards" style="display:none">
+
+  <div class="card"><h2>NMEA 2000</h2>
+    <div id="n2kFuel" class="heard"></div>
+    <p data-mode="n2k">Your engine converter (for example the CX5003) should appear above with its RPM, trim, oil pressure and temperature. If nothing shows, check that the CAN interface is up (<code>BOAT_CAN=can0</code>), the converter has power, and the backbone has a terminator at each end. If a value is heard under an instance number other than the one in use, set <code>BOAT_N2K_ENGINE_INSTANCE</code> (RPM, trim, oil, temperature) or <code>BOAT_N2K_FUEL_TANK_INSTANCE</code> (fuel level) to match. If the temperature arrives as an oil temperature rather than an engine temperature, set <code>BOAT_N2K_TEMP=oil</code>.</p>
+    <p data-mode="real">A fuel-flow sensor sends fuel rate (used for GPH and MPG). A tank-level adapter sends the tank level (used for the fuel gauge, ahead of any analog sender). If your device shows up here with a different instance number than the settings expect, set <code>BOAT_N2K_ENGINE_INSTANCE</code> (flow sensor) or <code>BOAT_N2K_FUEL_TANK_INSTANCE</code> (tank level) to match.</p>
+    <p>A depth transducer shows up here too (and its sea temperature, if it sends one). If it's under a different instance number than the one in use, set <code>BOAT_N2K_DEPTH_INSTANCE</code> to match.</p>
+  </div>
+
+  <div class="card"><h2>Depth</h2>
+    <div class="reading"><span id="depthFt">--</span><small>ft shown</small></div>
+    <p>The transducer's own offset (to the waterline, or to the keel if it was installed that way) is already included above. Type the true depth (from a lead line, a marked dock piling, or a known chart depth at your slip) to add a further correction on top of that.</p>
+    <div class="row"><input id="depthInput" inputmode="decimal" placeholder="true depth, ft" /><button class="primary" data-act="depth_offset" data-input="depthInput">Set depth offset</button></div>
+    <div class="saved" id="depthSaved"></div>
+  </div>
+
+  <!-- BOAT_SENSORS=n2k: senders belong to the engine converter, values arrive as percentages -->
+  <div class="card" data-mode="n2k"><h2>Fuel level</h2>
+    <div class="reading"><span id="fuelRawN2k">--</span><small>% from the converter</small> <span id="fuelPctN2k" style="margin-left:14px">--</span><small>% shown</small></div>
+    <p>For a US-standard 240-33 ohm sender, connect the converter's "switch" wire to ground. The level is used as it arrives; if the tank never quite reads 0% or 100%, save the reading when it is truly empty and when it is truly full.</p>
+    <div class="row"><button data-act="fuel_empty">Tank is EMPTY: save</button><button data-act="fuel_full">Tank is FULL: save</button></div>
+    <div class="saved" id="fuelSavedN2k"></div>
+  </div>
+
+  <div class="card" data-mode="n2k"><h2>Trim</h2>
+    <div class="reading"><span id="trimRawN2k">--</span><small>% from the converter</small> <span id="trimPctN2k" style="margin-left:14px">--</span><small>% shown</small></div>
+    <p>The converter reads trim senders over 0-190 ohms; measure yours with a multimeter first, because anything above 190 ohms would be cut off. Run the drive fully DOWN (in) and save, then fully UP (out) and save. Trim shows "--" until both are saved.</p>
+    <div class="row"><button data-act="trim_down">Drive fully DOWN: save</button><button data-act="trim_up">Drive fully UP: save</button></div>
+    <div class="saved" id="trimSavedN2k"></div>
+  </div>
+
+  <div class="card" data-mode="n2k"><h2>Oil pressure</h2>
+    <div class="reading"><span id="oilRawN2k">--</span><small>psi as the converter reports it</small> <span id="oilPsiN2k" style="margin-left:14px">--</span><small>psi shown</small></div>
+    <p>Converters like the CX5003 assume a 10 bar (145 psi) sender. A US-standard sender is 80 psi full scale, so the converter reads it about 1.8 times too high. Type your sender's full-scale psi to correct it (80 for US-standard; 145 leaves the reading as reported). Check it against a mechanical gauge if you can.</p>
+    <div class="row"><input id="oilFullInput" inputmode="decimal" placeholder="e.g. 80" /><button class="primary" data-act="oil_full_scale" data-input="oilFullInput">Apply</button></div>
+    <div class="saved" id="oilSavedN2k"></div>
+  </div>
+
+  <!-- BOAT_SENSORS=real: the Pi reads the senders itself, in ohms -->
+  <div class="card" id="fuelCard" data-mode="real"><h2>Fuel level (analog sender)</h2>
+    <div class="reading"><span id="fuelOhms">--</span><small>ohms</small> <span id="fuelPct" style="margin-left:14px">--</span><small>% shown</small></div>
+    <p>US-standard senders read about 240 ohms empty and 33 ohms full. To calibrate, capture the reading when the tank is truly empty and when it is truly full. If a NMEA 2000 tank-level adapter is present it takes priority over this.</p>
+    <div class="row"><button data-act="fuel_empty">Tank is EMPTY: save</button><button data-act="fuel_full">Tank is FULL: save</button></div>
+    <div class="saved" id="fuelSaved"></div>
+  </div>
+
+  <div class="card" data-mode="real"><h2>Trim</h2>
+    <div class="reading"><span id="trimOhms">--</span><small>ohms</small> <span id="trimPct" style="margin-left:14px">--</span><small>%</small></div>
+    <p>Alpha One trim senders are resistive but the range varies, so measure yours: run the drive fully DOWN (in) and save, then fully UP (out) and save. Trim shows "--" until both are saved.</p>
+    <div class="row"><button data-act="trim_down">Drive fully DOWN: save</button><button data-act="trim_up">Drive fully UP: save</button></div>
+    <div class="saved" id="trimSaved"></div>
+  </div>
+
+  <div class="card" id="oilCard" data-mode="real" style="display:none"><h2>Oil pressure</h2>
+    <div class="reading"><span id="oilOhms">--</span><small>ohms</small> <span id="oilPsi" style="margin-left:14px">--</span><small>psi</small></div>
+    <p>US-standard 0-80 psi senders read about 10 ohms at 0 psi and 180 ohms at 80 psi. With the engine off (0 psi) you can save the zero point.</p>
+    <div class="row"><button data-act="oil_zero">Engine off (0 psi): save</button></div>
+  </div>
+
+  <div class="card"><h2>Battery voltage</h2>
+    <div class="reading"><span id="battV">--</span><small>volts (raw <span id="battRaw">--</span>)</small></div>
+    <p data-mode="n2k">With <code>BOAT_BATTERY_ADC=true</code> the Pi measures the battery on an ADS1115; otherwise it uses the converter's alternator volts if the converter sends them. Measure the battery with a multimeter and type what it shows to calibrate the ADS1115 reading.</p>
+    <p data-mode="real">Measure the battery with a multimeter and type what it shows.</p>
+    <div class="row"><input id="battInput" inputmode="decimal" placeholder="e.g. 12.6" /><button class="primary" data-act="battery" data-input="battInput">Apply</button></div>
+  </div>
+
+  <div class="card"><h2>Tach (RPM)</h2>
+    <div class="reading"><span id="rpm">--</span><small>rpm (raw <span id="rpmRaw">--</span>)</small></div>
+    <p data-mode="n2k">With the engine running steadily, type what the ANALOG tach shows. The converter's speed-ratio DIP switches must already be right (ratio 2 for a 4-cylinder, 4-stroke gasoline engine); this scale only corrects small errors, so if the two differ by a factor of two, fix the switches instead.</p>
+    <p data-mode="real">With the engine running steadily, type what the ANALOG tach shows. For a 4-cylinder distributor engine the raw value should already be close (set BOAT_TACH_PPR=2).</p>
+    <div class="row"><input id="rpmInput" inputmode="decimal" placeholder="e.g. 3000" /><button class="primary" data-act="tach" data-input="rpmInput">Apply</button></div>
+  </div>
+
+  <div class="card"><h2>Temperature probes</h2>
+    <div id="probes"></div>
+    <p data-mode="n2k">Engine (coolant) temperature comes from the converter's temperature input, so a probe here is optional: use one on the raw-water intake hose for the water temperature (assign it to Water). A probe you assign to Engine is used only when the converter sends no temperature.</p>
+    <p data-mode="real">Warm one probe in your hand to see which is which, then assign it. If you have one probe it is used as the engine (coolant) probe automatically. A probe clamped to the thermostat housing reads a little below true coolant temperature; to correct that, type a true temperature (for example from an infrared thermometer aimed at the housing).</p>
+    <div class="row"><input id="tempInput" inputmode="decimal" placeholder="true engine temp, F" /><button class="primary" data-act="engine_temp_offset" data-input="tempInput">Set engine offset</button></div>
+    <div class="saved" id="tempSaved"></div>
+  </div>
+
+  <div class="card"><h2>Fuel burn (GPH)</h2>
+    <div class="reading"><span id="usedGal">--</span><small>gallons counted since the last fill-up</small></div>
+    <p>The count comes from the NMEA 2000 fuel-flow sensor if there is one, otherwise from an estimate based on RPM. At each fill-up, top the tank off and type the gallons the pump put in; the fuel burn rescales to match reality. It gets more accurate every time.</p>
+    <div class="row"><input id="fillInput" inputmode="decimal" placeholder="gallons pumped" /><button class="primary" data-act="fuel_fill" data-input="fillInput">Record fill-up</button></div>
+    <div class="saved" id="burnSaved"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const num = (v, d = 1) => (v == null ? "--" : Number(v).toFixed(d));
+let lastStatus = null;
+
+function show(msg, ok) {
+  const el = $("message");
+  el.textContent = msg;
+  el.className = ok ? "ok" : "err";
+  setTimeout(() => (el.className = ""), 6000);
+}
+
+function renderN2k(n2k, engine, env) {
+  const box = $("n2kFuel");
+  box.replaceChildren();
+  const add = (text) => box.append(Object.assign(document.createElement("p"), { textContent: text }));
+  if (!n2k) return add("Not connected to NMEA 2000. Set BOAT_CAN=can0 (with the CAN interface up) and restart.");
+  const inUse = (i, wanted) => (i === wanted ? "" : "  <- not the instance in use");
+  n2k.engines.forEach((e) => add(`Engine data from device ${e.source}, engine instance ${e.instance}${inUse(e.instance, n2k.engine_instance)} (${e.age_s}s ago): ${num(e.rpm, 0)} rpm, trim ${num(e.trim_pct, 0)}%, oil ${num(e.oil_pressure_psi, 0)} psi, engine temp ${num(e.engine_temp_f, 0)} F, oil temp ${num(e.oil_temp_f, 0)} F, alternator ${num(e.alternator_v, 1)} V`));
+  n2k.fuel_flow.filter((f) => f.flow_sensor).forEach((f) => add(`Fuel flow from device ${f.source}, engine instance ${f.instance}${inUse(f.instance, n2k.engine_instance)}: ${num(f.gph, 1)} GPH (${f.age_s}s ago)`));
+  n2k.tank_levels.forEach((t) => add(`Tank level from device ${t.source}, ${t.type} tank instance ${t.instance}${t.type === "fuel" ? inUse(t.instance, n2k.tank_instance) : ""}: ${num(t.level_pct, 1)}%${t.capacity_gal == null ? "" : `, ${num(t.capacity_gal, 0)} gal capacity`} (${t.age_s}s ago)`));
+  if (env) {
+    env.depths.forEach((d) => add(`Depth from device ${d.source}, instance ${d.instance}${inUse(d.instance, env.depth_instance)}: ${num(d.depth_ft, 1)} ft${d.offset_ft == null ? "" : ` (device offset ${d.offset_ft >= 0 ? "+" : ""}${num(d.offset_ft, 2)} ft)`} (${d.age_s}s ago)`));
+    env.temps.forEach((t) => add(`Sea temperature from device ${t.source}, instance ${t.instance}: ${num(t.water_temp_f, 0)} F (${t.age_s}s ago)`));
+  }
+  if (!n2k.engines.length && !n2k.tank_levels.length && !n2k.fuel_flow.length && !(env && (env.depths.length || env.temps.length))) add("Connected, but no engine, fuel flow, tank level or depth messages heard yet. Check that the device is powered and on the backbone.");
+  add(`Now using: ${engine.fuel_gph == null ? "no fuel rate" : `${engine.fuel_gph} GPH (${engine.fuel_gph_est ? "estimated from RPM" : "measured"})`}`);
+}
+
+function renderProbes(s, c) {
+  const box = $("probes");
+  const ids = Object.keys(s.probes);
+  if (box.dataset.key !== JSON.stringify([ids, c.probes.engine, c.probes.water])) {  // rebuild only when the assignment changes
+    box.dataset.key = JSON.stringify([ids, c.probes.engine, c.probes.water]);
+    box.replaceChildren();
+    if (!ids.length) box.append(Object.assign(document.createElement("p"), { textContent: "No temperature probes found. Check the 1-Wire wiring and that dtoverlay=w1-gpio is enabled." }));
+    ids.forEach((id) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const label = document.createElement("span");
+      label.dataset.probe = id;
+      const mk = (text, role) => {
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.className = c.probes[role] === id ? "on" : "";
+        b.onclick = () => send("probe_" + role, null, c.probes[role] === id ? "" : id);
+        return b;
+      };
+      row.append(label, mk("Engine", "engine"), mk("Water", "water"));
+      box.append(row);
+    });
+  }
+  ids.forEach((id) => {
+    const label = box.querySelector(`[data-probe="${id}"]`);
+    if (label) label.textContent = `${id}: ${num(s.probes[id], 1)} F`;
+  });
+}
+
+function render(s) {
+  lastStatus = s;
+  $("simNote").style.display = s.real ? "none" : "block";
+  $("cards").style.display = s.real ? "block" : "none";
+  if (!s.real) return;
+  const mode = s.mode || "real";
+  const r = s.readings, e = s.engine, c = s.calibration, raw = s.n2k_raw || {};
+  document.querySelectorAll("[data-mode]").forEach((el) => { el.style.display = el.dataset.mode === mode ? "block" : "none"; });
+  if (mode === "real") {
+    $("fuelCard").style.display = s.fuel_sender_enabled ? "block" : "none";
+    $("oilCard").style.display = s.oil_enabled ? "block" : "none";
+  }
+
+  renderN2k(s.n2k, e, s.env);
+  $("depthFt").textContent = num(s.depth_ft, 1);
+  $("depthSaved").textContent = `Saved offset: ${c.depth.offset_ft >= 0 ? "+" : ""}${c.depth.offset_ft} ft`;
+  // real mode: the Pi reads senders in ohms
+  $("fuelOhms").textContent = num(r.fuel_ohms); $("fuelPct").textContent = num(e.fuel_pct, 0);
+  $("fuelSaved").textContent = `Saved: empty ${c.fuel.empty_ohm} ohm, full ${c.fuel.full_ohm} ohm`;
+  $("trimOhms").textContent = num(r.trim_ohms); $("trimPct").textContent = num(e.trim_pct, 0);
+  $("trimSaved").textContent = c.trim.down_ohm == null || c.trim.up_ohm == null ? "Not calibrated yet." : `Saved: down ${c.trim.down_ohm} ohm, up ${c.trim.up_ohm} ohm`;
+  $("oilOhms").textContent = num(r.oil_ohms); $("oilPsi").textContent = num(e.oil_pressure_psi, 0);
+  // n2k mode: values arrive as percentages / psi over the bus
+  $("fuelRawN2k").textContent = num(raw.fuel_level_pct, 1); $("fuelPctN2k").textContent = num(e.fuel_pct, 0);
+  $("fuelSavedN2k").textContent = `Saved: empty ${c.fuel.empty_pct}%, full ${c.fuel.full_pct}%`;
+  $("trimRawN2k").textContent = num(raw.trim_pct, 0); $("trimPctN2k").textContent = num(e.trim_pct, 0);
+  $("trimSavedN2k").textContent = c.trim.down_pct == null || c.trim.up_pct == null ? "Not calibrated yet." : `Saved: down ${c.trim.down_pct}%, up ${c.trim.up_pct}%`;
+  $("oilRawN2k").textContent = num(raw.oil_pressure_psi, 0); $("oilPsiN2k").textContent = num(e.oil_pressure_psi, 0);
+  $("oilSavedN2k").textContent = `Sender full scale: ${num(c.oil.n2k_full_psi, 0)} psi`;
+
+  $("battV").textContent = num(s.battery_volts, 2); $("battRaw").textContent = num(r.battery_v_raw, 2);
+  $("rpm").textContent = num(e.rpm, 0); $("rpmRaw").textContent = num(mode === "n2k" ? raw.rpm : r.rpm_raw, 0);
+  $("usedGal").textContent = num(s.fuel_used_gal, 1);
+  $("burnSaved").textContent = `Current burn-estimate scale: x${c.fuel_burn.scale}`;
+  $("tempSaved").textContent = `Engine temp: ${num(e.coolant_f, 0)} F (offset ${c.probes.engine_offset_f} F)`;
+  renderProbes(s, c);
+}
+
+async function send(action, value, device) {
+  const res = await (await fetch("/api/calibration", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, value, device }) })).json();
+  if (res.ok) { show(res.message || "Saved", true); render(res.status); } else show(res.error || "Failed", false);
+}
+
+document.querySelectorAll("button[data-act]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const input = b.dataset.input ? parseFloat($(b.dataset.input).value) : null;
+    if (b.dataset.input && Number.isNaN(input)) return show("Type a number first", false);
+    send(b.dataset.act, input, null);
+  });
+});
+
+async function poll() {
+  try { render(await (await fetch("/api/sensors")).json()); } catch (e) { /* server restarting; try again */ }
+}
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
