@@ -318,21 +318,31 @@ let headingUp = false;
 try { headingUp = localStorage.getItem("chartOrient") === "heading"; } catch (e) { /* storage unavailable */ }
 
 // ---------- Smoothly animated boat: heading and position ----------
-// GPS fixes (position + heading) arrive once a second and would otherwise make the chart's bearing
-// (Heading Up), the boat icon's own rotation (North Up) and the boat's on-screen position all snap
-// once a second; this eases all three every animation frame instead, the same idea as the gauge
-// springs in dials.js (a first-order lag), but for a wrapped compass angle and a lat/lon position.
-// Once a fix has arrived the loop just keeps running rather than stopping when "settled": a real
-// boat is essentially always moving or turning a little, so there is rarely nothing left to ease,
-// and the cost of one more small loop is trivial next to what the gauges already animate.
+// GPS fixes arrive once a second; heading is a simple wrapped-angle ease toward the latest one (a
+// first-order lag, the same idea as the gauge springs in dials.js), fine since it settles well
+// within that second either way. Position used to be eased the same way -- chasing a target point
+// that jumps once a second -- which looked fine at a lake-idle 6-9 kn (a small jump, eased away
+// quickly) but turned into a visible lurch-then-stall at a 40 mph cruise: the exponential ease is
+// front-loaded (fast at first, asymptotically slower), so it sprints to cover the whole second's
+// travel early and then visibly creeps/sits for the remainder of that second waiting on the next
+// fix -- "ticks forward, stops, goes again." Position is now dead reckoning instead: project
+// forward every frame from the last fix's own speed and course (projectLatLng, same flat-earth
+// math the simulated GPS route and the heading line already use), which is constant-velocity by
+// construction -- no per-second speedup/slowdown to see. Each new fix only has to correct for
+// however far reality actually diverged from that projection (normally small), not replay the
+// whole second's travel, so that correction is eased out fast (CORRECTION_OMEGA) rather than
+// slowly chased. Once a fix has arrived the loop just keeps running rather than stopping when
+// "settled": a real boat is essentially always moving or turning a little.
 let shownHeading = 0;
 let targetHeading = 0;
 let headingEverSet = false;   // the very first heading is applied at once, not spun up to from zero
-let shownLat = null, shownLon = null, targetLat = null, targetLon = null;
+let shownLat = null, shownLon = null;
+let drLat = null, drLon = null, drCogDeg = 0, drSogKn = 0, drAnchorT = 0;  // dead-reckoning anchor
+let correctionLat = 0, correctionLon = 0;  // the small, fast-decaying gap left over from the last fix
 let boatAnimId = 0;
 let boatLastT = 0;
-const HEADING_OMEGA = 3.5;    // a reading that arrives once a second, eased to settle well within that second
-const POSITION_OMEGA = 3.5;
+const HEADING_OMEGA = 3.5;     // a reading that arrives once a second, eased to settle well within that second
+const CORRECTION_OMEGA = 8;    // absorb a fix's small correction within a few hundred ms, not chase it for a full second
 
 function angleDiff(target, current) {
   // shortest signed distance from current to target, in (-180, 180]
@@ -346,9 +356,14 @@ function boatTick(now) {
 
   const diff = angleDiff(targetHeading, shownHeading);
   shownHeading = Math.abs(diff) < 0.02 ? targetHeading : (((shownHeading + diff * Math.min(1, HEADING_OMEGA * dt)) % 360) + 360) % 360;
-  const f = Math.min(1, POSITION_OMEGA * dt);
-  shownLat += (targetLat - shownLat) * f;
-  shownLon += (targetLon - shownLon) * f;
+
+  const elapsedH = (now - drAnchorT) / 3600000;
+  const [drNowLat, drNowLon] = projectLatLng(drLat, drLon, drCogDeg, drSogKn * elapsedH);
+  const decay = Math.max(0, 1 - CORRECTION_OMEGA * dt);
+  correctionLat *= decay;
+  correctionLon *= decay;
+  shownLat = drNowLat + correctionLat;
+  shownLon = drNowLon + correctionLon;
 
   boatMarker.setLatLng([shownLat, shownLon]);
   compassRoseMarker.setLatLng([shownLat, shownLon]);
@@ -365,14 +380,19 @@ function boatTick(now) {
   boatAnimId = requestAnimationFrame(boatTick);
 }
 
-function setBoatTarget(lat, lon, heading) {
-  targetLat = lat;
-  targetLon = lon;
+function setBoatTarget(lat, lon, heading, cogDeg, sogKn) {
+  const now = performance.now();
+  if (shownLat == null) { shownLat = lat; shownLon = lon; correctionLat = 0; correctionLon = 0; }  // first fix: appear in place
+  else { correctionLat = shownLat - lat; correctionLon = shownLon - lon; }  // continue from wherever it's currently shown
+  drLat = lat;
+  drLon = lon;
+  drCogDeg = cogDeg || 0;
+  drSogKn = sogKn || 0;
+  drAnchorT = now;
   targetHeading = ((heading % 360) + 360) % 360;
-  if (shownLat == null) { shownLat = lat; shownLon = lon; }   // first fix: appear in place, don't glide in from nowhere
   if (!headingEverSet) { headingEverSet = true; shownHeading = targetHeading; }
   if (!boatAnimId) {
-    boatLastT = performance.now();
+    boatLastT = now;
     boatAnimId = requestAnimationFrame(boatTick);
   }
 }
@@ -463,7 +483,7 @@ function renderGps(gps) {
     map.setView([gps.lat, gps.lon], 14);   // a sensible starting zoom/position either way, refined below in Heading Up
     hasFitted = true;
   }
-  setBoatTarget(gps.lat, gps.lon, gps.heading_deg || 0);
+  setBoatTarget(gps.lat, gps.lon, gps.heading_deg || 0, gps.cog_deg, gps.sog_kn);
   animBind("sog", toSpeed(gps.sog_kn), 1);
   animBind("hdg", gps.heading_deg, 0);
   if (!headingUp && Date.now() - lastUserMove > 20000 && !map.getBounds().pad(-0.3).contains([gps.lat, gps.lon])) {
@@ -1291,6 +1311,14 @@ function lightsWidget(root, variant) {
       q(".lw-badge").classList.toggle("ok", l.on);
       q(".lw-power").classList.toggle("on", l.on);
       brightness.set(Math.round(l.brightness * 100));
+      // The brightness bar's fill tints to whatever color the strip actually is right now, dim-to-full
+      // left to right (the same dark-to-light shape the default blue gradient already had) -- solid_color
+      // when it's a plain color, or the live first pixel while rainbow is cycling through the wheel.
+      const fill = q(".level-fill");
+      if (fill) {
+        const rgb = l.on ? (l.preset === "rainbow" ? l.frame[0] : l.solid_color) : null;
+        fill.style.background = rgb ? `linear-gradient(90deg, rgb(${rgb.map((c) => Math.round(c * 0.35)).join(",")}), rgb(${rgb.join(",")}))` : "";
+      }
       const strip = q(".led-strip");
       if (strip.children.length !== l.frame.length) {
         strip.replaceChildren(...l.frame.map(() => Object.assign(document.createElement("div"), { className: "px" })));
