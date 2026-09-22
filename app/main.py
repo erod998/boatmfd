@@ -244,7 +244,26 @@ def calibrate_page():
 
 @app.get("/api/sensors")
 def sensors_status():
-    return sensor_hub.status() if sensor_hub else {"real": False}
+    if sensor_hub:
+        return sensor_hub.status()
+    # No real sensor hub: nothing to calibrate, but the calibration page can still show what the
+    # simulator is currently making up, read from the same cache the telemetry loop already fills
+    # (not re-ticked here, which would perturb the same random walk the dashboard's gauges show).
+    engine, boat = _latest["engine"], _latest["boat"]
+    return {
+        "real": False,
+        "sim": {
+            "rpm": engine.get("rpm"),
+            "oil_pressure_psi": engine.get("oil_pressure_psi"),
+            "trim_pct": engine.get("trim_pct"),
+            "coolant_f": engine.get("coolant_f"),
+            "fuel_pct": engine.get("fuel_pct"),
+            "fuel_gph": engine.get("fuel_gph"),
+            "battery_voltage": boat.get("battery_voltage"),
+            "depth_ft": boat.get("depth_ft"),
+            "water_temp_f": boat.get("water_temp_f"),
+        },
+    }
 
 
 @app.post("/api/calibration")

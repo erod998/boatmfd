@@ -134,7 +134,7 @@ class EngineInfo:
         self._last_t = now
         wander = math.sqrt(dt)  # random walks scale with the square root of time
 
-        target_rpm = 700 + min(sog_kn, 9.0) / 9.0 * 1900  # a lake cruise: idle to ~2600 RPM
+        target_rpm = 700 + min(sog_kn, 35.0) / 35.0 * 3500  # idle to ~4200 RPM at a ~40 mph cruise
         # A real tach at steady cruise barely moves; +-40 here (a random walk, not just per-tick jitter,
         # since it's added straight into the running state) used to make even the smoothest gauge setting
         # look shaky, because no amount of easing can hide noise with genuinely slow, drifting components.

@@ -103,6 +103,33 @@ const ArcGisExportLayer = L.TileLayer.extend({
     return `${this._exportUrl}?` + params;
   },
 });
+// Zooming (especially out) can briefly show black squares where a newly-needed tile from the ArcGIS
+// export service (a slow dynamic render per request, not a cached tile) hasn't arrived yet. Warming
+// the browser's own HTTP cache for the current view at the next zoom level in each direction, once a
+// zoom settles, means the *next* zoom (in, or back out again) usually finds its tiles already there.
+// Delayed slightly so the zoom the person actually just landed on gets first claim on the connection
+// pool; skips URLs already warmed once, since the export URL for a given tile is always the same.
+const _prefetchedTileUrls = new Set();
+function prefetchAdjacentZooms() {
+  const zoom = map.getZoom();
+  const bounds = map.getBounds();
+  setTimeout(() => {
+    [zoom - 1, zoom + 1].forEach((z) => {
+      if (z < iencLayer.options.minZoom || z > iencLayer.options.maxZoom) return;
+      const nw = map.project(bounds.getNorthWest(), z).divideBy(256).floor();
+      const se = map.project(bounds.getSouthEast(), z).divideBy(256).floor();
+      for (let x = nw.x; x <= se.x; x++) {
+        for (let y = nw.y; y <= se.y; y++) {
+          const url = iencLayer.getTileUrl({ x, y, z });
+          if (_prefetchedTileUrls.has(url)) continue;
+          _prefetchedTileUrls.add(url);
+          new Image().src = url;
+        }
+      }
+    });
+  }, 500);
+}
+
 // keepBuffer keeps extra rings of tiles loaded outside the visible area (Leaflet's own default is 2), and
 // updateWhenIdle:false (Leaflet otherwise defaults this to true on touchscreens) keeps tiles loading continuously
 // while the chart is panning or rotating rather than waiting for it to stop -- both matter more now that
@@ -231,7 +258,13 @@ function attachMap(slot) {
 }
 
 document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("click", () => (b.dataset.zoom === "in" ? map.zoomIn() : map.zoomOut())));
-map.on("zoomend", lockBoatFrame);
+// While Leaflet's own zoom animation is running (a CSS transform on the tile pane), latLngToContainerPoint()
+// briefly disagrees with where things actually render -- calling panBy() from that window (the per-frame
+// lockBoatFrame() below does, in Heading Up) fights the in-progress transform and the boat icon visibly
+// snaps/glitches. isZooming skips those calls until the animation settles, then one corrective call on zoomend.
+let isZooming = false;
+map.on("zoomstart", () => { isZooming = true; });
+map.on("zoomend", () => { isZooming = false; lockBoatFrame(); prefetchAdjacentZooms(); });
 
 let nightMode = false;   // true only for the full night palette; the quick Night button and its label stay binary
 let chartColorMode = "day";
@@ -355,7 +388,7 @@ function setBoatTarget(lat, lon, heading) {
 // empirically against a live map: a panBy of (0, +50) moved a fixed point 50px UP the screen), so to slide the
 // boat from where it currently renders to where it belongs, the offset passed in is current-minus-desired.
 function lockBoatFrame() {
-  if (!headingUp || shownLat == null) return;
+  if (!headingUp || shownLat == null || isZooming) return;
   const size = map.getSize();
   if (size.x < 10 || size.y < 10) return;  // not laid out yet (e.g. its screen isn't showing)
   const boatPt = map.latLngToContainerPoint(L.latLng(shownLat, shownLon));

@@ -27,7 +27,19 @@
 <h1>Boat calibration</h1>
 <p><a href="/">&larr; Back to the dashboard</a> &middot; Readings update every second and are smoothed, so let a number settle for a few seconds before you save it. Nothing here changes what the boat does; it only teaches the dashboard what your senders mean.</p>
 <div id="message"></div>
-<div id="simNote" class="card" style="display:none"><p>The sensors are simulated (BOAT_SENSORS is not "n2k" or "real"), so there is nothing to calibrate.</p></div>
+<div id="simNote" class="card" style="display:none">
+  <p>The sensors are simulated (<code>BOAT_SENSORS</code> is not <code>n2k</code> or <code>real</code>), so there's no real sender to calibrate against -- these are just the numbers the simulator is currently making up, so you can see the page and the layout ahead of wiring anything up.</p>
+  <div class="row" style="gap:16px 28px">
+    <div class="reading"><span id="simRpm">--</span><small>rpm</small></div>
+    <div class="reading"><span id="simOil">--</span><small>psi oil</small></div>
+    <div class="reading"><span id="simCoolant">--</span><small>&deg;F coolant</small></div>
+    <div class="reading"><span id="simTrim">--</span><small>% trim</small></div>
+    <div class="reading"><span id="simFuel">--</span><small>% fuel (<span id="simGph">--</span> gph)</small></div>
+    <div class="reading"><span id="simBatt">--</span><small>V battery</small></div>
+    <div class="reading"><span id="simDepth">--</span><small>ft depth</small></div>
+    <div class="reading"><span id="simWtemp">--</span><small>&deg;F water</small></div>
+  </div>
+</div>
 
 <div id="cards" style="display:none">
 
@@ -180,7 +192,19 @@ function render(s) {
   lastStatus = s;
   $("simNote").style.display = s.real ? "none" : "block";
   $("cards").style.display = s.real ? "block" : "none";
-  if (!s.real) return;
+  if (!s.real) {
+    const sim = s.sim || {};
+    $("simRpm").textContent = num(sim.rpm, 0);
+    $("simOil").textContent = num(sim.oil_pressure_psi, 0);
+    $("simCoolant").textContent = num(sim.coolant_f, 0);
+    $("simTrim").textContent = num(sim.trim_pct, 0);
+    $("simFuel").textContent = num(sim.fuel_pct, 0);
+    $("simGph").textContent = num(sim.fuel_gph, 1);
+    $("simBatt").textContent = num(sim.battery_voltage, 2);
+    $("simDepth").textContent = num(sim.depth_ft, 1);
+    $("simWtemp").textContent = num(sim.water_temp_f, 0);
+    return;
+  }
   const mode = s.mode || "real";
   const r = s.readings, e = s.engine, c = s.calibration, raw = s.n2k_raw || {};
   document.querySelectorAll("[data-mode]").forEach((el) => { el.style.display = el.dataset.mode === mode ? "block" : "none"; });

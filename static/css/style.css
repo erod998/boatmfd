@@ -417,7 +417,16 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 /* ---------- Fusion zones ---------- */
 .mw-zones { flex: 1; min-width: 0; display: flex; gap: 0.4rem; }
 .mw:not(.full) .mw-zones { align-items: center; }
-.mw.full .mw-zones { flex-direction: column; }
+/* Full screen: Master spans the top, the zones themselves sit two-to-a-row -- with up to 4 zones a
+   single stacked column ran out of vertical room before the last row (needed a scrollbar, or just
+   got clipped), and this screen has width to spare next to the album art that a grid puts to use. */
+.mw.full .mw-zones { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; align-content: center; }
+.mw.full .master-row { grid-column: 1 / -1; }
+.mw.full .mw-zones .zone-row:not(.master-row) .zone-btn { width: 7.5rem; font-size: 1.05rem; padding: 0 0.6rem; }
+.mw.full .mw-zones .zone-row:not(.master-row) .step-btn,
+.mw.full .mw-zones .zone-row:not(.master-row) .level-bar { height: 3.6rem; }
+.mw.full .mw-zones .zone-row:not(.master-row) .step-btn { width: 3.6rem; font-size: 1.8rem; }
+.mw.full .mw-zones .zone-row:not(.master-row) .level-text { font-size: 1.3rem; }
 .mw:not(.full) .level-text { font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 0.3rem; }
 .zone-chips { flex: none; display: flex; gap: 0.25rem; }
 .zone-chip { flex: none; width: 2.6rem; height: 3.2rem; padding: 0; background: var(--btn); border: 0; border-radius: 0.3rem; color: #fff; font-size: 1.15rem; font-weight: 600; }

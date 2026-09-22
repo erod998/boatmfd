@@ -49,7 +49,7 @@ ROUTE = _CHANNEL + _CHANNEL[-2:0:-1]  # out and back, forever
 class SimulatedGPS:
     """Cruises the boat up and down a channel route at a boat-like turn rate, for demo purposes."""
 
-    def __init__(self, route=ROUTE, speed_kn=6.0, start_index=1):
+    def __init__(self, route=ROUTE, speed_kn=35.0, start_index=1):
         self.route = route
         self._target = (start_index + 1) % len(route)
         self.lat, self.lon = route[start_index]
@@ -65,7 +65,7 @@ class SimulatedGPS:
         # Steer toward the next route point with a limited turn rate, like a real boat.
         turn = (initial_bearing_deg(self.lat, self.lon, *target) - self.cog_deg + 540) % 360 - 180
         self.cog_deg = (self.cog_deg + max(-6.0, min(6.0, turn))) % 360
-        self.sog_kn = max(0.5, min(9.0, self.sog_kn + random.uniform(-0.15, 0.15)))
+        self.sog_kn = max(0.5, min(40.0, self.sog_kn + random.uniform(-0.4, 0.4)))
 
         dt_hours = 1.0 / 3600.0  # advance ~1 simulated second per read() call
         dist_nm = self.sog_kn * dt_hours
