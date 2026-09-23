@@ -3,7 +3,8 @@
 A Raspberry Pi HAT that reads **fuel level, trim, oil pressure, battery voltage and RPM** by
 *listening* to the wires the boat's analog gauges already use -- and, since rev 1.1, puts the Pi on
 the boat's **NMEA 2000** network (the Fusion stereo, the depth transducer) through an isolated
-CAN interface, so no separate CAN HAT is needed. Nothing is disconnected: every
+CAN interface, so no separate CAN HAT is needed -- and, since rev 1.2, has a connector (J6,
+LIGHTS) for a separate LED controller board. Nothing is disconnected: every
 analog gauge stays wired exactly as it is and keeps working, so if the Pi is off or broken the
 helm is just a normal helm. It replaces buying an engine-data converter (the CX5003 route).
 
@@ -49,6 +50,8 @@ stock analog gauges.
   DS18B20 probes (engine, water) ──────────────────────────── J3   3V3 / DATA / GND ──────── GPIO 26
 
   NMEA 2000 drop cable (Fusion stereo, depth transducer) ───── J5 ── isolated CAN ── SPI0 + GPIO 25 (can0)
+
+  LED controller board (separate) ─────────────────────────── J6 ── I2C, GPIO 18 / 19 / 21, 3V3, GND
 ```
 
 - **Taps** read the voltage on each gauge's **S** (sender) terminal, and once on the gauges' shared
@@ -195,20 +198,58 @@ All DS18B20 probes (engine, water) share these three wires.
 No I²C pull-ups on the board: the Pi already has them on GPIO 2/3, and a second board stacked on
 the header would double them up.
 
+### Lights connector (J6): for a separate LED board
+
+The LED controllers are deliberately **not** on this board: several amps of switched strip
+current would sit next to the millivolt-level gauge taps, and a shorted strip shouldn't be able
+to take the engine data down with it. J6 gives a separate LED board everything it needs from the
+Pi, and nothing it switches:
+
+```
+  J6.1 3V3  ── the Pi's 3.3 V, for the LED board's logic only (keep it under 50 mA)
+  J6.2 SDA  ── GPIO 2  ┐ the same I2C bus as the converters: PWM channels are PCA9685s on the LED
+  J6.3 SCL  ── GPIO 3  ┘ board, 16 each, as many as needed
+  J6.4 GND
+  J6.5 DAT1 ── GPIO 18 (PWM0)  addressable strip data (WS2812B / WS2815...), 3.3 V
+  J6.6 DAT2 ── GPIO 19 (PWM1)  a second addressable strip, driven independently
+  J6.7 GND
+  J6.8 AUX  ── GPIO 21         spare: an output enable, a third data line (PCM), a button...
+```
+
+The rules for the LED board, whatever it ends up carrying:
+
+- **Logic only on this cable.** The strips' 12 V comes into the LED board on its own fused
+  feed, and their current returns on its own heavy ground wire to the same ground point as the
+  Pi's supply -- never through J6. J6's GND is the signal reference.
+- **Buffer the data lines to 5 V** on the LED board (a 74AHCT125 or similar, powered from the
+  LED board's own 5 V), with a ~330 Ω series resistor at each strip's data input. WS28xx strips
+  want 5 V logic; the Pi's pins are 3.3 V and must never see more.
+- **PCA9685 addresses:** anything except 0x48 and 0x49 (the converters) and 0x70 (the PCA9685's
+  all-call address). The software's default is 0x40 (`BOAT_PCA9685_ADDR`). Run the PCA9685 from
+  J6's 3V3, so its I2C levels match the Pi's.
+- **Addressable strips on the Pi's PWM** (`BOAT_LED_DRIVER=ws281x`, `BOAT_LED_GPIO=18`) need the
+  Pi's analog audio off: `dtparam=audio=off` in `/boot/firmware/config.txt`. The stereo is on NMEA
+  2000, so nothing is lost.
+- The connector is a **JST GH** 8-way (1.25 mm, latching): use a ready-made GH 8-pin cable wired
+  **pin 1 to pin 1** ("same direction"), with the same connector on the LED board.
+
 ---
 
 ## Pi header pins used
 
 | Pin | Signal | Use |
 |---|---|---|
-| 1, 17 | 3V3 | converters, pull-ups, probes (a few mA in total) |
-| 3 | GPIO 2 / SDA | both ADS1115 |
-| 5 | GPIO 3 / SCL | both ADS1115 |
+| 1, 17 | 3V3 | converters, pull-ups, probes (a few mA in total); J6's 3V3 (under 50 mA) |
+| 3 | GPIO 2 / SDA | both ADS1115; J6 |
+| 5 | GPIO 3 / SCL | both ADS1115; J6 |
 | 6, 9, 14, 20, 25, 30, 34, 39 | GND | |
 | 33 | GPIO 13 | tach |
 | 37 | GPIO 26 | 1-Wire |
 | 19, 21, 23, 24 | GPIO 10, 9, 11, 8 (SPI0 MOSI, MISO, SCLK, CE0) | NMEA 2000 CAN controller |
 | 22 | GPIO 25 | CAN controller interrupt |
+| 12 | GPIO 18 (PWM0) | J6 DAT1: addressable LED data |
+| 35 | GPIO 19 (PWM1) | J6 DAT2: second addressable LED data |
+| 40 | GPIO 21 | J6 AUX: spare |
 
 Everything else is left free, GPIO 4 (used for NMEA 0183 by some marine HATs) included. The
 header is a stacking socket, so another HAT can go on top; check its pin list against this one
@@ -216,9 +257,9 @@ first -- in particular, a CAN HAT on SPI0 CE0 would clash with the one built in 
 
 ## Connectors
 
-Phoenix Contact **MC 1,5 / 3.81 mm pluggable terminal blocks with screw-locking flanges**: the
-plug screws to the header, so it can't walk out on a boat. Each connector's plug overhangs the
-board edge.
+J1, J2, J3 and J5 are Phoenix Contact **MC 1,5 / 3.81 mm pluggable terminal blocks with
+screw-locking flanges**: the plug screws to the header, so it can't walk out on a boat. Each
+connector's plug overhangs the board edge. J6, board to board, is a latching **JST GH**.
 
 Since rev 1.2 every pin is labelled on the board itself, beside the pin, with the name in the
 **Printed** column; the **WIRING** block in the middle of the board sums up the table below.
@@ -241,9 +282,9 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 | | 3 | BLK | NET-C: the network's 0 V |
 | | 4 | WHT | NET-H: CAN high |
 | | 5 | BLU | NET-L: CAN low |
+| **J6** lights (8, right edge, JST GH) | 1 / 2 / 3 / 4 | 3V3 / SDA / SCL / GND | the LED board (see "Lights connector" above) |
+| | 5 / 6 / 7 / 8 | DAT1 / DAT2 / GND / AUX | GPIO 18 / GPIO 19 / ground / GPIO 21 |
 | **J4** | | | the Pi's 40-pin header, underneath |
-
-The silkscreen carries this pinout in a legend block in the bottom-left corner.
 
 ---
 
@@ -276,6 +317,7 @@ The full list, with manufacturer part numbers, is
 | R26, JP1 | 1 | 120 Ω 0805 + solder jumper (open) | bench-only terminator |
 | C12-C18 | 7 | 100 nF / 1 µF 0805, one 1 µF **50 V 1206** (C16) | decoupling |
 | J1 / J2 / J3 / J5 | 1 each | Phoenix MC 1,5/ 8-, 2-, 3-, 5-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
+| J6 | 1 | JST **SM08B-GHS-TB** (GH, 8-way, side entry, SMD) | lights; a GH 8-pin 1:1 cable to the LED board |
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
 | — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
 | — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
@@ -322,6 +364,9 @@ right-angle HDMI adapter there. H5, in the extra corner, takes a standoff to the
 - **Silkscreen** (rev 1.2): every connector pin is labelled with what it connects to, printed
   on the wire side of the connector, and a WIRING block in the middle of the board sums up the
   rules. J5's labels are the drop cable's wire colours.
+- **J6** sits on the right edge between the probe connector and the mounting hole. Its two
+  outer data/spare lines leave the header's far corner on the bottom layer, so they don't wall
+  off the header's ground pin there from the top pour.
 - **Conformal coat** everything except the connectors and the header after the board passes bring-up.
 
 ## Changing the design

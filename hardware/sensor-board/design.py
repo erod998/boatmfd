@@ -41,6 +41,11 @@ PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
            23: "SPI_SCLK",    # GPIO11
            24: "SPI_CE0",     # GPIO8
            22: "CAN_INT",     # GPIO25
+           # LIGHTS (J6): out to a separate LED board. The PWM channels are I2C (a PCA9685 there,
+           # as many as needed); these are the addressable strips' data lines and one spare.
+           12: "LIGHT_DAT1",  # GPIO18: PWM0, rpi_ws281x's usual pin  (BOAT_LED_GPIO=18)
+           35: "LIGHT_DAT2",  # GPIO19: PWM1, a second addressable strip
+           40: "LIGHT_AUX",   # GPIO21: spare (PCM out, an enable, a button...)
            6: "GND", 9: "GND", 14: "GND", 20: "GND", 25: "GND", 30: "GND", 34: "GND", 39: "GND"}
 
 # The ignition side of the tach input. Kept 3 mm from everything else (board.py, and the
@@ -227,6 +232,15 @@ def build_parts():
              {"2": "N2K_NET_S", "3": "N2K_GND", "4": "N2K_H", "5": "N2K_L"},
              mpn="Phoenix Contact 1827897 (MC 1,5/ 5-GF-3,81); plug 1827732 (MC 1,5/ 5-STF-3,81)", sch=(35.56, 320.04),
              note="NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"),
+        # Lights: everything a separate LED board needs from the Pi, and nothing it switches. The
+        # strips' 12 V and their current stay on that board; this cable carries logic only. A
+        # latching connector, since the board it plugs into is on a boat too.
+        Part("J6", "Connector_Generic:Conn_01x08", "LIGHTS",
+             "Connector_JST:JST_GH_SM08B-GHS-TB_1x08-1MP_P1.25mm_Horizontal",
+             {"1": "+3V3", "2": "SDA", "3": "SCL", "4": "GND", "5": "LIGHT_DAT1", "6": "LIGHT_DAT2",
+              "7": "GND", "8": "LIGHT_AUX"},
+             mpn="SM08B-GHS-TB(LF)(SN); plug GHR-08V-S (JST GH, 1.25 mm, latching)", sch=(271.78, 243.84),
+             note="to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA, 3 SCL, 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"),
     ]
     # H5 carries the part of the board that reaches past the Pi's edge.
     for i, ref in enumerate(("H1", "H2", "H3", "H4", "H5")):

@@ -57,10 +57,12 @@ parts far easier.
 | Service | Turnkey (PCBWay buys the parts) |
 | Quantity | 1-5 |
 | Assembly sides | Top side (every SMD part is on top; J4 goes on the bottom but is through-hole, soldered from the top) |
-| Unique parts | 30 lines in the BOM |
-| SMD pads | 174 |
+| Unique parts | 31 lines in the BOM |
+| SMD pads | 184 |
 | Through-hole pins | 58 (J1-J5) |
 | Board | the same settings as above, ENIG finish |
+
+J6 (the JST GH lights connector) is surface-mount: PCBWay places it with the rest.
 
 In the notes: *"Assemble all SMD parts. Through-hole J1, J2, J3, J5 and J4: [assemble / do not
 fit -- customer will solder]. JP1 is a solder jumper: leave it OPEN."*
@@ -81,5 +83,6 @@ PC817-type gull-wing optocoupler, CTR rank C or B).
 | 1 | NMEA 2000 drop cable with a female Micro-C end (cut the other end into J5's plug) |
 | 5 | M2.5 standoffs and screws |
 | 1 | inline fuse holder + 1 A fuse (J1.3 battery feed) |
+| 1 | JST GH 8-pin cable, pin 1 to pin 1 ("same direction"), for J6 -- only once the LED board exists |
 
 Bring-up, one block at a time, is in `SENSOR_BOARD.md`.

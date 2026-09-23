@@ -334,7 +334,7 @@ def build():
     # The NMEA 2000 block, in signal order from the drop cable to the Pi, at the positions design.py gives.
     others.update({ref: parts[ref].sch for ref in
                    ("J5", "D9", "D10", "C16", "U6", "C17", "C18", "D11", "R26", "JP1", "U5", "C15",
-                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28") if ref in parts})
+                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28", "J6") if ref in parts})
     for ref, (x, y) in others.items():
         if ref == "D8":
             place(ref, x, y, text_side="below")
@@ -370,6 +370,7 @@ def build():
                        ("TACH: Delco EST (ignition side)", 20.32, 190.5), ("TEMPERATURE PROBES", 20.32, 218.44),
                        ("CONVERTERS", 342.9, 45.72), ("1-WIRE PROBES", 246.38, 167.64),
                        ("TACH OUTPUT", 167.64, 167.64), ("MOUNTING / POWER FLAGS", 330.2, 167.64),
+                       ("LIGHTS: to a separate LED board", 254.0, 228.6),
                        ("NMEA 2000: network side (isolated, powered by NET-S)", 20.32, 294.64),
                        ("NMEA 2000: Pi side", 213.36, 294.64)]:
         sh.items.append(text(body, x, y, size=2.0, bold=True))
@@ -390,6 +391,12 @@ def build():
         "JP1 (open) adds a 120 ohm terminator for a bench test with no backbone -- never bridge it on the boat: the backbone is terminated at its ends.\n"
         "Pi: dtparam=spi=on  dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25  ->  can0 at 250 kbit/s;  BOAT_CAN=can0.",
         20.32, 381.0, size=1.5))
+    sh.items.append(text(
+        "J6 carries logic only: the strips' 12 V and current stay on the LED board.\n"
+        "PWM strips: PCA9685s on SDA/SCL (not 0x48/0x49, the converters, or 0x70).\n"
+        "Addressable strips: DAT1 = GPIO18 (PWM0), DAT2 = GPIO19 (PWM1), 3.3 V: buffer to 5 V there.\n"
+        "AUX = GPIO21, spare. 3V3 for the LED board's logic, under 50 mA.",
+        254.0, 269.24, size=1.5))
     sh.junctions()
 
     return ["kicad_sch", ["version", "20250114"], ["generator", q("eeschema")], ["generator_version", q("9.0")],

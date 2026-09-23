@@ -91,6 +91,11 @@ def gerbers():
     return zpath
 
 
+def through_hole(footprint):
+    """The pluggable terminal blocks and the Pi header; the JST lights connector is surface-mount."""
+    return footprint.split(":")[0].startswith(("Connector_Phoenix", "Connector_PinSocket"))
+
+
 def package(footprint):
     """A short package name for the BOM: "0805", "SOT-23", "TSSOP-10", "SOD-123"... Connectors,
     which are hand-soldered, keep their full footprint name."""
@@ -120,7 +125,7 @@ def bom():
     rows = []
     for (value, fp, mpn), parts in groups.items():
         parts.sort(key=lambda p: (re.sub(r"\d", "", p.ref), int(re.sub(r"\D", "", p.ref))))
-        mount = "THT (hand solder)" if fp.split(":")[0].startswith(("Connector", "PinSocket")) else "SMD"
+        mount = "THT (hand solder)" if through_hole(fp) else "SMD"
         notes = "; ".join(dict.fromkeys(p.note for p in parts if p.note))
         rows.append([value, ",".join(p.ref for p in parts), package(fp), mpn, len(parts), mount, notes])
     rows.sort(key=lambda r: (r[5] != "SMD", r[1]))
@@ -137,7 +142,7 @@ MANUFACTURERS = [("CL21", "Samsung Electro-Mechanics"), ("CL31", "Samsung Electr
                  ("BAT54S", "Nexperia"), ("1N4148W", "Diodes Incorporated"), ("SMAJ", "Littelfuse"), ("SS14", "onsemi"),
                  ("NUP2105", "onsemi"), ("ADS1115", "Texas Instruments"), ("ISO1044", "Texas Instruments"),
                  ("UA78L", "Texas Instruments"), ("EL817", "Everlight"), ("MCP2518", "Microchip"), ("ASE-", "Abracon"),
-                 ("Phoenix Contact", "Phoenix Contact"), ("2x20", "Adafruit (1979) or equivalent")]
+                 ("Phoenix Contact", "Phoenix Contact"), ("2x20", "Adafruit (1979) or equivalent"), ("SM08B", "JST")]
 
 
 def manufacturer(mpn):
@@ -158,7 +163,7 @@ def pcbway_files():
     rows = []
     for (value, fp, mpn), parts in groups.items():
         parts.sort(key=lambda p: (re.sub(r"\d", "", p.ref), int(re.sub(r"\D", "", p.ref))))
-        tht = fp.split(":")[0].startswith(("Connector", "PinSocket"))
+        tht = through_hole(fp)
         part_no = mpn.split(" (")[0].replace("Phoenix Contact ", "").split(";")[0]
         notes = []
         if tht:

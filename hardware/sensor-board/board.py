@@ -76,6 +76,9 @@ PLACE = {
     # Probes on the right edge, and their protection.
     "J3": (56.3, 26.0, 90, "F"),
     "D8": (48.3, 22.2, 180, "F"), "R25": (50.8, 18.8, 180, "F"), "R24": (50.8, 15.6, 180, "F"),
+    # Lights, on the right edge between the probes and the mounting hole: the cable enters from
+    # the edge, pin 1 at the bottom (as J3). Its mounting tabs are kept 0.3 mm inside the edge.
+    "J6": (62.0, 41.6, 90, "F"),
 }
 for i, y in enumerate(LANE_Y):
     PLACE[f"R{1 + i}"] = (14.8, y, 0, "F")            # top resistor: IN left, DIV right
@@ -90,6 +93,7 @@ PIN_LABELS = {
     "J2": ["TACH", "GND"],
     "J3": ["3V3", "DATA", "GND"],
     "J5": ["BARE", "RED", "BLK", "WHT", "BLU"],     # the drop cable's wire colours
+    "J6": ["3V3", "SDA", "SCL", "GND", "DAT1", "DAT2", "GND", "AUX"],
 }
 
 # Routing order: the constrained nets first.
@@ -99,11 +103,13 @@ ORDER = (["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"] +
          [f"{n}_{s}" for n, *_ in design.CHANNELS for s in ("IN", "DIV", "ADC")] +
          ["SDA", "SCL",
           "CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK",
-          "TACH_OUT", "TACH_GPIO", "OW_EXT", "OW", "+3V3"])
+          "TACH_OUT", "TACH_GPIO", "OW_EXT", "OW", "LIGHT_DAT1", "LIGHT_DAT2", "LIGHT_AUX", "+3V3"])
 # The SPI bus runs the length of the board, from the header down to the CAN controller, across
 # every input lane and past the converters: it prefers the bottom layer, leaving the top to the
 # parts it passes.
-PREFER_BOTTOM = {"CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK"}
+# So do the two lights lines from the header's far corner: on top they wrap round the header's
+# GND pin 39 and cut it off from the pour.
+PREFER_BOTTOM = {"CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK", "LIGHT_DAT2", "LIGHT_AUX"}
 
 
 def mm(v):
@@ -213,6 +219,7 @@ class Board:
         self.unused = unused_pins()
         self.tree = {}               # net -> list of (i, j, layer) cells already part of it
         self.failed = []
+        self.stitched = set()        # GND pads that already have their via
 
     # ---------------------------------------------------------------- setup
     def net(self, name, raw=False):
@@ -386,12 +393,15 @@ class Board:
             self.commit(net, path, width)
             tree_cells += path + list(goal_cells)
 
-    def stitch_gnd(self):
-        """A via beside every surface-mount GND pad, into the bottom plane."""
+    def stitch_gnd(self, refs=None):
+        """A via beside every surface-mount GND pad (of these parts, or all), into the bottom plane."""
         self.router.track = TRACK
         for (ref, num), item in self.pad_items.items():
-            if item.net != "GND" or item.layers != {TOP}:
+            if item.net != "GND" or item.layers != {TOP} or (ref, num) in self.stitched:
                 continue
+            if refs is not None and ref not in refs:
+                continue
+            self.stitched.add((ref, num))
             g = item.geo
             hw, hh = (g["hw"], g["hh"]) if item.kind == "rect" else (g["r"], g["r"])
             via_maps = self.router.blocked("GND", VIA_D / 2)
@@ -505,7 +515,11 @@ class Board:
         for ref, names in PIN_LABELS.items():
             pads = sorted((p for p in self.fps[ref].Pads() if p.GetNumber().isdigit()), key=lambda p: int(p.GetNumber()))
             pts = [(pcbnew.ToMM(p.GetPosition().x) - OX, pcbnew.ToMM(p.GetPosition().y) - OY) for p in pads]
-            if abs(pts[0][0] - pts[-1][0]) < 0.1:          # a column of pins: an edge connector, left or right
+            pitch = abs(pts[1][1] - pts[0][1]) + abs(pts[1][0] - pts[0][0])
+            if abs(pts[0][0] - pts[-1][0]) < 0.1 and pitch < 2:   # fine pitch (J6): one line of text per pin
+                for (px, py), name in zip(pts, names):
+                    text(name, px - 1.45, py, 0.8, just="right")
+            elif abs(pts[0][0] - pts[-1][0]) < 0.1:          # a column of pins: an edge connector, left or right
                 x = pts[0][0] + (INSET if pts[0][0] < W / 2 else -INSET)
                 for (px, py), name in zip(pts, names):
                     text(name, x, py, 0.8, rot=90)
@@ -517,15 +531,21 @@ class Board:
         text("J3", 52.85, 29.4, 0.9, rot=90)
         text("J2", 40.2, 63.85, 0.9, just="right")
         text("J5 NMEA 2000", 15.6, 62.6, 0.9)
+        text("J6", 58.7, 35.9, 0.9, just="right")
         # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
         # here instead, which said less than the labels now do.)
-        lines = ["WIRING", "FUEL TRIM OIL: that gauge's S terminal", "IGN: any gauge's I terminal",
-                 "Taps: 10k resistor at the gauge end", "BAT+: +12V always on, 1A fuse",
-                 "GND: gauge G terminal / battery -", "TACH: gray wire, coil TACH terminal",
-                 "PROBES: red 3V3, yellow DATA, black GND", "NMEA: drop cable, bare shield unused",
+        # Lines beside J6 stop short of its pin labels; the long one goes below them.
+        lines = ["WIRING", "FUEL TRIM OIL: gauge S terminal", "IGN: any gauge's I terminal",
+                 "Taps: 10k at the gauge end", "BAT+: +12V always on, 1A fuse",
+                 "GND: gauge G / battery -", "TACH: gray wire, coil TACH",
+                 "NMEA: drop cable, shield unused", "LIGHTS: J6 to the LED board", "",
+                 "PROBES: red 3V3, yellow DATA, black GND",
                  "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
+        below_j6 = pcbnew.ToMM(self.fps["J6"].GetCourtyard(pcbnew.F_CrtYd).BBox().GetBottom()) - OY + 1.0
         y = 35.0
         for body in lines:
+            if body.startswith("PROBES"):   # the one line too long to pass J6's labels
+                y = max(y, below_j6)
             if body:
                 text(body, 34.6, y, 1.0 if body == "WIRING" else 0.8, just="left")
             y += 1.5 if body == "WIRING" else 1.35 if body else 0.6
@@ -549,6 +569,9 @@ class Board:
         self.titles()
         self.outline()
         self.place()
+        # J6's ground pins sit between signal pins 1.25 mm apart: their vias go in first, before
+        # the signals leaving the pins beside them close off the way out.
+        self.stitch_gnd(refs={"J6"})
         for net in ORDER:
             self.route_net(net)
             print(f"  routed {net}", flush=True)

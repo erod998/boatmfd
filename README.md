@@ -720,6 +720,12 @@ All LEDs show one color at a time.
 **Addressable WS2812B strips** — `BOAT_LED_DRIVER=ws281x` (needs `rpi_ws281x`
 and root), with `BOAT_LED_COUNT` and `BOAT_LED_GPIO`.
 
+**With the sensor board**, the LED electronics go on a separate LED board that
+plugs into the sensor board's J6 (LIGHTS) connector: I2C for PCA9685s, GPIO 18
+and 19 for two addressable strips, a spare GPIO, 3.3 V logic power and ground.
+The strips' power never goes through it. See SENSOR_BOARD.md, "Lights
+connector (J6)".
+
 ### The NMEA 2000 backbone (CX5003, Fusion stereo and the Pi)
 
 The CX5003, the Fusion stereo (MS-RA210 or MS-WB675 — same protocol either way) and the Pi all share one NMEA 2000 backbone,
