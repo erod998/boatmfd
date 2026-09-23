@@ -304,6 +304,7 @@ const chartGroup = L.layerGroup().addTo(map);
 const chartLayers = {};        // layer name -> { kind, leafletLayer }, for the point markers
 const chartFeatures = {};      // layer name -> { kind, features }: the raw chart, for identify and the cursor
 let chartArea = null;          // the area currently loaded
+let chartBBox = null;          // its [west, south, east, north], for the Go To route planner (guidance.js)
 let chartLoading = false;
 
 // ---------- The chart as map tiles ----------
@@ -436,6 +437,7 @@ function applyChartVisibility() {
 const isPointGeom = (f) => !!f.geometry && /Point$/.test(f.geometry.type);
 
 function renderChartBundle(bundle) {
+  chartBBox = bundle.bbox || null;
   chartGroup.clearLayers();
   Object.keys(chartLayers).forEach((k) => delete chartLayers[k]);
   buildChart(bundle);
@@ -1244,7 +1246,18 @@ function boatTick(now) {
   shownCourse = Math.abs(courseDiff) < 0.02 ? courseUpAngle()
     : (((shownCourse + courseDiff * Math.min(1, HEADING_OMEGA * dt)) % 360) + 360) % 360;
 
-  if (rotatedUp()) map.setBearing((360 - screenUpAngle()) % 360);   // that direction points up the screen
+  if (rotatedUp()) {
+    // Only when it has actually moved: every setBearing fires a "rotate" that repositions every
+    // marker and label, and on a steady course the eased heading stops changing.
+    const bearing = (360 - screenUpAngle()) % 360;
+    if (Math.abs(angleDiff(bearing, map.getBearing())) > 0.01) map.setBearing(bearing);
+  } else if (drSogKn >= 2) {
+    // Look-ahead follows the course over the ground, eased so a turn slides the chart across
+    // rather than jumping it; below 2 kn the course is mostly noise, so the last one is kept.
+    const c = (drCogDeg * Math.PI) / 180, k = Math.min(1, 1.5 * dt);
+    lookAheadX += (Math.sin(c) - lookAheadX) * k;
+    lookAheadY += (Math.cos(c) - lookAheadY) * k;
+  }
   lockBoatFrame();
   // Heading Up: always straight up. Course Up: the boat's angle to the leg, which is exactly what
   // shows you crabbing off track. North Up: the plain heading. All three are this one expression.
@@ -1289,12 +1302,18 @@ function setBoatTarget(lat, lon, heading, cogDeg, sogKn) {
 // way a chartplotter's does, until the chart is dragged -- then it stays put and the Center
 // button appears. (North Up used to let the boat drift to the edge of the screen and then jump
 // the whole chart to catch up.)
+//
+// In North Up the boat sits a third of the way in from the edge it is coming from ("look-ahead"),
+// so two thirds of the screen is always the water ahead: the bottom third heading north, the left
+// third heading east. It used to sit dead centre, with as much chart behind as in front.
+let lookAheadX = 0, lookAheadY = 0;   // eased direction of travel, screen axes; (0, 0) = centred
 function lockBoatFrame() {
   if (!following || shownLat == null || isZooming) return;
   const size = map.getSize();
   if (size.x < 10 || size.y < 10) return;  // not laid out yet (e.g. its screen isn't showing)
   const boatPt = map.latLngToContainerPoint(L.latLng(shownLat, shownLon));
-  const desiredPt = rotatedUp() ? L.point(size.x / 2, (size.y * 2) / 3) : L.point(size.x / 2, size.y / 2);
+  const desiredPt = rotatedUp() ? L.point(size.x / 2, (size.y * 2) / 3)
+    : L.point(size.x / 2 - (lookAheadX * size.x) / 6, size.y / 2 + (lookAheadY * size.y) / 6);
   const delta = boatPt.subtract(desiredPt);
   // panBy rounds to whole pixels, so anything under half a pixel would be a no-op move event.
   if (Math.abs(delta.x) >= 0.5 || Math.abs(delta.y) >= 0.5) map.panBy(delta, { animate: false });
@@ -1377,8 +1396,20 @@ function centerOnBoat() {
   else map.setView([shownLat, shownLon], map.getZoom(), { animate: false });
 }
 
+// A Go To follows the channel: the route is planned here, where the chart is (guidance.js), and
+// the server steers along it leg by leg. With no fix, no chart, or no way through the water, it is
+// the straight line it always was -- and the chart says so.
 async function setWaypoint(lat, lon, name = "WP") {
-  await postJson("/api/waypoint", { lat, lon, name });
+  const fix = lastData && lastData.gps && lastData.gps.has_fix ? lastData.gps : null;
+  let path = null;
+  if (fix && typeof planGuidedPath === "function") {
+    setChartNotice("Planning a route along the channel\u2026");
+    await new Promise((r) => setTimeout(r, 30));   // let the notice paint before the search runs
+    try { path = planGuidedPath(fix.lat, fix.lon, lat, lon); } catch (e) { path = null; }
+    setChartNotice(path ? null : "No route through the water found: going in a straight line");
+    if (!path) setTimeout(() => setChartNotice(null), 5000);
+  }
+  await postJson("/api/waypoint", { lat, lon, name, path });
 }
 const clearWaypoint = () => fetch("/api/waypoint", { method: "DELETE" });
 map.on("click", (e) => {
@@ -1871,8 +1902,12 @@ function renderNav(nav, routeNav, boatLatLng) {
   const wpLatLng = [active.waypoint.lat, active.waypoint.lon];
   if (!waypointMarker) waypointMarker = L.circleMarker(wpLatLng, { radius: 9, color: "#fff", weight: 2, fillColor: "#e0202b", fillOpacity: 1 }).addTo(map);
   else waypointMarker.setLatLng(wpLatLng);
-  if (!wpLine) wpLine = L.polyline([boatLatLng, wpLatLng], { color: "#e0202b", weight: 3, dashArray: "8 6" }).addTo(map);
-  else wpLine.setLatLngs([boatLatLng, wpLatLng]);
+  // The line ahead: a guided Go To's remaining route, from the boat on along the channel;
+  // otherwise the straight line to the waypoint (or the active route's leg).
+  const path = active.waypoint.path;
+  const line = path && path.length > 2 ? [boatLatLng, ...path.slice(active.leg || 1)] : [boatLatLng, wpLatLng];
+  if (!wpLine) wpLine = L.polyline(line, { color: "#e0202b", weight: 3, dashArray: "8 6" }).addTo(map);
+  else wpLine.setLatLngs(line);
 }
 
 $("setWpBtn").addEventListener("click", () => {

@@ -12,17 +12,18 @@ import asyncio
 import contextlib
 import gzip
 import json
+import math
 import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .ais import SimulatedAIS
 from .alarms import AlarmManager
@@ -30,10 +31,11 @@ from .boundaries import BoundaryManager
 from .celestial import moon_phase, sun_times
 from .chart_data import DETAIL_OFFSETS, ChartStore
 from .gps import make_gps_source
+from .guidance import GuidedPath
 from .lighting import COLOR_PRESETS, LightingController, PRESET_NAMES, Pca9685RgbDriver, WS281xDriver
 from .media import make_media_source
 from .n2k import make_n2k_node
-from .nav import relative_bearing, waypoint_nav
+from .nav import relative_bearing
 from .nav_alarms import NavAlarmManager
 from .offline_check import report as report_offline_assets
 from .quickdraw import QuickdrawRecorder
@@ -131,7 +133,7 @@ async def revalidate_ui_files(request, call_next):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
-waypoint: Optional[dict] = None  # {"lat", "lon", "origin_lat", "origin_lon", "name"}
+waypoint: Optional[dict] = None  # {"lat", "lon", "name", "guide": GuidedPath or None until the first fix}
 track: list[dict] = []  # recent breadcrumb trail for the chart
 _clients: set[WebSocket] = set()
 _recent_boundary_events: dict = {}  # boundary id -> (event dict, monotonic expiry): see _full_frame
@@ -148,10 +150,29 @@ Longitude = Field(ge=-180.0, le=180.0)
 Name = Field(default=None, max_length=60)
 
 
+PathPoint = Annotated[list[float], Field(min_length=2, max_length=2)]
+
+
 class WaypointIn(BaseModel):
     lat: float = Latitude
     lon: float = Longitude
     name: str = Field(default="WP", max_length=60)
+    # The route there, as planned by the browser along the channel (static/js/guidance.js):
+    # [[lat, lon], ...] from the boat to this waypoint. None for a straight line.
+    path: Optional[list[PathPoint]] = Field(default=None, max_length=5000)
+
+    @field_validator("path")
+    @classmethod
+    def _real_positions(cls, path):
+        if path is None:
+            return path
+        if len(path) < 2:
+            raise ValueError("a path needs a start and a destination")
+        for lat, lon in path:
+            # isfinite first: NaN compares False against every bound and would slip through them.
+            if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("every point on the path must be a real position")
+        return path
 
 
 class LightingIn(BaseModel):
@@ -431,23 +452,27 @@ def health():
 
 @app.post("/api/waypoint")
 def set_waypoint(wp: WaypointIn):
-    """The single "Go To" target: a straight line to one point, right now. Setting one stops any
-    active route (Route To) -- the two are mutually exclusive, like on a real chartplotter."""
+    """The single "Go To" target. Setting one stops any active route (Route To) -- the two are
+    mutually exclusive, like on a real chartplotter.
+
+    With a path (the browser plans one along the channel) the boat is steered along it leg by
+    leg (app/guidance.py); without, it is a straight line from where the boat is."""
     global waypoint
     route_tracker.stop()
-    # The leg starts where the boat is. With no position yet (just booted, no fix) the start is
-    # left unknown and filled in from the first fix -- see _full_frame. It used to default to the
-    # destination itself, a zero-length leg that made course read 0 and cross-track error
-    # meaningless for the whole trip: an off-course alarm on nothing, and Course Up aimed north.
-    origin = track[-1] if track else None
-    waypoint = {
-        "lat": wp.lat,
-        "lon": wp.lon,
-        "name": wp.name,
-        "origin_lat": origin["lat"] if origin else None,
-        "origin_lon": origin["lon"] if origin else None,
-    }
-    return {"ok": True, "waypoint": waypoint}
+    guide = None
+    if wp.path:
+        points = [(p[0], p[1]) for p in wp.path]
+        points[-1] = (wp.lat, wp.lon)   # the path ends exactly at the waypoint, whatever the planner snapped to
+        guide = GuidedPath(points)
+    elif track:
+        guide = GuidedPath([(track[-1]["lat"], track[-1]["lon"]), (wp.lat, wp.lon)])
+    # With no position yet (just booted, no fix) the start is unknown, so the straight line is
+    # drawn from the first fix -- see _full_frame. It used to default to the destination itself, a
+    # zero-length leg that made course read 0 and cross-track error meaningless for the whole
+    # trip: an off-course alarm on nothing, and Course Up aimed north.
+    waypoint = {"lat": wp.lat, "lon": wp.lon, "name": wp.name, "guide": guide}
+    return {"ok": True, "waypoint": {"lat": wp.lat, "lon": wp.lon, "name": wp.name},
+            "legs": len(guide.points) - 1 if guide else 1}
 
 
 @app.delete("/api/waypoint")
@@ -862,16 +887,13 @@ def _full_frame():
         trip_tracker.tick(fix.lat, fix.lon, fix.sog_kn, engine.get("fuel_gph"))
 
     nav = None
-    if waypoint is not None and fix.has_fix and waypoint["origin_lat"] is None:
-        waypoint["origin_lat"], waypoint["origin_lon"] = fix.lat, fix.lon   # set before the first fix
     if waypoint is not None and fix.has_fix:
-        nav = waypoint_nav(
-            fix.lat, fix.lon, fix.sog_kn,
-            waypoint["lat"], waypoint["lon"],
-            waypoint["origin_lat"], waypoint["origin_lon"],
-            fix.cog_deg,
-        )
-        nav["waypoint"] = {"lat": waypoint["lat"], "lon": waypoint["lon"], "name": waypoint["name"]}
+        if waypoint["guide"] is None:   # set before the first fix: the line starts where the boat first is
+            waypoint["guide"] = GuidedPath([(fix.lat, fix.lon), (waypoint["lat"], waypoint["lon"])])
+        guide = waypoint["guide"]
+        nav = guide.tick(fix.lat, fix.lon, fix.sog_kn, fix.cog_deg)
+        nav["waypoint"] = {"lat": waypoint["lat"], "lon": waypoint["lon"], "name": waypoint["name"],
+                           "path": [[round(a, 6), round(b, 6)] for a, b in guide.points] if nav["legs"] > 1 else None}
         nav["relative_bearing_deg"] = relative_bearing(fix.heading_deg, nav["bearing_deg"])
 
     route_nav = route_tracker.tick(fix.lat, fix.lon, fix.sog_kn, fix.cog_deg) if fix.has_fix else None

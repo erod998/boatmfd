@@ -189,5 +189,22 @@ class TestChartSettings(unittest.TestCase):
             with self.subTest(level=bad), self.assertRaises(ValidationError):
                 ChartSettingsIn(lake_level_ft=bad)
 
+
+class TestGoToPath(unittest.TestCase):
+    def test_accepts_a_planned_path(self):
+        wp = WaypointIn(**HERE, path=[[36.30, -86.57], [36.305, -86.565], [36.306, -86.563]])
+        self.assertEqual(len(wp.path), 3)
+        self.assertIsNone(WaypointIn(**HERE).path)
+
+    def test_rejects_paths_that_are_not_real_positions(self):
+        for bad in ([[NAN, -86.5], [36.3, -86.5]], [[36.3, INF], [36.3, -86.5]], [[91, 0], [36.3, -86.5]],
+                    [[36.3, -86.5]], [[36.3, -86.5, 1.0], [36.3, -86.5]], [[36.3], [36.3, -86.5]]):
+            with self.subTest(path=bad), self.assertRaises(ValidationError):
+                WaypointIn(**HERE, path=bad)
+
+    def test_rejects_an_absurdly_long_path(self):
+        with self.assertRaises(ValidationError):
+            WaypointIn(**HERE, path=[[36.3, -86.5]] * 5001)
+
 if __name__ == "__main__":
     unittest.main()

@@ -64,6 +64,18 @@ hazard point identifies it instead, with its own Go To. Only those point feature
 land, depth areas and shorelines used to as well, which between them cover the whole chart, so
 every tap opened "Land" and the chart could not be tapped for anything else at all.
 
+**Go To follows the channel** (auto guidance): a Go To is planned over the water, preferring the
+Corps' recommended track down the channel, and leaves it only to reach a destination off it -- up a
+creek, into a marina. The route is drawn as a dashed line and steered leg by leg: bearing, course
+and cross-track error are for the current leg (so Course Up turns with the channel), distance and
+time to go are along the rest of the route. With no chart or no way through the water it falls
+back to a straight line and says so. Saved routes (Route To) still run straight between their
+waypoints, as they do on a GPSMAP.
+
+**Look-ahead**: in North Up the boat sits a third of the way in from the edge it is coming from,
+so two thirds of the screen is the water ahead -- the bottom third heading north, the left third
+heading east. It follows the course over the ground above 2 kn.
+
 **Measure Distance** (the ruler button beside the zoom controls): the reference starts at the
 boat and follows it; each tap on the chart moves the far end, and the range and bearing read out
 at the top of the chart. **Set Ref** pins the reference to that point instead, to measure between
