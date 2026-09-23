@@ -82,7 +82,6 @@ if it's out of stock, say so and wait rather than accept another part.
 | 1 each | Phoenix Contact plugs: 1827761 (8-pos, J1), 1827732 (5-pos, J5) |
 | 2 | Phoenix Contact plug 1827703 (2-pos: J2 and J7) |
 | 1 | 12 V -> 5 V converter, 3 A or more, set to 5.1-5.2 V, with output overvoltage protection |
-| 5 | 10 kΩ ¼ W through-hole resistors + adhesive-lined heatshrink (the gauge-end tap resistors) |
 | 1 | NMEA 2000 drop cable with a female Micro-C end (cut the other end into J5's plug) |
 | 5 | M2.5 standoffs and screws |
 | 1 | inline fuse holder + 1 A fuse (J1.3 battery feed) |

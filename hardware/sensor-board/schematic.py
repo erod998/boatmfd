@@ -380,8 +380,8 @@ def build():
                        ("NMEA 2000: Pi side", 213.36, 294.64)]:
         sh.items.append(text(body, x, y, size=2.0, bold=True))
     sh.items.append(text(
-        "Each gauge tap: the S (or I) terminal -> 10k in heatshrink AT THE GAUGE -> J1 -> 39k -> node (10k to GND, BAT54S clamp to GND/3V3)\n"
-        "-> 1k -> ADC, with 100n at the ADC pin. V_adc = V_tap x 10/59 (0-16 V -> 0-2.7 V). Battery: 47k on board, no remote resistor, x 10/57.\n"
+        "Each gauge tap: the S (or I) terminal -> tap wire -> J1 -> 49.9k -> node (10k to GND, BAT54S clamp to GND/3V3)\n"
+        "-> 1k -> ADC, with 100n at the ADC pin. V_adc = V_tap x 10/59.9 (0-16 V -> 0-2.7 V). Battery: 47k, x 10/57.\n"
         "Tach, Delco EST coil (BAT +12 V in, TACH out): J2-1 to the gray wire from the coil's TACH terminal, J2-2 to the tach gauge's G. The tach stays connected.\n"
         "TACH is the coil's switched side -- 12 V, ground while the coil charges, a few hundred volts at each spark: three 3.3k 1206 in series share the spike;\n"
         "1N4148W and 10n across the LED. One rising edge per ignition cycle on GPIO13; 2 per revolution on the 3.0 4-cylinder (BOAT_TACH_PPR=2).\n"

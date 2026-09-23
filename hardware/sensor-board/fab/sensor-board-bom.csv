@@ -13,7 +13,7 @@ SMAJ5.0A,D12,SMA,SMAJ5.0A,1,SMD,clamps spikes on the 5 V rail
 SS14,D9,SMA,SS14,1,SMD,reverse-polarity protection on NET-S
 LIGHTS,J6,JST_GH_SM08B-GHS-TB_1x08-1MP_P1.25mm_Horizontal,"SM08B-GHS-TB(LF)(SN); plug GHR-08V-S (JST GH, 1.25 mm, latching)",1,SMD,"to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA GPIO5, 3 SCL GPIO6 (own bus), 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"
 IRLML0030,Q1,SOT-23,IRLML0030TRPBF,1,SMD,"the ideal diode's switch: source to J7, drain to the Pi; 27 mOhm, VGS +/-20 V"
-39k,"R1,R2,R4,R5,R6",1206,RC1206FR-0739KL,5,SMD,tap top resistor (1206 for voltage rating)
+49.9k,"R1,R2,R4,R5,R6",1206,RC1206FR-0749K9L,5,SMD,tap top resistor (1206 for voltage rating)
 1k,"R13,R14,R15,R16,R17,R18,R23",0805,RC0805FR-071KL,7,SMD,ADC pin series resistor; protects the GPIO
 3.3k,"R19,R20,R21",1206,RC1206FR-073K3L,3,SMD,tach input: 3 in series share the ignition spike
 4.7k,"R24,R25",0805,RC0805FR-074K7L,2,SMD,"J6 I2C pull-up (SDA, GPIO5); J6 I2C pull-up (SCL, GPIO6)"

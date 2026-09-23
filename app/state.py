@@ -43,8 +43,9 @@ class Settings:
     # Is the engine temperature gauge tapped (the sensor board's J1.6, TEMP)? Its sender then gives
     # the coolant temperature, ahead of a clip-on probe.
     temp_sender: bool = os.environ.get("BOAT_TEMP_SENDER", "false").lower() == "true"
-    # Each tap's divider: 10k in heatshrink at the gauge end of the tap wire + 39k on the board, over 10k.
-    tap_r_top: float = float(os.environ.get("BOAT_TAP_R_TOP", "49000"))
+    # Each tap's divider on the sensor board: 49.9k over 10k. (Rev 1.0-1.1 boards had 39k on the
+    # board and a 10k at the gauge end of each tap wire: BOAT_TAP_R_TOP=49000 for those.)
+    tap_r_top: float = float(os.environ.get("BOAT_TAP_R_TOP", "49900"))
     tap_r_bottom: float = float(os.environ.get("BOAT_TAP_R_BOTTOM", "10000"))
     # The tach GPIO's internal pull: down for the resistor+zener input, none for the sensor board's
     # optocoupler input (which has its own pull-up), up if a board needs it.

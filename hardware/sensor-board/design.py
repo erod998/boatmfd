@@ -16,17 +16,18 @@ DATE = "2026-09-23"
 
 # ---------------------------------------------------------------- the input channels
 # (name, helm-connector pin, ADC, ADC pin, top resistor). ADS1115 pins: AIN0=4, AIN1=5, AIN2=6, AIN3=7.
-# The top resistor is 39k for a gauge tap -- a 10k in heatshrink at the gauge end makes 49k -- and
-# a single 47k for the battery, which has no remote resistor. All over 10k.
+# The top resistor is 49.9k for a gauge tap and 47k for the battery, all over 10k, all on the board:
+# the tap wires run straight from the gauge terminals to J1. (Rev 1.0-1.1 split a tap's top
+# resistor into 10k at the gauge end of the wire, in case the wire chafed, and 39k here.)
 # Listed in board order, top to bottom. Battery comes before the gauge supply so their traces reach
 # U1's right-hand pins (AIN2 below AIN3) around the chip without crossing.
 CHANNELS = [
-    ("FUEL", 1, "U1", 4, "39k"),    # software channel 0
-    ("TRIM", 2, "U1", 5, "39k"),    # 1
+    ("FUEL", 1, "U1", 4, "49.9k"),  # software channel 0
+    ("TRIM", 2, "U1", 5, "49.9k"),  # 1
     ("BATT", 3, "U1", 6, "47k"),    # 2
-    ("GAUGE", 4, "U1", 7, "39k"),   # 3: the gauges' own supply (I terminal)
-    ("OIL", 5, "U2", 4, "39k"),     # 4
-    ("TEMP", 6, "U2", 5, "39k"),    # 5: the engine temperature gauge (BOAT_TEMP_SENDER=true)
+    ("GAUGE", 4, "U1", 7, "49.9k"), # 3: the gauges' own supply (I terminal)
+    ("OIL", 5, "U2", 4, "49.9k"),   # 4
+    ("TEMP", 6, "U2", 5, "49.9k"),  # 5: the engine temperature gauge (BOAT_TEMP_SENDER=true)
 ]
 
 # Pi header: physical pin -> net. Everything not listed is left unconnected.
@@ -88,7 +89,7 @@ C0805, C1206 = "sensor-board:C_0805_2012Metric_NoSilk", "sensor-board:C_1206_321
 
 
 def yageo(value, size):
-    code = {"39k": "39KL", "47k": "47KL", "10k": "10KL", "1k": "1KL", "3.3k": "3K3L", "4.7k": "4K7L", "100": "100RL",
+    code = {"49.9k": "49K9L", "47k": "47KL", "10k": "10KL", "1k": "1KL", "3.3k": "3K3L", "4.7k": "4K7L", "100": "100RL",
             "120": "120RL"}[value]
     return f"RC{size}FR-07{code}"
 

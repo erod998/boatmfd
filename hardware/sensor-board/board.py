@@ -581,7 +581,7 @@ class Board:
         # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
         # here instead, which said less than the labels now do.)
         lines = ["WIRING", "FUEL TRIM OIL TEMP: that gauge's S terminal", "IGN: any gauge's I terminal",
-                 "Taps: 10k resistor at the gauge end", "BAT+: dashboard 12V, 1A fuse",
+                 "BAT+: dashboard 12V, 1A fuse",
                  "GND: gauge G terminal / battery -", "TACH: gray wire, coil TACH terminal",
                  "NMEA: drop cable, bare shield unused", "LIGHTS: J6, cable to the LED board",
                  "5V IN: J7, from the converter at 5.1V",

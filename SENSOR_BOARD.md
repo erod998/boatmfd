@@ -37,12 +37,12 @@ stock analog gauges.
 
 ```
                BACK OF THE GAUGES (unchanged)                           SENSOR BOARD (Pi HAT)
-  fuel gauge   S ── to the fuel sender ───[10k]── tap wire ── J1.1 FUEL ────┐
-  trim gauge   S ── to the trim sender ───[10k]── tap wire ── J1.2 TRIM ────┤ divider, clamp, filter
-  any gauge    I ── key-on +12 V ─────────[10k]── tap wire ── J1.4 IGN ─────┤   ADS1115 U1 (0x48)
+  fuel gauge   S ── to the fuel sender ─────────── tap wire ── J1.1 FUEL ────┐
+  trim gauge   S ── to the trim sender ─────────── tap wire ── J1.2 TRIM ────┤ divider, clamp, filter
+  any gauge    I ── key-on +12 V ───────────────── tap wire ── J1.4 IGN ─────┤   ADS1115 U1 (0x48)
                G ── ground ────────────────────────────────── J1.7 GND      │     AIN0 fuel   AIN1 trim
-  oil gauge    S ── to the oil sender ────[10k]── tap wire ── J1.5 OIL ─────┤     AIN2 batt   AIN3 gauge supply
-  temp gauge   S ── to the temp sender ───[10k]── tap wire ── J1.6 TEMP ────┤   ADS1115 U2 (0x49)
+  oil gauge    S ── to the oil sender ──────────── tap wire ── J1.5 OIL ─────┤     AIN2 batt   AIN3 gauge supply
+  temp gauge   S ── to the temp sender ─────────── tap wire ── J1.6 TEMP ────┤   ADS1115 U2 (0x49)
   dashboard's switched 12 V (fused 1 A) ───────────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 temp
   helm ground (battery -) ─────────────────────────────────── J1.8 GND
 
@@ -65,11 +65,12 @@ stock analog gauges.
   points anywhere on the scale -- "just filled up", and one mark read off the analog gauge later --
   calibrate the whole range, near-empty included. A straight line would be ~20 points out at half
   a tank.
-- The **10 kΩ resistor at the gauge end** of every tap wire is a safety rule, not a nicety: if a
-  tap wire ever chafes through to ground or to +12 V, that resistor means the gauge circuit
-  can't be disturbed (at most ~1.5 mA flows). Solder it within a few centimetres of the ring
-  terminal and cover it in adhesive-lined heatshrink. It is also part of the divider (49 kΩ total
-  on top, 10 kΩ below), which the software assumes (`BOAT_TAP_R_TOP=49000`).
+- **Every tap resistor is on the board** (49.9 kΩ on top, 10 kΩ below, which the software
+  assumes: `BOAT_TAP_R_TOP=49900`), so a tap wire is plain wire from the gauge terminal to J1.
+  That makes each tap wire part of its gauge's circuit: one chafed through to ground would read
+  on that gauge like a shorted sender (and on IGN, short the key-on 12 V). Route them so they
+  can't chafe, and secure them. (Rev 1.0-1.1 put 10 kΩ of the top resistor at the gauge end of
+  each wire instead, which made a chafed wire harmless.)
 - The **tach** input goes through an **optocoupler**, so nothing on the ignition side can reach
   the Pi. It has to: the EST coil's **TACH** terminal is the coil's switched side. It sits at
   12 V, drops to ground while the coil charges, and flies up to a few hundred volts at every
@@ -87,30 +88,30 @@ Reference designators match the KiCad schematic
 ### Tap inputs (×6: fuel, trim, battery, gauge supply, oil, engine temperature)
 
 ```
-                     at the gauge                             on the board
-  gauge terminal ──[ Rg 10k ¼W ]── tap wire ── J1.x ──[ R1 39k 1% 1206 ]──┬──[ R13 1k ]──┬── ADS1115 AINx
-                  (in heatshrink)                                          │              │
-                                                                  [ R7 10k 1% ]      [ C1 100n ]
-                                                                           │              │
-                                                                          GND            GND
-                                                   D1 BAT54S: clamps the node (R1/R7) between GND and 3V3
+                                             on the board
+  gauge terminal ── tap wire ── J1.x ──[ R1 49.9k 1% 1206 ]──┬──[ R13 1k ]──┬── ADS1115 AINx
+                                                             │              │
+                                                    [ R7 10k 1% ]      [ C1 100n ]
+                                                             │              │
+                                                            GND            GND
+                                     D1 BAT54S: clamps the node (R1/R7) between GND and 3V3
 ```
 
-- **R1/R7 with Rg** divide 0–16 V down to 0–2.7 V (`V_adc = V_tap × 10/59`).
+- **R1/R7** divide 0–16 V down to 0–2.7 V (`V_adc = V_tap × 10/59.9`).
 - **D1 (BAT54S)** clamps the divider node between GND and 3V3 so a transient can never push the
-  ADC input past its limits; the 49 kΩ in front of it keeps the clamp current to about 2 mA even
+  ADC input past its limits; the 49.9 kΩ in front of it keeps the clamp current to about 2 mA even
   at 100 V.
 - **R13/C1** are a noise filter right at the ADC pin (and keep the clamp's forward voltage away from it).
-- No TVS diode on these inputs: the 49 kΩ already limits any transient to a couple of milliamps,
-  and a TVS's leakage current, flowing through 49 kΩ, would show up as a reading error.
+- No TVS diode on these inputs: the 49.9 kΩ already limits any transient to a couple of
+  milliamps, and a TVS's leakage current, flowing through it, would show up as a reading error.
 - The top resistors are 1206 for their voltage rating; everything else is 0805.
 - Channels, top to bottom on the board: fuel (R1, R7, R13, C1, D1), trim (…2), battery (…3),
   gauge supply (…4), oil (…5), engine temperature (…6).
 
 ### Battery voltage (J1.3, U1 AIN2)
 
-Same as a tap input, except the top resistor is a single **47 kΩ 1% 1206** (R3) and there is no
-remote resistor -- the feed is fused at its source instead -- giving `V_adc = V_batt × 10/57`. The
+Same as a tap input, except the top resistor is **47 kΩ 1% 1206** (R3) -- the feed is fused at
+its source -- giving `V_adc = V_batt × 10/57`. The
 software default `BOAT_BATT_R_TOP=47000`, `BOAT_BATT_R_BOTTOM=10000` matches.
 
 ### Tach: the EST coil's TACH terminal, gray wire (optocoupler)
@@ -306,12 +307,12 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 
 | Connector | Pin | Printed | Goes to |
 |---|---|---|---|
-| **J1** helm (8, left edge) | 1 | FUEL | fuel gauge **S** terminal, through its 10k |
-| | 2 | TRIM | trim gauge **S** terminal, through its 10k |
+| **J1** helm (8, left edge) | 1 | FUEL | fuel gauge **S** terminal |
+| | 2 | TRIM | trim gauge **S** terminal |
 | | 3 | BAT+ | the dashboard switch's 12 V (the same feed as the 5 V converter), **fused 1 A at the source** |
-| | 4 | IGN | the **I** terminal on the back of any one gauge, through its 10k. That's the key-switched +12 V that lights the gauges; they all share it, so any gauge will do. The board measures the senders as a share of it, and uses it to tell that the key is on |
-| | 5 | OIL | oil gauge **S** terminal, through its 10k |
-| | 6 | TEMP | engine temperature gauge **S** terminal, through its 10k |
+| | 4 | IGN | the **I** terminal on the back of any one gauge. That's the key-switched +12 V that lights the gauges; they all share it, so any gauge will do. The board measures the senders as a share of it, and uses it to tell that the key is on |
+| | 5 | OIL | oil gauge **S** terminal |
+| | 6 | TEMP | engine temperature gauge **S** terminal |
 | | 7 | GND | the **G** terminal of the same gauge as IGN: the taps measure against the gauges' own ground |
 | | 8 | GND | helm ground / battery - (the BAT+ feed's return) |
 | **J2** tach (2, bottom edge) | 1 | TACH | the **gray wire** from the EST coil's **TACH** terminal -- easiest where it lands on the tach gauge's signal terminal at the helm. No resistor on this one |
@@ -338,7 +339,7 @@ The full list, with manufacturer part numbers, is
 |---|---|---|---|
 | U1, U2 | 2 | **ADS1115IDGSR** (TI, TSSOP-10) | 0x48 and 0x49 |
 | U3 | 1 | **PC817**, rank B or C, SMD gull-wing | tach optocoupler |
-| R1, R2, R4–R6 | 5 | 39 kΩ 1% **1206** | tap top resistors |
+| R1, R2, R4–R6 | 5 | 49.9 kΩ 1% **1206** | tap top resistors |
 | R3 | 1 | 47 kΩ 1% **1206** | battery top resistor |
 | R7–R12, R22 | 7 | 10 kΩ 1% 0805 | divider bottoms; tach pull-up |
 | R13–R18, R23 | 7 | 1 kΩ 0805 | ADC pin series resistors; GPIO protection |
@@ -365,7 +366,6 @@ The full list, with manufacturer part numbers, is
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
 | — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
 | — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
-| **Rg** | 5 | **10 kΩ ¼ W through-hole** + adhesive-lined heatshrink | at the gauge end of each tap wire (fuel, trim, oil, temp, and one gauge's I) |
 | — | 1 | inline fuse holder + 1 A fuse | J1.3 battery feed, at its source |
 | — | 1 | **12 V -> 5 V converter**, 3 A or more, adjustable or fixed at 5.1-5.2 V, **with output overvoltage protection**, potted or sealed | J7; fed from the dashboard switch through its own fuse |
 | — | | 20–22 AWG tinned marine wire, ring terminals | taps; tach pair twisted |
@@ -448,15 +448,15 @@ check reports anything.
 1. Key off. At the back of each gauge, the terminals are marked **I** (ignition +12 V), **G**
    (ground) and **S** (sender, sometimes SND). Don't remove anything: put a ring terminal for the tap
    *on top of* the existing one on the stud, and snug the nut back down.
-2. Solder a **10 kΩ resistor** into each tap wire within a few centimetres of its ring terminal and
-   cover it with adhesive-lined heatshrink: fuel S to J1 FUEL, trim S to TRIM, oil S to OIL, the
-   temperature gauge's S to TEMP, and one gauge's **I** terminal to **IGN** (J1.4).
+2. Run a tap wire from each: fuel S to J1 FUEL, trim S to TRIM, oil S to OIL, the temperature
+   gauge's S to TEMP, and one gauge's **I** terminal to **IGN** (J1.4). Plain wire -- the
+   resistors are on the board.
 3. Run a ground from that same gauge's **G** terminal to J1.7 (GND).
 4. **Tach:** the EST coil has two terminals, **BAT** (+12 V in) and **TACH**. The **gray** wire
    runs from TACH to the tach gauge's signal terminal (marked TACH, SIG or S). Put a ring terminal
    on top of the gray wire's at the back of the tach gauge, to **J2 TACH**, and a second from the
-   tach gauge's **G** terminal to **J2 GND**. Twist the two together. No 10 kΩ on these -- the
-   board has its own. The tach gauge stays connected.
+   tach gauge's **G** terminal to **J2 GND**. Twist the two together. The tach gauge stays
+   connected.
 5. **Power:** the dashboard switch's 12 V output feeds the 12 V -> 5 V converter (through its
    own fuse) and, through a 1 A inline fuse, J1.3 (BAT+), which measures the battery. Helm ground
    to J1.8 (GND). The converter's output goes to **J7: +5V and GND** -- that powers the Pi and the
@@ -476,11 +476,10 @@ Do these in order, and don't connect the gauges until the board has passed the b
    way before connecting it.
 2. **Converters.** Board on the Pi, powered from J7, nothing plugged into J1 or J2. Enable I²C
    (`sudo raspi-config nonint do_i2c 0`, reboot), then `i2cdetect -y 1` must show **48** and **49**.
-3. **One tap, on the bench.** A 12 V supply through a 10 kΩ resistor into J1.4 (the Rg the software
-   expects) and its negative to J1.7. The calibration page (`http://<pi>:8090/calibrate`, with the
-   software settings below) should show **about 12.0 V at the gauges**. Repeat for each tap input by
-   moving the wire. A reading 20% high means the 10 kΩ was left out. The battery input (J1.3) takes
-   12 V directly, without the 10 kΩ.
+3. **One tap, on the bench.** A 12 V supply into J1.4 and its negative to J1.7. The calibration
+   page (`http://<pi>:8090/calibrate`, with the software settings below) should show **about
+   12.0 V at the gauges**. Repeat for each tap input by moving the wire, and for the battery input
+   (J1.3).
 4. **Tach, on the bench.** A 12 V supply switched on and off into J2 (+ to pin 1): `pinctrl get 13`
    should follow it -- low while 12 V is applied, high when it is off. Then on the engine: compare
    the page's RPM with the analog tach at idle and at cruise, and use the page's tach calibration

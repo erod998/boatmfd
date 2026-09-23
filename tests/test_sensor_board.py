@@ -4,7 +4,7 @@
 
 A fake board stands in for the two ADS1115s. Its inputs behave like the real thing: each analog
 gauge is a Thevenin source (a share of the gauge supply behind a resistance) driving its sender,
-seen through the board's 49k/10k tap divider. The analog gauges are "still connected" -- nothing
+seen through the board's 49.9k/10k tap divider. The analog gauges are "still connected" -- nothing
 here drives the senders, it only reads them.
 """
 import math
@@ -17,7 +17,7 @@ from app import sender_tap
 from app.sensors import ADS1115Pair, Calibration, SensorHub
 from app.state import Settings
 
-DIVIDER = 10_000 / (49_000 + 10_000)     # tap volts -> ADC volts
+DIVIDER = 10_000 / (49_900 + 10_000)     # tap volts -> ADC volts
 
 
 class GaugeBoard:
