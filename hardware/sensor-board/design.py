@@ -89,7 +89,8 @@ def resistor(ref, value, a, b, size="0805", **kw):
 def capacitor(ref, value, a, b, size="0805", **kw):
     if size == "1206":   # the one that sees the NMEA 2000 network's 12 V: 50 V rated
         return Part(ref, "Device:C", value, C1206, {"1": a, "2": b}, mpn={"1u": "CL31B105KBHNNNE"}[value], **kw)
-    mpn = {"100n": "CL21B104KBCNNNC", "1u": "CL21B105KAFNNNE", "10n": "CL21B103KBANNNC"}[value]
+    mpn = {"100n": "CL21B104KBCNNNC", "1u": "CL21B105KAFNNNE", "10n": "CL21B103KBANNNC",
+           "4.7u": "CL21A475KAQNNNE"}[value]
     return Part(ref, "Device:C", value, C0805, {"1": a, "2": b}, mpn=mpn, **kw)
 
 
@@ -138,9 +139,9 @@ def build_parts():
         capacitor("C11", "10n", "TACH_LED", "TACH_GND", sch=(139.7, 205.74), note="filters the ring-down after each spark"),
         Part("D7", "Diode:1N4148W", "1N4148W", "Diode_SMD:D_SOD-123", {"1": "TACH_LED", "2": "TACH_GND"},
              mpn="1N4148W-7-F", sch=(154.94, 205.74), note="keeps the ring-down's negative swing off the LED"),
-        Part("U3", "Isolator:PC817", "PC817", "Package_DIP:SMDIP-4_W9.53mm",
+        Part("U3", "Isolator:PC817", "EL817", "Package_DIP:SMDIP-4_W9.53mm",
              {"1": "TACH_LED", "2": "TACH_GND", "3": "GND", "4": "TACH_OUT"},
-             mpn="PC817 SMD (gull-wing), CTR rank B or C", sch=(187.96, 200.66),
+             mpn="EL817S1(C)(TU)-F", sch=(187.96, 200.66),
              note="isolates the Pi from the ignition"),
         resistor("R22", "10k", "TACH_OUT", "+3V3", sch=(213.36, 187.96), note="opto pull-up"),
         resistor("R23", "1k", "TACH_OUT", "TACH_GPIO", sch=(228.6, 203.2), note="protects the GPIO"),
@@ -167,7 +168,7 @@ def build_parts():
              note="SPI CAN FD controller (pin-for-pin successor to the MCP2517FD; Linux driver mcp251xfd)"),
         Part("Y1", "Oscillator:ASE-xxxMHz", "40MHz", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm",
              {"1": "+3V3", "2": "GND", "3": "CAN_CLK", "4": "+3V3"},
-             mpn="40 MHz 3.3 V CMOS oscillator, 3.2 x 2.5 mm (Abracon ASE series or equal)", sch=(345.44, 304.8),
+             mpn="ASE-40.000MHZ-L-C-T", sch=(345.44, 304.8),
              note="U4's clock (oscillator=40000000 in the overlay)"),
         capacitor("C12", "100n", "+3V3", "GND", sch=(368.3, 337.82), note="U4 decoupling"),
         capacitor("C13", "1u", "+3V3", "GND", sch=(381.0, 337.82), note="U4 decoupling"),
@@ -186,10 +187,10 @@ def build_parts():
         Part("D10", "Diode:SMAJ18A", "SMAJ18A", "Diode_SMD:D_SMA", {"1": "N2K_12V", "2": "N2K_GND"},
              mpn="SMAJ18A", sch=(96.52, 332.74), note="clamps surges on the network's power"),
         capacitor("C16", "1u", "N2K_12V", "N2K_GND", size="1206", sch=(111.76, 332.74), note="regulator input (50 V)"),
-        Part("U6", "Regulator_Linear:L78L05_SOT89", "L78L05", "Package_TO_SOT_SMD:SOT-89-3",
-             {"1": "N2K_5V", "2": "N2K_GND", "3": "N2K_12V"}, mpn="L78L05ABUTR", sch=(137.16, 312.42),
+        Part("U6", "Regulator_Linear:L78L05_SOT89", "UA78L05", "Package_TO_SOT_SMD:SOT-89-3",
+             {"1": "N2K_5V", "2": "N2K_GND", "3": "N2K_12V"}, mpn="UA78L05ACPK", sch=(137.16, 312.42),
              note="5 V for U5's network side, from NET-S"),
-        capacitor("C17", "1u", "N2K_5V", "N2K_GND", sch=(160.02, 332.74), note="regulator output"),
+        capacitor("C17", "4.7u", "N2K_5V", "N2K_GND", sch=(160.02, 332.74), note="regulator output; U5's VCC2 bulk (TI: ~4.7 uF)"),
         capacitor("C18", "100n", "N2K_5V", "N2K_GND", sch=(172.72, 332.74), note="U5 network-side decoupling"),
         Part("D11", "Power_Protection:NUP2105L", "NUP2105L", "sensor-board:SOT-23_NoSilk",
              {"1": "N2K_H", "2": "N2K_L", "3": "N2K_GND"}, mpn="NUP2105LT1G", sch=(190.5, 350.52),
@@ -206,15 +207,15 @@ def build_parts():
     parts += [
         Part("J1", "Connector_Generic:Conn_01x08", "HELM",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange", helm,
-             mpn="Phoenix MC 1,5/ 8-GF-3,81 (plug: MC 1,5/ 8-STF-3,81)", sch=(35.56, 157.48),
+             mpn="Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)", sch=(35.56, 157.48),
              note="1 fuel S, 2 trim S, 3 battery +12V, 4 gauge I, 5 oil S, 6 spare, 7 gauge G, 8 battery -"),
         Part("J2", "Connector_Generic:Conn_01x02", "TACH",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
-             {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix MC 1,5/ 2-GF-3,81 (plug: MC 1,5/ 2-STF-3,81)",
+             {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",
              sch=(35.56, 200.66), note="Delco EST: 1 gray tach wire, 2 engine ground"),
         Part("J3", "Connector_Generic:Conn_01x03", "PROBES",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange",
-             {"1": "+3V3", "2": "OW_EXT", "3": "GND"}, mpn="Phoenix MC 1,5/ 3-GF-3,81 (plug: MC 1,5/ 3-STF-3,81)",
+             {"1": "+3V3", "2": "OW_EXT", "3": "GND"}, mpn="Phoenix Contact 1827871 (MC 1,5/ 3-GF-3,81); plug 1827716 (MC 1,5/ 3-STF-3,81)",
              sch=(35.56, 228.6), note="DS18B20 probes: 1 red, 2 yellow, 3 black"),
         Part("J4", "Connector_Generic:Conn_02x20_Odd_Even", "RPi GPIO",
              "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical", {str(k): v for k, v in PI_PINS.items()},
@@ -223,7 +224,7 @@ def build_parts():
         Part("J5", "Connector_Generic:Conn_01x05", "NMEA 2000",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_5-GF-3.81_1x05_P3.81mm_Horizontal_ThreadedFlange",
              {"2": "N2K_NET_S", "3": "N2K_GND", "4": "N2K_H", "5": "N2K_L"},
-             mpn="Phoenix MC 1,5/ 5-GF-3,81 (plug: MC 1,5/ 5-STF-3,81)", sch=(35.56, 320.04),
+             mpn="Phoenix Contact 1827897 (MC 1,5/ 5-GF-3,81); plug 1827732 (MC 1,5/ 5-STF-3,81)", sch=(35.56, 320.04),
              note="NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"),
     ]
     # H5 carries the part of the board that reaches past the Pi's edge.

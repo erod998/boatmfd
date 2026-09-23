@@ -284,6 +284,8 @@ The full list, with manufacturer part numbers, is
 
 ## Ordering the board
 
+For **PCBWay**, everything is ready in [hardware/sensor-board/fab/pcbway/](hardware/sensor-board/fab/pcbway/): the Gerbers, a BOM and centroid in PCBWay's assembly format, and [ORDER.md](hardware/sensor-board/fab/pcbway/ORDER.md) with every option to pick on their quote forms. The notes below are the general version.
+
 The board is a 2-layer, 1.6 mm, **65 × 76 mm** Pi HAT: the standard HAT outline and mounting
 holes, 20 mm longer on the side away from the header to make room for the NMEA 2000 interface.
 Those 20 mm reach past the Pi 4's USB-C / micro-HDMI edge and sit about 5 mm above those plugs

@@ -1,0 +1,31 @@
+Item #,*Designator,*Qty,Manufacturer,*Mfg Part #,Description / Value,*Package/Footprint,Type,Your Instructions / Notes
+1,"C1,C2,C3,C4,C5,C6,C7,C9,C12,C14,C15,C18",12,Samsung Electro-Mechanics,CL21B104KBCNNNC,100n,0805,SMD,
+2,C11,1,Samsung Electro-Mechanics,CL21B103KBANNNC,10n,0805,SMD,
+3,C16,1,Samsung Electro-Mechanics,CL31B105KBHNNNE,1u,1206,SMD,
+4,C17,1,Samsung Electro-Mechanics,CL21A475KAQNNNE,4.7u,0805,SMD,
+5,"C8,C10,C13",3,Samsung Electro-Mechanics,CL21B105KAFNNNE,1u,0805,SMD,
+6,"D1,D2,D3,D4,D5,D6",6,Nexperia,"BAT54S,215",BAT54S,SOT-23,SMD,
+7,D10,1,Littelfuse,SMAJ18A,SMAJ18A,SMA,SMD,
+8,D11,1,onsemi,NUP2105LT1G,NUP2105L,SOT-23,SMD,
+9,D7,1,Diodes Incorporated,1N4148W-7-F,1N4148W,SOD-123,SMD,
+10,D8,1,Littelfuse,SMAJ5.0A,SMAJ5.0A,SMA,SMD,
+11,D9,1,onsemi,SS14,SS14,SMA,SMD,
+12,"R1,R2,R4,R5,R6",5,Yageo,RC1206FR-0739KL,39k,1206,SMD,
+13,"R13,R14,R15,R16,R17,R18,R23",7,Yageo,RC0805FR-071KL,1k,0805,SMD,
+14,"R19,R20,R21",3,Yageo,RC1206FR-073K3L,3.3k,1206,SMD,
+15,R24,1,Yageo,RC0805FR-074K7L,4.7k,0805,SMD,
+16,R25,1,Yageo,RC0805FR-07100RL,100,0805,SMD,
+17,R26,1,Yageo,RC0805FR-07120RL,120,0805,SMD,
+18,R3,1,Yageo,RC1206FR-0747KL,47k,1206,SMD,
+19,"R7,R8,R9,R10,R11,R12,R22,R27,R28",9,Yageo,RC0805FR-0710KL,10k,0805,SMD,
+20,"U1,U2",2,Texas Instruments,ADS1115IDGSR,ADS1115IDGSR,TSSOP-10,SMD,
+21,U3,1,Everlight,EL817S1(C)(TU)-F,EL817,SMDIP-4,SMD,"PC817-type optocoupler, gull-wing SMD, CTR rank C (or B)"
+22,U4,1,Microchip,MCP2518FDT-E/SL,MCP2518FD,SOIC-14,SMD,
+23,U5,1,Texas Instruments,ISO1044BDR,ISO1044BD,SOIC-8,SMD,
+24,U6,1,Texas Instruments,UA78L05ACPK,UA78L05,SOT-89-3,SMD,
+25,Y1,1,Abracon,ASE-40.000MHZ-L-C-T,40MHz,3.2x2.5mm,SMD,Abracon ASE series: any 40 MHz 3.3 V CMOS oscillator in this 3.2x2.5 footprint is fine
+26,J1,1,Phoenix Contact,1827923,HELM,"PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1827761 is for the wiring, not the board"
+27,J2,1,Phoenix Contact,1827868,TACH,"PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1827703 is for the wiring, not the board"
+28,J3,1,Phoenix Contact,1827871,PROBES,"PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1827716 is for the wiring, not the board"
+29,J4,1,Adafruit (1979) or equivalent,"2x20 female stacking header, 2.54 mm, extra-tall",RPi GPIO,PinSocket_2x20_P2.54mm_Vertical,THT,"through-hole; fit on the BOTTOM side, pins soldered from the top"
+30,J5,1,Phoenix Contact,1827897,NMEA 2000,"PhoenixContact_MC_1,5_5-GF-3.81_1x05_P3.81mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1827732 is for the wiring, not the board"

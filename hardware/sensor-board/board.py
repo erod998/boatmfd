@@ -30,7 +30,7 @@ OX, OY = 100.0, 50.0                 # where the board sits on KiCad's page
 # header: rev 1.0 was the plain 65 x 56 HAT and had no room left for the NMEA 2000 interface.
 # The extra 20 mm reaches past the Pi's USB-C / micro-HDMI edge, about 5 mm above those plugs.
 W, H, HAT_H = 65.0, 76.0, 56.0
-TRACK, HV_TRACK, VIA_D, VIA_DRILL = 0.2, 0.25, 0.6, 0.3
+TRACK, HV_TRACK, VIA_D, VIA_DRILL = 0.2, 0.25, 0.7, 0.3
 HV = set(design.TACH_HV_NETS)
 SERIES = {"TACH_IN", "TACH_A", "TACH_B"}   # the nets the ignition spike is divided across
 N2K = set(design.N2K_BUS_NETS)
@@ -478,7 +478,7 @@ class Board:
             t.SetPosition(V(x, y))
             t.SetLayer(layer)
             t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size)))
-            t.SetTextThickness(mm(size * 0.15))
+            t.SetTextThickness(mm(max(0.15, size * 0.15)))   # PCBWay: 0.15 mm stroke, 0.8 mm height minimum
             t.SetTextAngleDegrees(rot)
             if just == "left":
                 t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT)
@@ -566,9 +566,12 @@ def write_project(path):
         [{"netclass": "TACH_HV", "pattern": pcb_net_name(n)} for n in design.TACH_HV_NETS] +
         [{"netclass": "N2K_BUS", "pattern": pcb_net_name(n)} for n in design.N2K_BUS_NETS])
     rules = pro["board"]["design_settings"]["rules"]
-    rules.update({"min_clearance": 0.15, "min_track_width": 0.15, "min_via_diameter": 0.5, "min_via_annular_width": 0.1,
-                  "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_to_hole": 0.25,
-                  "min_hole_clearance": 0.25})
+    # PCBWay's standard 2-layer limits (pcbway.com/capabilities.html), with margin where it is free:
+    # tracks/gaps 0.1 mm, annular ring 0.15 mm, hole-to-hole 16 mil, copper to a routed edge 0.25 mm,
+    # silkscreen 0.8 mm tall with a 0.15 mm stroke.
+    rules.update({"min_clearance": 0.15, "min_track_width": 0.15, "min_via_diameter": 0.6, "min_via_annular_width": 0.15,
+                  "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_to_hole": 0.41,
+                  "min_hole_clearance": 0.25, "min_text_height": 0.8, "min_text_thickness": 0.15})
     pro["sheets"] = [[schematic.ROOT, "Root"]]
     Path(path).write_text(json.dumps(pro, indent=2), encoding="utf-8")
 

@@ -8,7 +8,8 @@ Run with KiCad's bundled Python (the steps need pcbnew):
   3. board.py       -> sensor-board.kicad_pcb (+ .kicad_pro, .kicad_dru), then KiCad's DRC with
                        the schematic-parity check, which must be clean at every severity
   4. fab/           -> Gerbers and drill files (one zip), BOM, pick-and-place, schematic and
-                       assembly PDFs, renders
+                       assembly PDFs, renders; fab/pcbway/ the same BOM and placement in PCBWay's
+                       assembly format
 
 Any failed check stops the build before fab/ is written. The check reports are left in reports/.
 """
@@ -131,6 +132,73 @@ def bom():
     return path
 
 
+# Who makes each part, for fabs whose BOM wants the manufacturer as well as the part number.
+MANUFACTURERS = [("CL21", "Samsung Electro-Mechanics"), ("CL31", "Samsung Electro-Mechanics"), ("RC", "Yageo"),
+                 ("BAT54S", "Nexperia"), ("1N4148W", "Diodes Incorporated"), ("SMAJ", "Littelfuse"), ("SS14", "onsemi"),
+                 ("NUP2105", "onsemi"), ("ADS1115", "Texas Instruments"), ("ISO1044", "Texas Instruments"),
+                 ("UA78L", "Texas Instruments"), ("EL817", "Everlight"), ("MCP2518", "Microchip"), ("ASE-", "Abracon"),
+                 ("Phoenix Contact", "Phoenix Contact"), ("2x20", "Adafruit (1979) or equivalent")]
+
+
+def manufacturer(mpn):
+    return next((m for prefix, m in MANUFACTURERS if mpn.startswith(prefix)), "")
+
+
+def pcbway_files():
+    """The BOM and centroid in the layout PCBWay's assembly quote asks for (their BOM sample's
+    columns; a centroid with designator, X, Y, side and rotation). Through-hole parts are listed,
+    marked THT, so the order can say whether PCBWay fits them or you do."""
+    out = FAB / "pcbway"
+    out.mkdir(exist_ok=True)
+    groups = {}
+    for p in design.PARTS:
+        if p.symbol.startswith(("Mechanical:", "Jumper:")):
+            continue
+        groups.setdefault((p.value, p.footprint, p.mpn), []).append(p)
+    rows = []
+    for (value, fp, mpn), parts in groups.items():
+        parts.sort(key=lambda p: (re.sub(r"\d", "", p.ref), int(re.sub(r"\D", "", p.ref))))
+        tht = fp.split(":")[0].startswith(("Connector", "PinSocket"))
+        part_no = mpn.split(" (")[0].replace("Phoenix Contact ", "").split(";")[0]
+        notes = []
+        if tht:
+            notes.append("through-hole")
+        if parts[0].ref == "J4":
+            notes.append("fit on the BOTTOM side, pins soldered from the top")
+        if parts[0].ref == "Y1":
+            notes.append("Abracon ASE series: any 40 MHz 3.3 V CMOS oscillator in this 3.2x2.5 footprint is fine")
+        if parts[0].ref == "U3":
+            notes.append("PC817-type optocoupler, gull-wing SMD, CTR rank C (or B)")
+        if "plug" in mpn:
+            notes.append("mating plug " + mpn.split("plug ")[1].split(" (")[0] + " is for the wiring, not the board")
+        rows.append({"*Designator": ",".join(p.ref for p in parts), "*Qty": len(parts),
+                     "Manufacturer": manufacturer(mpn), "*Mfg Part #": part_no, "Description / Value": value,
+                     "*Package/Footprint": package(fp), "Type": "THT" if tht else "SMD",
+                     "Your Instructions / Notes": "; ".join(notes)})
+    rows.sort(key=lambda r: (r["Type"] != "SMD", r["*Designator"]))
+    bom = out / f"{PROJECT}-pcbway-bom.csv"
+    with open(bom, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["Item #"] + list(rows[0]))
+        w.writeheader()
+        for i, r in enumerate(rows, 1):
+            w.writerow({"Item #": i, **r})
+    # Centroid: every placed part, both sides, from the board's bottom-left corner.
+    cli("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",
+        "--use-drill-file-origin", "-o", REPORTS / "pos_all.csv", PCB)
+    skip = {p.ref for p in design.PARTS if p.symbol.startswith(("Mechanical:", "Jumper:"))}
+    placed = [r for r in csv.DictReader(io.StringIO((REPORTS / "pos_all.csv").read_text(encoding="utf-8")))
+              if r["Ref"] not in skip]
+    centroid = out / f"{PROJECT}-pcbway-centroid.csv"
+    with open(centroid, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["Designator", "Mid X(mm)", "Mid Y(mm)", "Layer", "Rotation"])
+        for r in placed:
+            w.writerow([r["Ref"], f"{float(r['PosX']):.3f}", f"{float(r['PosY']):.3f}",
+                        "T" if r["Side"] == "top" else "B", f"{float(r['Rot']) % 360:.0f}"])
+    shutil.copy(FAB / f"{PROJECT}-gerbers.zip", out / f"{PROJECT}-gerbers.zip")
+    return bom, centroid, len(placed)
+
+
 def cpl():
     """Pick-and-place for the surface-mount parts, in JLCPCB's format."""
     cli("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both", "--smd-only",
@@ -184,6 +252,8 @@ def main():
     print(f"  {bom().name}")
     path, n = cpl()
     print(f"  {path.name} ({n} parts)")
+    bom_pw, cen_pw, n_pw = pcbway_files()
+    print(f"  pcbway/{bom_pw.name}, pcbway/{cen_pw.name} ({n_pw} parts)")
     for p in pdfs() + tuple(renders()):
         print(f"  {p.name}")
 

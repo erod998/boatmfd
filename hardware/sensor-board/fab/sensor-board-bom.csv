@@ -2,7 +2,8 @@ Comment,Designator,Footprint,MPN,Qty,Mount,Note
 100n,"C1,C2,C3,C4,C5,C6,C7,C9,C12,C14,C15,C18",0805,CL21B104KBCNNNC,12,SMD,ADC input filter; U1 decoupling; U2 decoupling; U4 decoupling; Y1 decoupling; U5 Pi-side decoupling; U5 network-side decoupling
 10n,C11,0805,CL21B103KBANNNC,1,SMD,filters the ring-down after each spark
 1u,C16,1206,CL31B105KBHNNNE,1,SMD,regulator input (50 V)
-1u,"C8,C10,C13,C17",0805,CL21B105KAFNNNE,4,SMD,U1 decoupling; U2 decoupling; U4 decoupling; regulator output
+4.7u,C17,0805,CL21A475KAQNNNE,1,SMD,regulator output; U5's VCC2 bulk (TI: ~4.7 uF)
+1u,"C8,C10,C13",0805,CL21B105KAFNNNE,3,SMD,U1 decoupling; U2 decoupling; U4 decoupling
 BAT54S,"D1,D2,D3,D4,D5,D6",SOT-23,"BAT54S,215",6,SMD,clamps the divider node between GND and 3V3
 SMAJ18A,D10,SMA,SMAJ18A,1,SMD,clamps surges on the network's power
 NUP2105L,D11,SOT-23,NUP2105LT1G,1,SMD,ESD and surge protection for NET-H / NET-L
@@ -18,13 +19,13 @@ SS14,D9,SMA,SS14,1,SMD,reverse-polarity protection on NET-S
 47k,R3,1206,RC1206FR-0747KL,1,SMD,tap top resistor (1206 for voltage rating)
 10k,"R7,R8,R9,R10,R11,R12,R22,R27,R28",0805,RC0805FR-0710KL,9,SMD,divider bottom; opto pull-up; keeps U4 deselected while the Pi boots; interrupt pull-up
 ADS1115IDGSR,"U1,U2",TSSOP-10,ADS1115IDGSR,2,SMD,"I2C 0x48: fuel, trim, battery, gauge supply; I2C 0x49: oil, spare (optional)"
-PC817,U3,SMDIP-4,"PC817 SMD (gull-wing), CTR rank B or C",1,SMD,isolates the Pi from the ignition
+EL817,U3,SMDIP-4,EL817S1(C)(TU)-F,1,SMD,isolates the Pi from the ignition
 MCP2518FD,U4,SOIC-14,MCP2518FDT-E/SL,1,SMD,SPI CAN FD controller (pin-for-pin successor to the MCP2517FD; Linux driver mcp251xfd)
 ISO1044BD,U5,SOIC-8,ISO1044BDR,1,SMD,isolated CAN transceiver: the Pi side and the network side share no ground
-L78L05,U6,SOT-89-3,L78L05ABUTR,1,SMD,"5 V for U5's network side, from NET-S"
-40MHz,Y1,3.2x2.5mm,"40 MHz 3.3 V CMOS oscillator, 3.2 x 2.5 mm (Abracon ASE series or equal)",1,SMD,U4's clock (oscillator=40000000 in the overlay)
-HELM,J1,"PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 8-GF-3,81 (plug: MC 1,5/ 8-STF-3,81)",1,THT (hand solder),"1 fuel S, 2 trim S, 3 battery +12V, 4 gauge I, 5 oil S, 6 spare, 7 gauge G, 8 battery -"
-TACH,J2,"PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 2-GF-3,81 (plug: MC 1,5/ 2-STF-3,81)",1,THT (hand solder),"Delco EST: 1 gray tach wire, 2 engine ground"
-PROBES,J3,"PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 3-GF-3,81 (plug: MC 1,5/ 3-STF-3,81)",1,THT (hand solder),"DS18B20 probes: 1 red, 2 yellow, 3 black"
+UA78L05,U6,SOT-89-3,UA78L05ACPK,1,SMD,"5 V for U5's network side, from NET-S"
+40MHz,Y1,3.2x2.5mm,ASE-40.000MHZ-L-C-T,1,SMD,U4's clock (oscillator=40000000 in the overlay)
+HELM,J1,"PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)",1,THT (hand solder),"1 fuel S, 2 trim S, 3 battery +12V, 4 gauge I, 5 oil S, 6 spare, 7 gauge G, 8 battery -"
+TACH,J2,"PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",1,THT (hand solder),"Delco EST: 1 gray tach wire, 2 engine ground"
+PROBES,J3,"PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827871 (MC 1,5/ 3-GF-3,81); plug 1827716 (MC 1,5/ 3-STF-3,81)",1,THT (hand solder),"DS18B20 probes: 1 red, 2 yellow, 3 black"
 RPi GPIO,J4,PinSocket_2x20_P2.54mm_Vertical,"2x20 female stacking header, 2.54 mm, extra-tall (e.g. Adafruit 1979)",1,THT (hand solder),to the Raspberry Pi
-NMEA 2000,J5,"PhoenixContact_MC_1,5_5-GF-3.81_1x05_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 5-GF-3,81 (plug: MC 1,5/ 5-STF-3,81)",1,THT (hand solder),"NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"
+NMEA 2000,J5,"PhoenixContact_MC_1,5_5-GF-3.81_1x05_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827897 (MC 1,5/ 5-GF-3,81); plug 1827732 (MC 1,5/ 5-STF-3,81)",1,THT (hand solder),"NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"
