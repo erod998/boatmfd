@@ -57,10 +57,10 @@ PLACE = {
     # Tach, bottom right, its plug on the bottom edge. The ignition side (left of U3) is kept
     # 3 mm from everything else.
     "J2": (42.0, 67.3, 0, "F"),
-    "R19": (36.0, 61.5, 90, "F"), "R20": (38.8, 61.5, -90, "F"), "R21": (41.6, 61.5, 90, "F"),
-    "D7": (44.4, 61.5, -90, "F"), "C11": (47.3, 61.5, -90, "F"),
+    "R19": (36.0, 60.9, 90, "F"), "R20": (38.8, 60.9, -90, "F"), "R21": (41.6, 60.9, 90, "F"),
+    "D7": (44.4, 60.9, -90, "F"), "C11": (47.3, 60.9, -90, "F"),
     "U3": (55.5, 61.5, 0, "F"),
-    "R23": (55.5, 54.3, 0, "F"), "R22": (55.5, 51.8, 0, "F"),
+    "R22": (63.3, 58.6, 90, "F"), "R23": (63.3, 62.6, 90, "F"),
     # NMEA 2000, bottom left: the drop-cable plug on the bottom edge, the network side in the row
     # above it, the isolator across the boundary (Pi-side pins up, network-side pins down), and
     # the CAN controller above that, where rev 1.0 had its pinout legend.
@@ -71,11 +71,11 @@ PLACE = {
     "D11": (25.0, 61.5, 0, "F"), "R26": (28.5, 58.0, 90, "F"), "JP1": (28.5, 61.8, 90, "F"),
     "U5": (16.5, 52.0, -90, "F"), "C15": (22.0, 49.8, 0, "F"),
     "U4": (20.5, 44.3, 90, "F"), "Y1": (28.5, 45.5, 0, "F"), "C14": (28.5, 42.0, 0, "F"),
-    "C12": (13.0, 42.2, 90, "F"), "C13": (13.0, 45.6, 90, "F"),
+    "C12": (13.8, 42.2, 90, "F"), "C13": (13.8, 45.6, 90, "F"),
     "R27": (32.2, 42.0, 90, "F"), "R28": (32.2, 46.0, 90, "F"),
     # Probes on the right edge, and their protection.
     "J3": (56.3, 26.0, 90, "F"),
-    "D8": (49.8, 22.2, 180, "F"), "R25": (51.4, 18.8, 180, "F"), "R24": (51.4, 15.6, 180, "F"),
+    "D8": (48.3, 22.2, 180, "F"), "R25": (50.8, 18.8, 180, "F"), "R24": (50.8, 15.6, 180, "F"),
 }
 for i, y in enumerate(LANE_Y):
     PLACE[f"R{1 + i}"] = (14.8, y, 0, "F")            # top resistor: IN left, DIV right
@@ -83,6 +83,14 @@ for i, y in enumerate(LANE_Y):
     PLACE[f"D{1 + i}"] = (22.0, y - 0.94, -90, "F")   # clamp: COM down onto the lane, GND/3V3 up
     PLACE[f"R{13 + i}"] = (25.8, y, 0, "F")           # series: DIV left, ADC right
     PLACE[f"C{1 + i}"] = (29.2, y + 1.7, -90, "F")    # filter: ADC up, GND down
+
+# What each connector pin is for, printed beside the pin (silk()). Pin order.
+PIN_LABELS = {
+    "J1": ["FUEL", "TRIM", "BAT+", "IGN", "OIL", "SPARE", "GND", "GND"],
+    "J2": ["TACH", "GND"],
+    "J3": ["3V3", "DATA", "GND"],
+    "J5": ["BARE", "RED", "BLK", "WHT", "BLU"],     # the drop cable's wire colours
+}
 
 # Routing order: the constrained nets first.
 ORDER = (["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"] +
@@ -431,6 +439,7 @@ class Board:
             z.SetThermalReliefGap(mm(0.4))
             z.SetThermalReliefSpokeWidth(mm(0.4))
             z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+            z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
             self.board.Add(z)
         for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
             z = pcbnew.ZONE(self.board)
@@ -444,6 +453,7 @@ class Board:
             z.SetThermalReliefGap(mm(0.4))
             z.SetThermalReliefSpokeWidth(mm(0.4))
             z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+            z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
             try:
                 z.SetLocalClearance(mm(0.3))
             except TypeError:
@@ -469,6 +479,9 @@ class Board:
             ol.Append(mm(x + OX), mm(y + OY))
         k.SetZoneName("tach ignition side: no pour")
         self.board.Add(k)
+        # The filler finds the islands to remove through the board's connectivity, which has to
+        # know about every track first; otherwise slivers between pads survive as floating copper.
+        self.board.BuildConnectivity()
         pcbnew.ZONE_FILLER(self.board).Fill(self.board.Zones())
 
     def silk(self):
@@ -485,17 +498,37 @@ class Board:
             elif just == "right":
                 t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_RIGHT)
             self.board.Add(t)
-        # Every connector's pinout in one block, in the space the tach moved out of; there is no
-        # room beside the connectors without landing on pads.
-        lines = ["J1 HELM", "1 FUEL S    5 OIL S", "2 TRIM S    6 SPARE", "3 BATT+     7 GAUGE G",
-                 "4 GAUGE I   8 BATT-", "", "J2 DELCO EST TACH", "1 GRAY WIRE  2 GND", "",
-                 "J3 1 3V3  2 DATA  3 GND", "", "J5 NMEA 2000 - ISOLATED", "1 SHLD 2 NET-S 3 NET-C",
-                 "4 NET-H  5 NET-L", "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
-        y = 34.6
+        # Every connector labelled at its own pins: what each one connects to, printed on the side
+        # the wires come from (the plug side is hidden under the connector body once it's fitted).
+        # Connectors along the left and right edges get vertical labels, one per 3.81 mm pin.
+        INSET = 3.45   # pin centre to label centre: clear of the connector body and its pin-1 triangle
+        for ref, names in PIN_LABELS.items():
+            pads = sorted((p for p in self.fps[ref].Pads() if p.GetNumber().isdigit()), key=lambda p: int(p.GetNumber()))
+            pts = [(pcbnew.ToMM(p.GetPosition().x) - OX, pcbnew.ToMM(p.GetPosition().y) - OY) for p in pads]
+            if abs(pts[0][0] - pts[-1][0]) < 0.1:          # a column of pins: an edge connector, left or right
+                x = pts[0][0] + (INSET if pts[0][0] < W / 2 else -INSET)
+                for (px, py), name in zip(pts, names):
+                    text(name, x, py, 0.8, rot=90)
+            else:                                            # a row of pins along the bottom edge
+                for (px, py), name in zip(pts, names):
+                    text(name, px, py - INSET, 0.8)
+        # Which connector is which, beside its labels.
+        text("J1", 12.15, 11.6, 0.9, rot=90)
+        text("J3", 52.85, 29.4, 0.9, rot=90)
+        text("J2", 40.2, 63.85, 0.9, just="right")
+        text("J5 NMEA 2000", 15.6, 62.6, 0.9)
+        # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
+        # here instead, which said less than the labels now do.)
+        lines = ["WIRING", "FUEL TRIM OIL: that gauge's S terminal", "IGN: any gauge's I terminal",
+                 "Taps: 10k resistor at the gauge end", "BAT+: +12V always on, 1A fuse",
+                 "GND: gauge G terminal / battery -", "TACH: gray wire, coil TACH terminal",
+                 "PROBES: red 3V3, yellow DATA, black GND", "NMEA: drop cable, bare shield unused",
+                 "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
+        y = 35.0
         for body in lines:
             if body:
-                text(body, 34.6, y, 0.8, just="left")
-            y += 1.2 if body else 0.5
+                text(body, 34.6, y, 1.0 if body == "WIRING" else 0.8, just="left")
+            y += 1.5 if body == "WIRING" else 1.35 if body else 0.6
         # The bench-only terminator: say what the pads are for, and what not to do with them.
         text("TERM", 30.7, 61.8, 0.8, rot=90)
 

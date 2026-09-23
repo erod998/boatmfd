@@ -11,7 +11,7 @@ fuel 0, trim 1, battery 2, gauge supply 3 on the first ADS1115, oil 4 on the sec
 from dataclasses import dataclass, field
 
 TITLE = "Boat MFD sensor board"
-REVISION = "1.1"
+REVISION = "1.2"
 DATE = "2026-09-23"
 
 # ---------------------------------------------------------------- the input channels
@@ -128,10 +128,11 @@ def build_parts():
         capacitor("C10", "1u", "+3V3", "GND", sch=(386.08, 114.3), note="U2 decoupling"),
     ]
 
-    # ---------------- tach: the Delco EST ignition's gray tach wire, through an optocoupler ----------------
-    # The newer EST coil (12 V in, tach out) drives the gray tach wire. Whether that turns out to be a
-    # switched 12 V signal or the coil primary itself (spikes of a few hundred volts at each spark),
-    # this input takes it: ~1 mA from the wire at 12 V, and a spike is shared across three 1206s.
+    # ---------------- tach: the Delco EST coil's TACH terminal (gray wire), through an optocoupler ----------------
+    # The EST coil has two terminals, BAT (+12 V in) and TACH. TACH is the coil's switched side: it
+    # sits at 12 V, drops to ground while the coil charges, and flies up to a few hundred volts at
+    # each spark. The input takes that: ~1 mA from the wire at 12 V, and the spike is shared
+    # across three 1206 resistors, all isolated from the Pi by the optocoupler.
     parts += [
         resistor("R19", "3.3k", "TACH_IN", "TACH_A", size="1206", sch=(99.06, 190.5), note="tach input: 3 in series share the ignition spike"),
         resistor("R20", "3.3k", "TACH_A", "TACH_B", size="1206", sch=(111.76, 190.5), note="tach input: 3 in series share the ignition spike"),
@@ -208,11 +209,11 @@ def build_parts():
         Part("J1", "Connector_Generic:Conn_01x08", "HELM",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange", helm,
              mpn="Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)", sch=(35.56, 157.48),
-             note="1 fuel S, 2 trim S, 3 battery +12V, 4 gauge I, 5 oil S, 6 spare, 7 gauge G, 8 battery -"),
+             note="FUEL/TRIM/OIL: that gauge's S terminal; BAT+: +12V always on (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -"),
         Part("J2", "Connector_Generic:Conn_01x02", "TACH",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",
-             sch=(35.56, 200.66), note="Delco EST: 1 gray tach wire, 2 engine ground"),
+             sch=(35.56, 200.66), note="TACH: the gray wire (EST coil TACH terminal); GND: the tach gauge's G terminal"),
         Part("J3", "Connector_Generic:Conn_01x03", "PROBES",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "+3V3", "2": "OW_EXT", "3": "GND"}, mpn="Phoenix Contact 1827871 (MC 1,5/ 3-GF-3,81); plug 1827716 (MC 1,5/ 3-STF-3,81)",

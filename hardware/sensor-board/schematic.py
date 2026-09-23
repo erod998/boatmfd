@@ -376,8 +376,8 @@ def build():
     sh.items.append(text(
         "Each gauge tap: the S (or I) terminal -> 10k in heatshrink AT THE GAUGE -> J1 -> 39k -> node (10k to GND, BAT54S clamp to GND/3V3)\n"
         "-> 1k -> ADC, with 100n at the ADC pin. V_adc = V_tap x 10/59 (0-16 V -> 0-2.7 V). Battery: 47k on board, no remote resistor, x 10/57.\n"
-        "Tach, Delco EST ignition (the newer coil: 12 V in, tach out): J2-1 to the gray tach wire, J2-2 to engine ground. The original tach stays on the gray wire.\n"
-        "Takes a 12 V tach signal (~1 mA) or a coil-negative wire (spikes to a few hundred volts): three 3.3k 1206 in series share the spike;\n"
+        "Tach, Delco EST coil (BAT +12 V in, TACH out): J2-1 to the gray wire from the coil's TACH terminal, J2-2 to the tach gauge's G. The tach stays connected.\n"
+        "TACH is the coil's switched side -- 12 V, ground while the coil charges, a few hundred volts at each spark: three 3.3k 1206 in series share the spike;\n"
         "1N4148W and 10n across the LED. One rising edge per ignition cycle on GPIO13; 2 per revolution on the 3.0 4-cylinder (BOAT_TACH_PPR=2).\n"
         "Keep every TACH_* net (the ignition side) 3 mm from all other copper: see sensor-board.kicad_dru.\n"
         "Software: BOAT_SENSORS=real BOAT_SENDER_WIRING=tap BOAT_TACH_PULL=none BOAT_TACH_GPIO=13 BOAT_OIL_SENDER=true;\n"

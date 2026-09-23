@@ -8,8 +8,8 @@ analog gauge stays wired exactly as it is and keeps working, so if the Pi is off
 helm is just a normal helm. It replaces buying an engine-data converter (the CX5003 route).
 
 Built for this boat: a MerCruiser 3.0 4-cylinder with the **Delco EST ignition** (the newer
-coil with a 12 V input and a tach output), US-standard resistive senders, and the stock
-analog gauges.
+coil with two terminals, BAT +12 V in and TACH out), US-standard resistive senders, and the
+stock analog gauges.
 
 - **Design files:** [hardware/sensor-board/](hardware/sensor-board/) -- a KiCad 10 project
   (schematic, board, project footprint library) generated from one Python description.
@@ -34,17 +34,17 @@ analog gauges.
 
 ```
                BACK OF THE GAUGES (unchanged)                           SENSOR BOARD (Pi HAT)
-  fuel gauge   S ── to the fuel sender ───[10k]── tap wire ── J1.1 FUEL_S ──┐
-  trim gauge   S ── to the trim sender ───[10k]── tap wire ── J1.2 TRIM_S ──┤ divider, clamp, filter
-  any gauge    I ── ignition +12 V ───────[10k]── tap wire ── J1.4 GAUGE_I ─┤   ADS1115 U1 (0x48)
+  fuel gauge   S ── to the fuel sender ───[10k]── tap wire ── J1.1 FUEL ────┐
+  trim gauge   S ── to the trim sender ───[10k]── tap wire ── J1.2 TRIM ────┤ divider, clamp, filter
+  any gauge    I ── key-on +12 V ─────────[10k]── tap wire ── J1.4 IGN ─────┤   ADS1115 U1 (0x48)
                G ── ground ────────────────────────────────── J1.7 GND      │     AIN0 fuel   AIN1 trim
-  oil gauge    S ── to the oil sender ────[10k]── tap wire ── J1.5 OIL_S ───┤     AIN2 batt   AIN3 gauge supply
+  oil gauge    S ── to the oil sender ────[10k]── tap wire ── J1.5 OIL ─────┤     AIN2 batt   AIN3 gauge supply
   (spare tap)                             [10k]── tap wire ── J1.6 SPARE ───┤   ADS1115 U2 (0x49)
-  always-on +12 V (fused 1 A at the source) ───────────────── J1.3 BATT ────┘     AIN0 oil    AIN1 spare
-  helm ground ─────────────────────────────────────────────── J1.8 GND
+  always-on +12 V (fused 1 A at the source) ───────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 spare
+  helm ground (battery -) ─────────────────────────────────── J1.8 GND
 
-  Delco EST gray tach wire (at the analog tach) ───────────── J2.1 TACH ──── optocoupler ──── GPIO 13
-  the analog tach's ground ────────────────────────────────── J2.2 TACH_GND
+  gray wire: EST coil TACH terminal ── tach gauge ─────────── J2.1 TACH ──── optocoupler ──── GPIO 13
+  the tach gauge's G terminal ─────────────────────────────── J2.2 GND (the tach's own, isolated)
 
   DS18B20 probes (engine, water) ──────────────────────────── J3   3V3 / DATA / GND ──────── GPIO 26
 
@@ -66,8 +66,9 @@ analog gauges.
   terminal and cover it in adhesive-lined heatshrink. It is also part of the divider (49 kΩ total
   on top, 10 kΩ below), which the software assumes (`BOAT_TAP_R_TOP=49000`).
 - The **tach** input goes through an **optocoupler**, so nothing on the ignition side can reach
-  the Pi. It works whichever kind of signal the gray wire turns out to carry: a switched 12 V from
-  the EST coil's tach output, or the coil negative itself with spikes of a few hundred volts.
+  the Pi. It has to: the EST coil's **TACH** terminal is the coil's switched side. It sits at
+  12 V, drops to ground while the coil charges, and flies up to a few hundred volts at every
+  spark. That's what the analog tach counts, and the board reads the same wire.
 - A tap loads the gauge by about 0.2 mA (59 kΩ from the S terminal to ground). Next to a 33–240 Ω
   sender that is well under half a percent -- the analog gauges read the same as before.
 
@@ -107,15 +108,15 @@ Same as a tap input, except the top resistor is a single **47 kΩ 1% 1206** (R3)
 remote resistor -- the feed is fused at its source instead -- giving `V_adc = V_batt × 10/57`. The
 software default `BOAT_BATT_R_TOP=47000`, `BOAT_BATT_R_BOTTOM=10000` matches.
 
-### Tach: Delco EST gray wire (optocoupler)
+### Tach: the EST coil's TACH terminal, gray wire (optocoupler)
 
 ```
-  Delco EST gray wire ── J2.1 ──[ R19 3.3k ]──[ R20 3.3k ]──[ R21 3.3k ]──┬─────────┬─────────┬── U3 pin 1 (LED anode)
+  gray wire (TACH) ───── J2.1 ──[ R19 3.3k ]──[ R20 3.3k ]──[ R21 3.3k ]──┬─────────┬─────────┬── U3 pin 1 (LED anode)
                                    1206          1206          1206        │         │         │
                                                                      [ C11 10n ] [ D7 ]        │  D7: 1N4148W, cathode
                                                                            │     1N4148W       │  toward pin 1
-  analog tach ground ─── J2.2 ─────────────────────────────────────────────┴─────────┴─────────┴── U3 pin 2 (LED cathode)
-                          (TACH_GND: its own net -- not the board's GND)
+  tach gauge G ───────── J2.2 ─────────────────────────────────────────────┴─────────┴─────────┴── U3 pin 2 (LED cathode)
+                          (printed GND, but its own net, TACH_GND -- not the board's GND)
 
                                               3V3
                                                │
@@ -219,24 +220,27 @@ Phoenix Contact **MC 1,5 / 3.81 mm pluggable terminal blocks with screw-locking 
 plug screws to the header, so it can't walk out on a boat. Each connector's plug overhangs the
 board edge.
 
-| Connector | Pin | Signal | Goes to |
+Since rev 1.2 every pin is labelled on the board itself, beside the pin, with the name in the
+**Printed** column; the **WIRING** block in the middle of the board sums up the table below.
+
+| Connector | Pin | Printed | Goes to |
 |---|---|---|---|
-| **J1** helm (8, left edge) | 1 | FUEL_S | fuel gauge **S** terminal, through its 10k |
-| | 2 | TRIM_S | trim gauge **S** terminal, through its 10k |
-| | 3 | BATT | the helm's always-on +12 V (the feed that powers the Pi), **fused 1 A at the source** |
-| | 4 | GAUGE_I | any gauge's **I** terminal (they share the ignition feed), through its 10k |
-| | 5 | OIL_S | oil gauge **S** terminal, through its 10k |
+| **J1** helm (8, left edge) | 1 | FUEL | fuel gauge **S** terminal, through its 10k |
+| | 2 | TRIM | trim gauge **S** terminal, through its 10k |
+| | 3 | BAT+ | the helm's always-on +12 V (the feed that powers the Pi), **fused 1 A at the source** |
+| | 4 | IGN | the **I** terminal on the back of any one gauge, through its 10k. That's the key-switched +12 V that lights the gauges; they all share it, so any gauge will do. The board measures the senders as a share of it, and uses it to tell that the key is on |
+| | 5 | OIL | oil gauge **S** terminal, through its 10k |
 | | 6 | SPARE | a spare tap, through its 10k (unused by the software today) |
-| | 7 | GND | the tapped gauges' **G** terminal: the taps measure against the gauges' own ground |
-| | 8 | GND | helm ground (the battery feed's return) |
-| **J2** tach (2, bottom edge) | 1 | TACH | the **Delco EST gray tach wire**, at the analog tach's signal terminal |
-| | 2 | TACH_GND | the analog tach's **G** terminal -- twist these two wires together |
+| | 7 | GND | the **G** terminal of the same gauge as IGN: the taps measure against the gauges' own ground |
+| | 8 | GND | helm ground / battery - (the BAT+ feed's return) |
+| **J2** tach (2, bottom edge) | 1 | TACH | the **gray wire** from the EST coil's **TACH** terminal -- easiest where it lands on the tach gauge's signal terminal at the helm. No resistor on this one |
+| | 2 | GND | the tach gauge's **G** terminal -- twist these two wires together |
 | **J3** probes (3, right edge) | 1 / 2 / 3 | 3V3 / DATA / GND | DS18B20 red / yellow / black |
-| **J5** NMEA 2000 (5, bottom edge) | 1 | shield | the drop cable's bare drain wire -- **not connected** here (the backbone grounds its shield at the power tee) |
-| | 2 | NET-S | red: the network's +12 V |
-| | 3 | NET-C | black: the network's 0 V |
-| | 4 | NET-H | white: CAN high |
-| | 5 | NET-L | blue: CAN low |
+| **J5** NMEA 2000 (5, bottom edge) | 1 | BARE | the drop cable's bare drain wire (shield) -- **not connected** here (the backbone grounds its shield at the power tee) |
+| | 2 | RED | NET-S: the network's +12 V |
+| | 3 | BLK | NET-C: the network's 0 V |
+| | 4 | WHT | NET-H: CAN high |
+| | 5 | BLU | NET-L: CAN low |
 | **J4** | | | the Pi's 40-pin header, underneath |
 
 The silkscreen carries this pinout in a legend block in the bottom-left corner.
@@ -315,6 +319,9 @@ right-angle HDMI adapter there. H5, in the extra corner, takes a standoff to the
 - The six input channels run in lanes from J1 on the left to the converters in the middle,
   each with its filter right at the ADC pin; the tach sits in the bottom-right corner, away
   from them.
+- **Silkscreen** (rev 1.2): every connector pin is labelled with what it connects to, printed
+  on the wire side of the connector, and a WIRING block in the middle of the board sums up the
+  rules. J5's labels are the drop cable's wire colours.
 - **Conformal coat** everything except the connectors and the header after the board passes bring-up.
 
 ## Changing the design
@@ -344,13 +351,16 @@ check reports anything.
    (ground) and **S** (sender, sometimes SND). Don't remove anything: put a ring terminal for the tap
    *on top of* the existing one on the stud, and snug the nut back down.
 2. Solder a **10 kΩ resistor** into each tap wire within a few centimetres of its ring terminal and
-   cover it with adhesive-lined heatshrink: fuel S, trim S, oil S, and one gauge's I terminal.
-3. Run a ground from that same gauge's **G** terminal to J1.7.
-4. **Tach:** a ring terminal on the analog tach's signal terminal -- where the **gray** wire from
-   the engine harness lands (the Delco EST coil's tach output) -- and a ground from the tach's G
-   terminal, twisted together to J2. The analog tach stays connected.
-5. **Battery:** from the always-on helm +12 V feed, through a 1 A inline fuse at the feed, to J1.3;
-   helm ground to J1.8.
+   cover it with adhesive-lined heatshrink: fuel S to J1 FUEL, trim S to TRIM, oil S to OIL, and
+   one gauge's **I** terminal to **IGN** (J1.4).
+3. Run a ground from that same gauge's **G** terminal to J1.7 (GND).
+4. **Tach:** the EST coil has two terminals, **BAT** (+12 V in) and **TACH**. The **gray** wire
+   runs from TACH to the tach gauge's signal terminal (marked TACH, SIG or S). Put a ring terminal
+   on top of the gray wire's at the back of the tach gauge, to **J2 TACH**, and a second from the
+   tach gauge's **G** terminal to **J2 GND**. Twist the two together. No 10 kΩ on these -- the
+   board has its own. The tach gauge stays connected.
+5. **Battery:** from the always-on helm +12 V feed, through a 1 A inline fuse at the feed, to J1.3
+   (BAT+); helm ground to J1.8 (GND).
 6. **NMEA 2000:** a drop cable from a T on the backbone to J5 (colours in the Connectors table).
    The backbone needs its power tee and two terminators, as always; see README's "The NMEA 2000
    backbone".
