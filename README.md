@@ -542,7 +542,7 @@ Skip this section if you use an NMEA 2000 converter.
 **Recommended: the passive-tap sensor board** ([SENSOR_BOARD.md](SENSOR_BOARD.md),
 `BOAT_SENDER_WIRING=tap`). It only *listens* to the wires the analog gauges already drive, so every
 analog gauge stays connected and working -- if the Pi is off, the helm is a normal helm. It reads
-fuel, trim, oil, battery and RPM (through an optocoupler), and calibrates from the gauges
+fuel, trim, oil, engine temperature, battery and RPM (through an optocoupler), and calibrates from the gauges
 themselves: "just filled up", then one mark read off the analog fuel gauge, calibrates the whole
 fuel scale. RPM comes from the Delco EST ignition's gray tach wire. The KiCad schematic, board and
 ready-to-order fabrication files are in [hardware/sensor-board/](hardware/sensor-board/). The rest of this section is the older **reference** wiring (`BOAT_SENDER_WIRING=reference`,

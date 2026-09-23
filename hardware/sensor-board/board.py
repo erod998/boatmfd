@@ -89,7 +89,7 @@ for i, y in enumerate(LANE_Y):
 
 # What each connector pin is for, printed beside the pin (silk()). Pin order.
 PIN_LABELS = {
-    "J1": ["FUEL", "TRIM", "BAT+", "IGN", "OIL", "SPARE", "GND", "GND"],
+    "J1": ["FUEL", "TRIM", "BAT+", "IGN", "OIL", "TEMP", "GND", "GND"],
     "J2": ["TACH", "GND"],
     "J3": ["3V3", "DATA", "GND"],
     "J5": ["BARE", "RED", "BLK", "WHT", "BLU"],     # the drop cable's wire colours
@@ -535,7 +535,7 @@ class Board:
         # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
         # here instead, which said less than the labels now do.)
         # Lines beside J6 stop short of its pin labels; the long one goes below them.
-        lines = ["WIRING", "FUEL TRIM OIL: gauge S terminal", "IGN: any gauge's I terminal",
+        lines = ["WIRING", "FUEL TRIM OIL TEMP: S terminal", "IGN: any gauge's I terminal",
                  "Taps: 10k at the gauge end", "BAT+: +12V always on, 1A fuse",
                  "GND: gauge G / battery -", "TACH: gray wire, coil TACH",
                  "NMEA: drop cable, shield unused", "LIGHTS: J6 to the LED board", "",

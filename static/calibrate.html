@@ -117,6 +117,14 @@
     <div class="saved" id="tapOilSaved"></div>
   </div>
 
+  <div class="card" id="tapTempCard" data-mode="tap"><h2>Engine temperature</h2>
+    <div class="reading"><span id="tapTempF">--</span><small>F</small> <span id="tapTempV" style="margin-left:14px;font-size:18px">--</span><small>V on the sender wire</small></div>
+    <p>Two points calibrate the whole gauge, overheat included. First with the engine <b>cold</b>: key ON after it has sat a few hours, and type the air or lake temperature -- that's what the engine is at. Then <b>warmed up</b>: type what the analog gauge reads, or better, an infrared thermometer aimed at the thermostat housing. A third point anywhere in between tightens it further.</p>
+    <div class="row"><input id="tapTempInput" inputmode="decimal" placeholder="temperature, F" /><button data-act="temp_point" data-input="tapTempInput">Save point</button>
+      <button data-act="tap_clear" data-device="temp">Clear points</button></div>
+    <div class="saved" id="tapTempSaved"></div>
+  </div>
+
   <!-- BOAT_SENSORS=real: the Pi reads the senders itself, in ohms -->
   <div class="card" id="fuelCard" data-mode="real"><h2>Fuel level (analog sender)</h2>
     <div class="reading"><span id="fuelOhms">--</span><small>ohms</small> <span id="fuelPct" style="margin-left:14px">--</span><small>% shown</small></div>
@@ -155,6 +163,7 @@
   <div class="card"><h2>Temperature probes</h2>
     <div id="probes"></div>
     <p data-mode="n2k">Engine (coolant) temperature comes from the converter's temperature input, so a probe here is optional: use one on the raw-water intake hose for the water temperature (assign it to Water). A probe you assign to Engine is used only when the converter sends no temperature.</p>
+    <p data-mode="tap">With the temperature gauge tapped (Engine temperature, above), its sender gives the engine temperature and a probe assigned to Engine only fills in when the gauges are off. Use a probe on the raw-water intake hose for the water temperature (assign it to Water).</p>
     <p data-mode="real">Warm one probe in your hand to see which is which, then assign it. If you have one probe it is used as the engine (coolant) probe automatically. A probe clamped to the thermostat housing reads a little below true coolant temperature; to correct that, type a true temperature (for example from an infrared thermometer aimed at the housing).</p>
     <div class="row"><input id="tempInput" inputmode="decimal" placeholder="true engine temp, F" /><button class="primary" data-act="engine_temp_offset" data-input="tempInput">Set engine offset</button></div>
     <div class="saved" id="tempSaved"></div>
@@ -231,6 +240,7 @@ function tapSaved(t, unit) {
   if (!t) return "";
   const pts = (t.points || []).slice().sort((a, b) => b[1] - a[1]).map((p) => `${p[1]}${unit}`).join(", ");
   const how = t.method === "divider" ? `Divider model, within ${t.residual_pct}% of every point.`
+    : t.method === "sender" ? `Temperature sender curve, within ${t.residual_f} F of every point.`
     : t.method === "table" ? "Straight lines between your points." : "";
   return [pts ? `Points: ${pts}.` : "No points yet.", how, t.note ? t.note.charAt(0).toUpperCase() + t.note.slice(1) + "." : ""]
     .filter(Boolean).join(" ");
@@ -244,13 +254,16 @@ function renderTap(t) {
   $("tapRatioOff").classList.toggle("on", !t.ratiometric);
   $("tapFuelCard").style.display = t.fuel ? "block" : "none";
   $("tapOilCard").style.display = t.oil ? "block" : "none";
-  const f = t.fuel || {}, tr = t.trim || {}, o = t.oil || {};
+  $("tapTempCard").style.display = t.temp ? "block" : "none";
+  const f = t.fuel || {}, tr = t.trim || {}, o = t.oil || {}, tp = t.temp || {};
   $("tapFuelPct").textContent = num(f.value, 0); $("tapFuelV").textContent = num(f.tap_v, 2);
   $("tapTrimPct").textContent = num(tr.value, 0); $("tapTrimV").textContent = num(tr.tap_v, 2);
   $("tapOilPsi").textContent = num(o.value, 0); $("tapOilV").textContent = num(o.tap_v, 2);
+  $("tapTempF").textContent = num(tp.value, 0); $("tapTempV").textContent = num(tp.tap_v, 2);
   $("tapFuelSaved").textContent = tapSaved(t.fuel, "%");
   $("tapTrimSaved").textContent = tapSaved(t.trim, "%");
   $("tapOilSaved").textContent = tapSaved(t.oil, " psi");
+  $("tapTempSaved").textContent = tapSaved(t.temp, " F");
 }
 
 function render(s) {
@@ -313,7 +326,7 @@ document.querySelectorAll("button[data-act]").forEach((b) => {
   b.addEventListener("click", () => {
     if (b.dataset.act === "tap_clear" && !confirm(`Clear every ${b.dataset.device} point?`)) return;
     if (b.dataset.act === "tap_ratiometric" && !b.classList.contains("on")
-        && !confirm("Switching this clears every saved fuel, trim and oil point. Continue?")) return;
+        && !confirm("Switching this clears every saved fuel, trim, oil and temperature point. Continue?")) return;
     let value = b.dataset.value != null ? parseFloat(b.dataset.value) : null;
     if (b.dataset.input) {
       value = parseFloat($(b.dataset.input).value);

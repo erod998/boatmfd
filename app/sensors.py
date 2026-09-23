@@ -12,11 +12,14 @@ ADS1115 on the Pi (BOAT_BATTERY_ADC=true) or the converter's alternator volts.
 BOAT_SENSORS=real: the Pi reads the senders itself.
 - ADS1115 (I2C 16-bit ADC) reads the resistive senders (fuel, trim, optional
   oil pressure) through a divider fed from the 3.3 V rail, and the battery
-  through a resistor divider.
+  through a resistor divider. With the sensor board (BOAT_SENDER_WIRING=tap) it
+  listens to the analog gauges' own sender wires instead, engine temperature's
+  included (BOAT_TEMP_SENDER=true).
 - The tach is an edge counter on a GPIO fed by a conditioned copy of the
   ignition coil's negative (tach) signal.
-- DS18B20 probes on the Pi's 1-Wire bus give engine (coolant) temperature and,
-  optionally, water temperature.
+- DS18B20 probes on the Pi's 1-Wire bus give engine (coolant) temperature -- when
+  no temperature sender is tapped, or it can't be read -- and, optionally, water
+  temperature.
 
 In both modes a NMEA 2000 fuel-flow sensor gives measured GPH (otherwise GPH is
 estimated from RPM and corrected against real fill-ups), and a value heard on
@@ -192,7 +195,7 @@ class Calibration:
         "depth": {"offset_ft": 0.0},  # added to the transducer's own reading; positive raises the displayed depth
         # BOAT_SENDER_WIRING=tap: captured (reading, value) points, see sender_tap.py. The fuel
         # sender's empty/full ohms above are what make two fuel points enough for the whole scale.
-        "tap": {"fuel_points": [], "trim_points": [], "oil_points": [], "ratiometric": True},
+        "tap": {"fuel_points": [], "trim_points": [], "oil_points": [], "temp_points": [], "ratiometric": True},
     }
 
     def __init__(self, path):
@@ -224,8 +227,9 @@ class SensorHub:
     SAMPLE_S = 0.25
     PROBE_S = 2.0
     FLUSH_S = 60.0
-    # Fuel sloshes, so it's heavily smoothed; trim and oil move quickly.
-    SMOOTHING = {"fuel": 0.05, "trim": 0.3, "oil": 0.3, "battery": 0.2}
+    # Fuel sloshes, so it's heavily smoothed; trim and oil move quickly; temperature slowly anyway.
+    SMOOTHING = {"fuel": 0.05, "trim": 0.3, "oil": 0.3, "temp": 0.2, "battery": 0.2}
+    TAPS = ("fuel", "trim", "oil", "temp")
 
     def __init__(self, settings, calibration, adc=None, tach=None, w1=None, n2k=None, env=None, clock=time.monotonic):
         self.settings = settings
@@ -245,6 +249,8 @@ class SensorHub:
                 self.channels["fuel"] = 0
             if settings.oil_sender:
                 self.channels["oil"] = 4
+            if settings.temp_sender:
+                self.channels["temp"] = 5
         else:
             self.channels = {"trim": 1, "battery": 2}
             if settings.fuel_sender:
@@ -333,7 +339,7 @@ class SensorHub:
             gauge_v = None if volts.get("gauge") is None else volts["gauge"] * scale
             readings["gauge_v"] = gauge_v
             ratiometric = bool(self.cal.get("tap", "ratiometric"))
-            for name in ("fuel", "trim", "oil"):
+            for name in self.TAPS:
                 if name not in self.channels:
                     continue
                 tap_v = None if volts.get(name) is None else volts[name] * scale
@@ -412,6 +418,22 @@ class SensorHub:
         heard = self.n2k.engine_temp_f() if self.n2k else None
         return heard if heard is not None else self._probe_raw("engine")[1]
 
+    def _tap_temp(self, r=None):
+        r = self.readings() if r is None else r
+        return sender_tap.engine_temp(r.get("temp_ratio"), self.cal.get("tap", "temp_points"))
+
+    def _coolant_f(self, r):
+        """Coolant temperature in F, best source first: a converter on the bus; the temperature gauge's
+        own sender, in the coolant; a probe clamped to the outside of the engine. The probe fills in
+        whenever the gauge can't be read -- with the key off, the gauges are dark."""
+        heard = self.n2k.engine_temp_f() if self.n2k else None
+        if heard is None and "temp" in self.channels:
+            tapped = self._tap_temp(r)[0]
+            if tapped is not None:
+                return tapped
+        raw = heard if heard is not None else self._probe_raw("engine")[1]
+        return None if raw is None else raw + self.cal.get("probes", "engine_offset_f")
+
     def water_temp_f(self):
         heard = self.env.water_temp_f() if self.env else None
         return heard if heard is not None else self._probe_temp("water")
@@ -458,8 +480,7 @@ class SensorHub:
         rpm_raw = self._rpm_raw(r)
         rpm = None if rpm_raw is None else round(self._calibrated_rpm(rpm_raw))
         gph, gph_is_estimate = self._fuel_flow(rpm_raw)
-        temp = self._engine_temp_raw()
-        coolant = None if temp is None else temp + self.cal.get("probes", "engine_offset_f")
+        coolant = self._coolant_f(r)
         return {
             "rpm": rpm,
             "oil_pressure_psi": oil,
@@ -484,6 +505,7 @@ class SensorHub:
             "fuel": lambda: self._tap_fuel(r),
             "trim": lambda: sender_tap.trim_level(r.get("trim_ratio"), self.cal.get("tap", "trim_points")),
             "oil": lambda: sender_tap.oil_pressure(r.get("oil_ratio"), self.cal.get("tap", "oil_points"), ratiometric),
+            "temp": lambda: self._tap_temp(r),
         }
         for name, compute in how.items():
             if name not in self.channels:
@@ -495,8 +517,9 @@ class SensorHub:
         return out
 
     # How close a new point's value must be to an old one to replace it rather than join it.
-    TAP_SAME = {"fuel": 3.0, "trim": 3.0, "oil": 2.0}
-    TAP_RANGE = {"fuel": (0.0, 100.0), "trim": (0.0, 100.0), "oil": (0.0, 150.0)}
+    TAP_SAME = {"fuel": 3.0, "trim": 3.0, "oil": 2.0, "temp": 5.0}
+    TAP_RANGE = {"fuel": (0.0, 100.0), "trim": (0.0, 100.0), "oil": (0.0, 150.0), "temp": (32.0, 260.0)}
+    TAP_UNIT = {"oil": " psi", "temp": " F"}
 
     SETTLE_S = 3.0          # a captured reading must not have moved more than this much...
     SETTLE_FRACTION = 0.015  # ...(as a share of itself) over this long
@@ -532,7 +555,7 @@ class SensorHub:
             raise ValueError(f"the {name} reading is still settling: wait a few seconds, then save again")
         points = sender_tap.add_point(self.cal.get("tap", name + "_points"), ratio, value, self.TAP_SAME[name])
         self.cal.set("tap", name + "_points", points)
-        unit = "psi" if name == "oil" else "%"
+        unit = self.TAP_UNIT.get(name, "%")
         message = f"Saved {name} {value:g}{unit} ({len(points)} point{'s' if len(points) != 1 else ''})"
         note = self._tap_status().get(name, {}).get("note")
         return f"{message}. {note[0].upper()}{note[1:]}." if note else message
@@ -589,11 +612,11 @@ class SensorHub:
                          "trim_up": ("trim", 100.0), "oil_zero": ("oil", 0.0)}
             if action in shortcuts:
                 return self._capture_tap(*shortcuts[action])
-            if action in ("fuel_point", "trim_point", "oil_point"):
+            if action in ("fuel_point", "trim_point", "oil_point", "temp_point"):
                 return self._capture_tap(action.split("_")[0], value)
             if action == "tap_clear":
-                if device not in ("fuel", "trim", "oil"):
-                    raise ValueError("clear which tap: fuel, trim or oil?")
+                if device not in self.TAPS:
+                    raise ValueError("clear which tap: fuel, trim, oil or temp?")
                 self.cal.set("tap", device + "_points", [])
                 return f"Cleared the {device} points"
             if action == "tap_ratiometric":
@@ -601,7 +624,7 @@ class SensorHub:
                 # across the switch they would be read in the wrong units, so they go with it.
                 on = bool(value)
                 if on != bool(self.cal.get("tap", "ratiometric")):
-                    for name in ("fuel", "trim", "oil"):
+                    for name in self.TAPS:
                         self.cal.set("tap", name + "_points", [])
                 self.cal.set("tap", "ratiometric", on)
                 return ("Readings are relative to the gauge supply" if on else "Readings are plain volts") + \
@@ -643,6 +666,10 @@ class SensorHub:
             self.cal.set("depth", "offset_ft", round(value - heard, 2))
             return "Depth offset %+.2f ft" % (value - heard)
         if action == "engine_temp_offset":
+            heard = self.n2k.engine_temp_f() if self.n2k else None
+            if heard is None and "temp" in self.channels and self._tap_temp(r)[0] is not None:
+                raise ValueError("engine temperature comes from the temperature gauge's sender: "
+                                 "correct it with a temperature point in the Engine temperature card")
             raw = self._engine_temp_raw()
             if value is None or raw is None:
                 raise ValueError("enter the true temperature (e.g. from an infrared thermometer); needs an engine temperature reading")
@@ -703,7 +730,7 @@ def make_sensor_sources(settings, data_dir, node=None):
 
             bus = SMBus(settings.i2c_bus)
             adc = ADS1115(bus, settings.ads1115_address)
-            if settings.sensors == "real" and settings.sender_wiring == "tap" and settings.oil_sender:
+            if settings.sensors == "real" and settings.sender_wiring == "tap" and (settings.oil_sender or settings.temp_sender):
                 adc = ADS1115Pair(adc, ADS1115(bus, settings.ads1115_address2))
         except Exception as exc:  # pragma: no cover - hardware-dependent
             print(f"[sensors] could not open the ADS1115 on I2C bus {settings.i2c_bus} ({exc}); analog inputs will show no data")

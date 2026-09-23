@@ -1,6 +1,7 @@
 # Sensor board: passive taps on the existing gauges
 
-A Raspberry Pi HAT that reads **fuel level, trim, oil pressure, battery voltage and RPM** by
+A Raspberry Pi HAT that reads **fuel level, trim, oil pressure, engine temperature, battery
+voltage and RPM** by
 *listening* to the wires the boat's analog gauges already use -- and, since rev 1.1, puts the Pi on
 the boat's **NMEA 2000** network (the Fusion stereo, the depth transducer) through an isolated
 CAN interface, so no separate CAN HAT is needed -- and, since rev 1.2, has a connector (J6,
@@ -40,8 +41,8 @@ stock analog gauges.
   any gauge    I ── key-on +12 V ─────────[10k]── tap wire ── J1.4 IGN ─────┤   ADS1115 U1 (0x48)
                G ── ground ────────────────────────────────── J1.7 GND      │     AIN0 fuel   AIN1 trim
   oil gauge    S ── to the oil sender ────[10k]── tap wire ── J1.5 OIL ─────┤     AIN2 batt   AIN3 gauge supply
-  (spare tap)                             [10k]── tap wire ── J1.6 SPARE ───┤   ADS1115 U2 (0x49)
-  always-on +12 V (fused 1 A at the source) ───────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 spare
+  temp gauge   S ── to the temp sender ───[10k]── tap wire ── J1.6 TEMP ────┤   ADS1115 U2 (0x49)
+  always-on +12 V (fused 1 A at the source) ───────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 temp
   helm ground (battery -) ─────────────────────────────────── J1.8 GND
 
   gray wire: EST coil TACH terminal ── tach gauge ─────────── J2.1 TACH ──── optocoupler ──── GPIO 13
@@ -82,7 +83,7 @@ stock analog gauges.
 Reference designators match the KiCad schematic
 ([PDF](hardware/sensor-board/fab/sensor-board-schematic.pdf)). `3V3` and `GND` are the Pi's.
 
-### Tap inputs (×6: fuel, trim, battery, gauge supply, oil, spare)
+### Tap inputs (×6: fuel, trim, battery, gauge supply, oil, engine temperature)
 
 ```
                      at the gauge                             on the board
@@ -103,7 +104,7 @@ Reference designators match the KiCad schematic
   and a TVS's leakage current, flowing through 49 kΩ, would show up as a reading error.
 - The top resistors are 1206 for their voltage rating; everything else is 0805.
 - Channels, top to bottom on the board: fuel (R1, R7, R13, C1, D1), trim (…2), battery (…3),
-  gauge supply (…4), oil (…5), spare (…6).
+  gauge supply (…4), oil (…5), engine temperature (…6).
 
 ### Battery voltage (J1.3, U1 AIN2)
 
@@ -190,7 +191,7 @@ All DS18B20 probes (engine, water) share these three wires.
     SCL ── GPIO 3 (pin 5)                   SCL ── GPIO 3 (pin 5)
     SDA ── GPIO 2 (pin 3)                   SDA ── GPIO 2 (pin 3)
     ADDR ── GND   -> address 0x48           ADDR ── 3V3   -> address 0x49
-    AIN0 fuel  AIN1 trim                    AIN0 oil  AIN1 spare  AIN2-3 not connected
+    AIN0 fuel  AIN1 trim                    AIN0 oil  AIN1 temp  AIN2-3 not connected
     AIN2 battery  AIN3 gauge supply
     ALERT/RDY: not connected                ALERT/RDY: not connected
 ```
@@ -271,7 +272,7 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 | | 3 | BAT+ | the helm's always-on +12 V (the feed that powers the Pi), **fused 1 A at the source** |
 | | 4 | IGN | the **I** terminal on the back of any one gauge, through its 10k. That's the key-switched +12 V that lights the gauges; they all share it, so any gauge will do. The board measures the senders as a share of it, and uses it to tell that the key is on |
 | | 5 | OIL | oil gauge **S** terminal, through its 10k |
-| | 6 | SPARE | a spare tap, through its 10k (unused by the software today) |
+| | 6 | TEMP | engine temperature gauge **S** terminal, through its 10k |
 | | 7 | GND | the **G** terminal of the same gauge as IGN: the taps measure against the gauges' own ground |
 | | 8 | GND | helm ground / battery - (the BAT+ feed's return) |
 | **J2** tach (2, bottom edge) | 1 | TACH | the **gray wire** from the EST coil's **TACH** terminal -- easiest where it lands on the tach gauge's signal terminal at the helm. No resistor on this one |
@@ -321,7 +322,7 @@ The full list, with manufacturer part numbers, is
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
 | — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
 | — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
-| **Rg** | 5 | **10 kΩ ¼ W through-hole** + adhesive-lined heatshrink | at the gauge end of each tap wire (fuel, trim, gauge I, oil, and spare if used) |
+| **Rg** | 5 | **10 kΩ ¼ W through-hole** + adhesive-lined heatshrink | at the gauge end of each tap wire (fuel, trim, oil, temp, and one gauge's I) |
 | — | 1 | inline fuse holder + 1 A fuse | J1.3 battery feed, at its source |
 | — | 1–2 | DS18B20 waterproof probes | engine (on the thermostat housing), water |
 | — | | 20–22 AWG tinned marine wire, ring terminals | taps; tach pair twisted |
@@ -396,8 +397,8 @@ check reports anything.
    (ground) and **S** (sender, sometimes SND). Don't remove anything: put a ring terminal for the tap
    *on top of* the existing one on the stud, and snug the nut back down.
 2. Solder a **10 kΩ resistor** into each tap wire within a few centimetres of its ring terminal and
-   cover it with adhesive-lined heatshrink: fuel S to J1 FUEL, trim S to TRIM, oil S to OIL, and
-   one gauge's **I** terminal to **IGN** (J1.4).
+   cover it with adhesive-lined heatshrink: fuel S to J1 FUEL, trim S to TRIM, oil S to OIL, the
+   temperature gauge's S to TEMP, and one gauge's **I** terminal to **IGN** (J1.4).
 3. Run a ground from that same gauge's **G** terminal to J1.7 (GND).
 4. **Tach:** the EST coil has two terminals, **BAT** (+12 V in) and **TACH**. The **gray** wire
    runs from TACH to the tach gauge's signal terminal (marked TACH, SIG or S). Put a ring terminal
@@ -405,7 +406,8 @@ check reports anything.
    tach gauge's **G** terminal to **J2 GND**. Twist the two together. No 10 kΩ on these -- the
    board has its own. The tach gauge stays connected.
 5. **Battery:** from the always-on helm +12 V feed, through a 1 A inline fuse at the feed, to J1.3
-   (BAT+); helm ground to J1.8 (GND).
+   (BAT+); helm ground to J1.8 (GND). This only *measures* the battery: the board does not power
+   the Pi, which needs its own 12 V to 5 V supply into its USB-C port.
 6. **NMEA 2000:** a drop cable from a T on the backbone to J5 (colours in the Connectors table).
    The backbone needs its power tee and two terminators, as always; see README's "The NMEA 2000
    backbone".
@@ -449,6 +451,7 @@ BOAT_SENDER_WIRING=tap          # listen to the gauges instead of driving the se
 BOAT_TACH_GPIO=13               # the board's tach output (header pin 33)
 BOAT_TACH_PULL=none             # the board has its own pull-up (R22)
 BOAT_OIL_SENDER=true            # the oil tap on U2
+BOAT_TEMP_SENDER=true           # the engine temperature tap on U2 (J1.6)
 BOAT_CAN=can0                   # the NMEA 2000 interface on J5 (Fusion stereo, depth)
 # BOAT_TACH_PPR=2               # the default: 2 pulses per revolution on a 4-cylinder
 # BOAT_FUEL_SENDER=false        # only if fuel level comes from NMEA 2000 instead
@@ -479,10 +482,16 @@ All on `http://<pi>:8090/calibrate`, from a phone or the iPad, **key ON**:
 | Fuel, first point | **right after filling up** | "Just filled up: save FULL" |
 | Fuel, second point | any later day | when the analog gauge sits on a mark, tap ¾, ½ or ¼ |
 | Oil, running | engine running | type what the analog gauge reads, at idle and at cruise |
+| Engine temp, cold | key on after the engine has sat a few hours | type the air or lake temperature |
+| Engine temp, warm | warmed up | type what the analog gauge reads (an infrared thermometer on the thermostat housing is better) |
 | RPM | engine running steady | type what the analog tach reads |
 
 Fuel shows "--" until it has two points at least 25% apart; after that the whole scale is live,
-empty included, and more points refine it (the page says how well they agree). A capture is
+empty included, and more points refine it (the page says how well they agree). Engine temperature
+works the same way, with two points at least 40 F apart: the software knows the shape of a
+temperature sender's curve (app/sender_tap.py), so the cold and warm points also set the overheat
+end, which straight lines through them would read 15-45 F low. With the gauges off (key off) the
+engine temperature falls back to a DS18B20 probe on J3, if one is assigned to Engine. A capture is
 refused while the reading is still settling (fuel is smoothed against slosh), and a new point at
 the same level replaces the old one.
 

@@ -35,7 +35,10 @@ class Settings:
     #   tap       -- it only listens to the wire each analog gauge already drives, so the gauges stay
     #                connected and keep working (the sensor board in SENSOR_BOARD.md)
     sender_wiring: str = os.environ.get("BOAT_SENDER_WIRING", "reference")
-    ads1115_address2: int = int(os.environ.get("BOAT_ADS1115_ADDR2", "0x49"), 0)  # the board's second ADC (oil, spare)
+    ads1115_address2: int = int(os.environ.get("BOAT_ADS1115_ADDR2", "0x49"), 0)  # the board's second ADC (oil, temp)
+    # Is the engine temperature gauge tapped (the sensor board's J1.6, TEMP)? Its sender then gives
+    # the coolant temperature, ahead of a clip-on probe.
+    temp_sender: bool = os.environ.get("BOAT_TEMP_SENDER", "false").lower() == "true"
     # Each tap's divider: 10k in heatshrink at the gauge end of the tap wire + 39k on the board, over 10k.
     tap_r_top: float = float(os.environ.get("BOAT_TAP_R_TOP", "49000"))
     tap_r_bottom: float = float(os.environ.get("BOAT_TAP_R_BOTTOM", "10000"))

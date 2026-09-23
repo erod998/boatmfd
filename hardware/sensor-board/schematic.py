@@ -381,8 +381,8 @@ def build():
         "TACH is the coil's switched side -- 12 V, ground while the coil charges, a few hundred volts at each spark: three 3.3k 1206 in series share the spike;\n"
         "1N4148W and 10n across the LED. One rising edge per ignition cycle on GPIO13; 2 per revolution on the 3.0 4-cylinder (BOAT_TACH_PPR=2).\n"
         "Keep every TACH_* net (the ignition side) 3 mm from all other copper: see sensor-board.kicad_dru.\n"
-        "Software: BOAT_SENSORS=real BOAT_SENDER_WIRING=tap BOAT_TACH_PULL=none BOAT_TACH_GPIO=13 BOAT_OIL_SENDER=true;\n"
-        "dtoverlay=w1-gpio,gpiopin=26. Channel map: fuel 0, trim 1, battery 2, gauge supply 3, oil 4 -- see SENSOR_BOARD.md.",
+        "Software: BOAT_SENSORS=real BOAT_SENDER_WIRING=tap BOAT_TACH_PULL=none BOAT_TACH_GPIO=13 BOAT_OIL_SENDER=true BOAT_TEMP_SENDER=true;\n"
+        "dtoverlay=w1-gpio,gpiopin=26. Channel map: fuel 0, trim 1, battery 2, gauge supply 3, oil 4, temp 5 -- see SENSOR_BOARD.md.",
         20.32, 256.54, size=1.5))
     sh.items.append(text(
         "NMEA 2000 (Fusion stereo, depth transducer): J5 takes a drop cable -- 1 shield (not connected), 2 NET-S, 3 NET-C, 4 NET-H, 5 NET-L.\n"

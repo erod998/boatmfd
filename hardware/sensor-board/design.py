@@ -6,7 +6,7 @@ out and routes the PCB from it, so the two cannot disagree -- and KiCad's own pa
 
 What the board does, and why each part is there, is in ../../SENSOR_BOARD.md. The input
 channels here must match the software's channel map in app/sensors.py (tap mode):
-fuel 0, trim 1, battery 2, gauge supply 3 on the first ADS1115, oil 4 on the second.
+fuel 0, trim 1, battery 2, gauge supply 3 on the first ADS1115, oil 4 and temp 5 on the second.
 """
 from dataclasses import dataclass, field
 
@@ -26,7 +26,7 @@ CHANNELS = [
     ("BATT", 3, "U1", 6, "47k"),    # 2
     ("GAUGE", 4, "U1", 7, "39k"),   # 3: the gauges' own supply (I terminal)
     ("OIL", 5, "U2", 4, "39k"),     # 4
-    ("SPARE", 6, "U2", 5, "39k"),   # 5
+    ("TEMP", 6, "U2", 5, "39k"),    # 5: the engine temperature gauge (BOAT_TEMP_SENDER=true)
 ]
 
 # Pi header: physical pin -> net. Everything not listed is left unconnected.
@@ -126,7 +126,7 @@ def build_parts():
         Part("U1", "Analog_ADC:ADS1115IDGS", "ADS1115IDGSR", "Package_SO:TSSOP-10_3x3mm_P0.5mm", adc_pins["U1"],
              mpn="ADS1115IDGSR", sch=(345.44, 71.12), note="I2C 0x48: fuel, trim, battery, gauge supply"),
         Part("U2", "Analog_ADC:ADS1115IDGS", "ADS1115IDGSR", "Package_SO:TSSOP-10_3x3mm_P0.5mm", adc_pins["U2"],
-             mpn="ADS1115IDGSR", sch=(345.44, 124.46), note="I2C 0x49: oil, spare (optional)"),
+             mpn="ADS1115IDGSR", sch=(345.44, 124.46), note="I2C 0x49: oil, engine temperature"),
         capacitor("C7", "100n", "+3V3", "GND", sch=(375.92, 60.96), note="U1 decoupling"),
         capacitor("C8", "1u", "+3V3", "GND", sch=(386.08, 60.96), note="U1 decoupling"),
         capacitor("C9", "100n", "+3V3", "GND", sch=(375.92, 114.3), note="U2 decoupling"),
@@ -214,7 +214,7 @@ def build_parts():
         Part("J1", "Connector_Generic:Conn_01x08", "HELM",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange", helm,
              mpn="Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)", sch=(35.56, 157.48),
-             note="FUEL/TRIM/OIL: that gauge's S terminal; BAT+: +12V always on (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -"),
+             note="FUEL/TRIM/OIL/TEMP: that gauge's S terminal; BAT+: +12V always on (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -"),
         Part("J2", "Connector_Generic:Conn_01x02", "TACH",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",

@@ -40,6 +40,23 @@ Neither has a standard sender range to lean on -- the published ranges for MerCr
 disagree with each other -- so both use straight lines between captured points: fully down and
 fully up for trim, pressures read off the analog gauge for oil. More points, better in between.
 
+Engine temperature
+------------------
+A temperature sender is a thermistor, R_s = R_0 * exp(B * (1/T - 1/T_0)), T in kelvin. How many
+ohms it has differs from one make to the next (and a dual-station sender has half a single one's),
+but that scale folds into b above, exactly as it does for fuel, so only the curve's shape matters.
+The shape is B, and published curves agree on it: 450 / 99 / 29.6 ohm at 100 / 175 / 250 F give
+~4000 K; MerCruiser's 121-147 / 47-55 / 36-41 ohm at 140 / 194 / 212 F give ~3900 K. So
+
+    1/r  =  a + c * x        where x = exp(-B * (1/T - 1/T_ref))
+
+is again a straight line, and two points fix a and c -- engine cold (key on after it has sat: the
+air or lake temperature) and warmed up. What that buys is the overheat end, which nobody
+calibrates on purpose: straight lines through a cold and a warm point, extended, read an overheat
+15-45 F low in simulation, where this reads within 5 F even for a sender whose B is 3700 K. A
+set of points the published B can't fit (three or more, spread widely) gets its own B; one no B
+can fit falls back to straight lines, and says so.
+
 Faults are no data, never a number
 ----------------------------------
 A tap wire that has fallen off reads 0 V, which the divider model would call a sender shorted to
@@ -56,6 +73,13 @@ MIN_POINT_SPREAD_PCT = 25.0   # points closer together than this cannot pin down
 MODEL_TOLERANCE_PCT = 4.0     # worse than this and the divider model is abandoned for the table
 MIN_OIL_TAP_FRACTION = 0.03   # an oil tap reading less than this share of the supply is unplugged
 MAX_POINTS = 12
+TEMP_BETA_K = 3950.0          # a temperature sender's B, between the published curves' 3900 and 4000
+TEMP_BETA_FIT_K = (3300.0, 4700.0)   # the B a wide set of points may choose for itself
+TEMP_REF_K = 355.0            # where x = 1: about 180 F, keeping x near 1 across the gauge
+MIN_TEMP_SPREAD_F = 40.0      # cold and warmed up are 80-100 F apart
+MIN_BETA_SPREAD_F = 60.0      # points must span this much before they may choose their own B
+TEMP_TOLERANCE_F = 4.0        # worse than this at a point and the fit is not the gauge
+TEMP_PLAUSIBLE_F = (20.0, 300.0)     # outside this is a fault (a tap wire off reads as boiling)
 
 
 def tap_ratio(tap_v, supply_v, ratiometric=True):
@@ -167,6 +191,71 @@ def bounded_percent(value):
     return max(0.0, min(100.0, value))
 
 
+# ---------------- engine temperature: the divider model with a thermistor sender ----------------
+def _kelvin(temp_f):
+    return (temp_f - 32.0) * 5.0 / 9.0 + 273.15
+
+
+def _fahrenheit(kelvin):
+    return (kelvin - 273.15) * 9.0 / 5.0 + 32.0
+
+
+def thermistor_x(temp_f, beta):
+    """1/R_s at this temperature, up to a constant the fit absorbs."""
+    return math.exp(-beta * (1.0 / _kelvin(temp_f) - 1.0 / TEMP_REF_K))
+
+
+def fit_thermistor(points, beta):
+    """(a, c, beta) for 1/r = a + c*x by least squares, or None if the points give no divider."""
+    if len(points) < 2:
+        return None
+    xs = [thermistor_x(t, beta) for _, t in points]
+    ys = [1.0 / ratio for ratio, _ in points]
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx == 0:
+        return None
+    c = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    a = my - c * mx
+    if a <= 0 or c <= 0:   # hotter must mean a lower voltage, from a real supply
+        return None
+    return a, c, beta
+
+
+def thermistor_temp(ratio, fit):
+    """Degrees F from a fit, unbounded. None at or past an open sender (colder than it can say)."""
+    if ratio is None or ratio <= 0:
+        return None
+    a, c, beta = fit
+    excess = 1.0 / ratio - a
+    if excess <= 0:
+        return None
+    inverse_k = 1.0 / TEMP_REF_K - math.log(excess / c) / beta
+    return _fahrenheit(1.0 / inverse_k) if inverse_k > 0 else None
+
+
+def _worst_miss(points, fit):
+    misses = [thermistor_temp(r, fit) for r, _ in points]
+    return max(math.inf if m is None else abs(m - t) for m, (_, t) in zip(misses, points))
+
+
+def best_thermistor_fit(points):
+    """(fit, worst miss in F) with the published B -- or, when that misses and the points span
+    enough to say otherwise, with the B in TEMP_BETA_FIT_K that fits them best. (None, inf) if
+    neither can."""
+    fit = fit_thermistor(points, TEMP_BETA_K)
+    miss = _worst_miss(points, fit) if fit else math.inf
+    if miss <= TEMP_TOLERANCE_F or len(points) < 3 or spread(points) < MIN_BETA_SPREAD_F:
+        return fit, miss
+    lo, hi = TEMP_BETA_FIT_K
+    for beta in (lo + i * 25.0 for i in range(int((hi - lo) / 25.0) + 1)):
+        candidate = fit_thermistor(points, beta)
+        candidate_miss = _worst_miss(points, candidate) if candidate else math.inf
+        if candidate_miss < miss:
+            fit, miss = candidate, candidate_miss
+    return fit, miss
+
+
 # ---------------- what the hub calls ----------------
 def fuel_level(ratio, points, empty_ohm, full_ohm):
     """(percent or None, how: dict for the calibration page)."""
@@ -220,3 +309,30 @@ def oil_pressure(ratio, points, ratiometric=True):
     if value is None or value > 2 * top + 10:
         return None, how
     return max(0.0, value), how
+
+
+def engine_temp(ratio, points):
+    """(degrees F or None, how: dict for the calibration page)."""
+    pts = clean_points(points)
+    how = {"points": len(pts), "method": None, "residual_f": None, "beta_k": None, "note": None}
+    if len(pts) < 2:
+        how["note"] = ("needs two points: one with the engine cold (key on after it has sat a few hours: "
+                       "type the air or lake temperature), and one warmed up")
+        return None, how
+    if spread(pts) < MIN_TEMP_SPREAD_F:
+        how["note"] = f"points are too close together; add one at least {MIN_TEMP_SPREAD_F:.0f} F away from the others"
+        return None, how
+    fit, miss = best_thermistor_fit(pts)
+    if fit is not None and miss <= TEMP_TOLERANCE_F:
+        how.update(method="sender", residual_f=round(miss, 1), beta_k=round(fit[2]))
+        value = thermistor_temp(ratio, fit)
+    else:
+        how["note"] = ("these points do not follow a temperature sender's curve"
+                       + (f" (off by up to {miss:.0f} F)" if math.isfinite(miss) else "")
+                       + "; using straight lines between them, which read an overheat low")
+        how["method"] = "table"
+        value = table_value(ratio, pts)
+    lo, hi = TEMP_PLAUSIBLE_F
+    if value is None or not lo <= value <= hi:
+        return None, how
+    return value, how
