@@ -10,6 +10,7 @@ Run: uvicorn app.main:app --host 0.0.0.0 --port 8090
 """
 import asyncio
 import contextlib
+import gzip
 import json
 import time
 from dataclasses import asdict
@@ -17,7 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -38,6 +40,7 @@ from .quickdraw import QuickdrawRecorder
 from .routes import RouteTracker
 from .sensors import make_sensor_sources
 from .state import Settings
+from .storage import read_dict, write_json
 from .switching import SwitchingPanel
 from .telemute import AlarmMute
 from .tracks import SavedTracks
@@ -114,6 +117,10 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Boat Dashboard", lifespan=lifespan)
+# The chart is several megabytes of GeoJSON, which compresses about eight to one: over the boat's
+# WiFi to a tablet that is the difference between a pause and none. Small responses (telemetry,
+# settings) are left alone -- compressing them costs more than it saves.
+app.add_middleware(GZipMiddleware, minimum_size=50_000)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -174,6 +181,13 @@ class AlarmIn(BaseModel):
 
 class AlarmSoundIn(BaseModel):
     on: bool
+
+
+class ChartSettingsIn(BaseModel):
+    # The lake's surface elevation, in feet: the surveyed depth shown anywhere is this minus the
+    # charted bottom. None goes back to the area's normal pool. Bounded to rule out absurdities;
+    # every lake this could chart sits somewhere in between.
+    lake_level_ft: Optional[float] = Field(default=None, ge=-300.0, le=15_000.0)
 
 
 class VolumeBoostIn(BaseModel):
@@ -282,27 +296,87 @@ def chart_areas():
                 files, total_bytes = chart_store.stats(d.name)
                 areas.append({"name": d.name, "bbox": manifest.get("bbox"),
                               "layers": len(manifest.get("layers", {})),
-                              "fetched_at": manifest.get("fetched_at"), "bytes": total_bytes})
+                              "fetched_at": manifest.get("fetched_at"), "bytes": total_bytes,
+                              "survey": (d / "survey_depth.json").exists()})
     return {"areas": areas}
 
 
+@app.get("/api/chart/{area}/survey")
+def chart_survey(area: str):
+    """The surveyed-depth grid for one area (app/survey_depths.py), as built by fetch_depths.
+    Served as the file it is: it is already compact JSON, and parsing it only to re-encode it
+    would cost the Pi a second or two for nothing."""
+    if "/" in area or ".." in area:
+        return Response(status_code=404)
+    path = DATA_DIR / "charts" / area / "survey_depth.json"
+    if not path.exists():
+        return Response(status_code=404)
+    return FileResponse(str(path), media_type="application/json")
+
+
+CHART_SETTINGS_FILE = DATA_DIR / "chart_settings.json"
+
+
+@app.get("/api/chart-settings")
+def get_chart_settings():
+    """Chart settings every screen shares -- the Pi's own display and a tablet must show the same
+    depths, so the lake level lives here rather than in one browser's storage."""
+    saved = read_dict(CHART_SETTINGS_FILE)
+    level = saved.get("lake_level_ft")
+    return {"lake_level_ft": level if isinstance(level, (int, float)) else None}
+
+
+@app.post("/api/chart-settings")
+def set_chart_settings(cmd: ChartSettingsIn):
+    saved = read_dict(CHART_SETTINGS_FILE)
+    saved["lake_level_ft"] = None if cmd.lake_level_ft is None else round(cmd.lake_level_ft, 1)
+    write_json(CHART_SETTINGS_FILE, saved)
+    return {"ok": True, **get_chart_settings()}
+
+
+_bundle_cache: dict = {}   # (area, detail) -> (manifest mtime, bytes, gzipped bytes)
+
+
 @app.get("/api/chart/{area}/{detail}")
-def chart_bundle(area: str, detail: str):
+def chart_bundle(area: str, detail: str, request: Request):
     """Every chart layer for one area at one detail level, in a single response.
 
-    Bundled rather than a request per layer because this is served off local disk -- one ~1 MB
-    response beats 24 round trips, and the whole point is that it works with no internet."""
+    Bundled rather than a request per layer because this is served off local disk -- one response
+    beats sixty round trips, and the whole point is that it works with no internet. Assembled
+    from the layer files as they are (each is already GeoJSON) rather than parsed and re-encoded:
+    for the whole of Old Hickory that is 5-6 MB, which took the Pi seconds to decode and encode
+    again on every zoom across the detail threshold. Kept in memory, compressed once, until a
+    fetch rewrites the manifest (the compression middleware would otherwise redo ~6 MB at its
+    maximum level on every request)."""
     if detail not in DETAIL_OFFSETS or "/" in area or ".." in area:
         return Response(status_code=404)
+    manifest_path = chart_store.manifest_path(area)
+    try:
+        mtime = manifest_path.stat().st_mtime
+    except OSError:
+        return Response(status_code=404)
+    cached = _bundle_cache.get((area, detail))
+    if not (cached and cached[0] == mtime):
+        body = _assemble_bundle(area, detail)
+        if body is None:
+            return Response(status_code=404)
+        cached = _bundle_cache[(area, detail)] = (mtime, body, gzip.compress(body, compresslevel=6))
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(cached[2], media_type="application/json", headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+    return Response(cached[1], media_type="application/json")
+
+
+def _assemble_bundle(area, detail):
     manifest = chart_store.manifest(area)
     if not manifest:
-        return Response(status_code=404)
-    layers = {}
+        return None
+    parts = []
     for name, entry in manifest.get("layers", {}).items():
         raw = chart_store.read_layer(area, detail, name)
         if raw:
-            layers[name] = {"kind": entry["kind"], "geojson": json.loads(raw)}
-    return {"area": area, "detail": detail, "bbox": manifest.get("bbox"), "layers": layers}
+            parts.append(f'{json.dumps(name)}:{{"kind":{json.dumps(entry["kind"])},"geojson":{raw}}}')
+    return (f'{{"area":{json.dumps(area)},"detail":{json.dumps(detail)},'
+            f'"bbox":{json.dumps(manifest.get("bbox"))},"layers":{{{",".join(parts)}}}}}').encode("utf-8")
 
 
 @app.get("/api/sensors")

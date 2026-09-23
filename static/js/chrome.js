@@ -219,6 +219,32 @@ function buildMapSettingsMenu() {
     toggle.addEventListener("click", () => { setChartLayerGroup(key, !layerGroupOn(key)); refresh(); });
   });
 
+  // Lake level, as on a Garmin with lake charts: surveyed depths are this minus the surveyed
+  // bottom, so setting it to today's level makes the chart agree with the sounder.
+  if (survey) {
+    const llBlock = document.createElement("div");
+    llBlock.className = "al-block";
+    const legend = SURVEY_BAND_LABELS.map((t, i) => `<span><i style="background:${palette().survey[i]}"></i>${t}</span>`).join("");
+    llBlock.innerHTML = '<div class="al-head"><span class="al-name">Lake level</span></div>' +
+      `<div class="al-cap">Surveyed depths are the lake level minus the bottom the Corps surveyed. ${survey.pool_note}. ` +
+      "Set today's level (the Corps posts it daily) and the depths match your sounder.</div>" +
+      '<div class="al-row"><button class="btn" data-ll="-0.5">&minus;</button><span class="ll-val"></span>' +
+      '<button class="btn" data-ll="0.5">+</button><button class="btn" data-ll="normal">Normal pool</button></div>' +
+      `<div class="al-cap">Surveyed depth, feet:</div><div class="survey-legend">${legend}</div>`;
+    body.appendChild(llBlock);
+    const val = llBlock.querySelector(".ll-val");
+    const refreshLevel = () => {
+      val.textContent = `${lakeLevel().toFixed(1)} ft`;
+      llBlock.querySelector('[data-ll="normal"]').classList.toggle("primary", lakeLevelSetting == null);
+    };
+    refreshLevel();
+    llBlock.querySelectorAll("[data-ll]").forEach((b) => b.addEventListener("click", async () => {
+      const step = b.dataset.ll;
+      await setLakeLevel(step === "normal" ? null : lakeLevel() + Number(step));
+      refreshLevel();
+    }));
+  }
+
   const qdBlock = document.createElement("div");
   qdBlock.className = "al-block";
   qdBlock.innerHTML = '<div class="al-head"><span class="al-name">My Depth Map (Quickdraw)</span></div>' +

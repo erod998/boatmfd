@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from app.main import (
     AlarmIn,
+    ChartSettingsIn,
     CreateBoundaryIn,
     CreateRouteIn,
     CreateWaypointIn,
@@ -175,6 +176,18 @@ class TestNavAlarmSettings(unittest.TestCase):
     def test_accepts_a_realistic_anchor_watch(self):
         self.assertEqual(NavAlarmSettingsIn(anchor_radius_ft=150.0).anchor_radius_ft, 150.0)
 
+
+
+
+class TestChartSettings(unittest.TestCase):
+    def test_a_lake_level_or_none_for_normal_pool(self):
+        self.assertEqual(ChartSettingsIn(lake_level_ft=443.5).lake_level_ft, 443.5)
+        self.assertIsNone(ChartSettingsIn(lake_level_ft=None).lake_level_ft)
+
+    def test_rejects_nan_infinity_and_absurd_levels(self):
+        for bad in (NAN, INF, -INF, 1e9):
+            with self.subTest(level=bad), self.assertRaises(ValidationError):
+                ChartSettingsIn(lake_level_ft=bad)
 
 if __name__ == "__main__":
     unittest.main()

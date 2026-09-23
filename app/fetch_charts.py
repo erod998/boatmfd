@@ -23,11 +23,13 @@ import argparse
 import sys
 import time
 
-from .chart_data import CHART_LAYERS, ChartStore
+from .chart_data import REQUEST_DELAY_S, ChartStore
 
 AREAS = {
     # name: (west, south, east, north)
-    "old-hickory": (-86.62, 36.24, -86.44, 36.36),
+    # The whole lake: Old Hickory Dam (river mile 216) up to Cordell Hull Dam at Carthage (mile 313),
+    # with the creek arms north and south. The first version stopped at Gallatin.
+    "old-hickory": (-86.68, 36.20, -85.92, 36.45),
     "cumberland-nashville": (-86.90, 36.08, -86.62, 36.26),
     "center-hill": (-85.95, 35.95, -85.60, 36.15),
 }
@@ -56,8 +58,8 @@ def main(argv=None):
     store = ChartStore(args.charts_dir)
     details = ("detail",) if args.detail_only else ("detail", "overview")
     print(f"{name}: {bbox[0]},{bbox[1]} to {bbox[2]},{bbox[3]}")
-    print(f"{len(CHART_LAYERS)} chart layers x {len(details)} detail level(s) "
-          f"= about {len(CHART_LAYERS) * len(details)} requests")
+    n = store.request_count(details)
+    print(f"about {n} requests, one every {REQUEST_DELAY_S:.0f} s: roughly {n * REQUEST_DELAY_S / 60:.0f} minutes")
 
     if args.dry_run:
         # One real query tells us whether this area has any chart coverage at all.

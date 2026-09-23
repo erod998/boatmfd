@@ -8,7 +8,7 @@ import unittest
 import urllib.parse
 from pathlib import Path
 
-from app.chart_data import CHART_LAYERS, DETAIL_OFFSETS, MAX_PAGE, ChartStore, query_url
+from app.chart_data import CHART_LAYERS, DETAIL_OFFSETS, MAX_PAGE, POINT_LAYER_IDS, REQUEST_DELAY_S, ChartStore, query_url
 
 BBOX = (-86.62, 36.24, -86.44, 36.36)  # Old Hickory Lake
 
@@ -47,10 +47,26 @@ class TestQueryUrl(unittest.TestCase):
 
 
 class TestChartLayers(unittest.TestCase):
-    def test_the_land_clutter_layers_are_deliberately_excluded(self):
-        # BUILDING_SINGLE_AREA (58) and ROADWAY_LINE (48) are 6,295 of the lake's 6,756 features
+    def test_the_land_clutter_layer_is_deliberately_excluded(self):
+        # BUILDING_SINGLE_AREA (58): 5,158 features over the lower lake alone
         self.assertNotIn(58, CHART_LAYERS)
-        self.assertNotIn(48, CHART_LAYERS)
+
+    def test_roads_come_as_their_own_kind_so_they_can_be_drawn_quietly_and_toggled(self):
+        self.assertEqual(CHART_LAYERS[48]["kind"], "road")
+
+    def test_creeks_and_marinas_are_water_not_land(self):
+        # They were once "area", the land fill, which drew every creek arm and marina as dry land.
+        by_name = {spec["name"]: spec["kind"] for spec in CHART_LAYERS.values()}
+        self.assertEqual(by_name["rivers"], "water_area")
+        self.assertEqual(by_name["harbour"], "facility_area")
+
+    def test_the_named_places_a_chart_prints_are_fetched(self):
+        kinds = {spec["kind"] for spec in CHART_LAYERS.values()}
+        for kind in ("place", "water_name", "facility"):
+            self.assertIn(kind, kinds)
+
+    def test_the_request_pace_is_gentle_on_a_shared_government_server(self):
+        self.assertGreaterEqual(REQUEST_DELAY_S, 2.0)
 
     def test_the_layers_a_chart_is_useless_without_are_present(self):
         names = {spec["name"] for spec in CHART_LAYERS.values()}
@@ -83,8 +99,27 @@ class TestFetchArea(unittest.TestCase):
     def test_fetches_each_detail_level_at_its_own_generalisation(self):
         store = self.store(lambda url: (self.requested.append(url), collection(1))[1])
         store.fetch_area("lake", BBOX, details=("detail", "overview"))
-        offsets = {params_of(u).get("maxAllowableOffset") for u in self.requested}
+        shaped = [u for u in self.requested if int(u.split("/query")[0].rsplit("/", 1)[1]) not in POINT_LAYER_IDS]
+        offsets = {params_of(u).get("maxAllowableOffset") for u in shaped}
         self.assertEqual(offsets, {str(DETAIL_OFFSETS["detail"]), str(DETAIL_OFFSETS["overview"])})
+
+    def test_point_layers_are_fetched_once_ungeneralised_and_saved_for_both_levels(self):
+        store = self.store(lambda url: (self.requested.append(url), collection(1))[1])
+        store.fetch_area("lake", BBOX, details=("detail", "overview"))
+        buoy_requests = [u for u in self.requested if "/15/query" in u]
+        self.assertEqual(len(buoy_requests), 1)
+        self.assertNotIn("maxAllowableOffset", params_of(buoy_requests[0]))
+        self.assertIsNotNone(store.read_layer("lake", "detail", "lateral_buoy"))
+        self.assertIsNotNone(store.read_layer("lake", "overview", "lateral_buoy"))
+        self.assertEqual(len(self.requested), store.request_count(("detail", "overview")))
+
+    def test_every_request_is_followed_by_the_polite_pause(self):
+        pauses = []
+        store = ChartStore(Path(self.tmp.name), fetch=lambda url: (self.requested.append(url), collection(1))[1],
+                           sleep=pauses.append)
+        store.fetch_area("lake", BBOX, details=("detail",))
+        self.assertEqual(len(pauses), len(self.requested))
+        self.assertTrue(all(p >= REQUEST_DELAY_S for p in pauses))
 
     def test_empty_layers_are_not_written_to_disk(self):
         store = self.store(lambda url: collection(0))

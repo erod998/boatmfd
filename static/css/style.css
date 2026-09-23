@@ -149,6 +149,38 @@ button.overlay-box:active { background: rgba(59, 123, 232, 0.28); }
 .zoom button.orient svg { width: 1.7rem; height: 1.7rem; fill: currentColor; display: block; }
 .zoom button.orient.active { background: var(--blue); }
 .zoom button.orient.active:active { background: var(--blue-hi); }
+.zoom button.orient { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.02em; }
+/* The Center button only shows once the chart has been dragged off the boat. */
+.zoom button[hidden] { display: none; }
+.zoom button.recenter { display: flex; align-items: center; justify-content: center; background: var(--blue); }
+.zoom button.recenter svg { width: 1.8rem; height: 1.8rem; fill: currentColor; display: block; }
+.zoom button.recenter:active { background: var(--blue-hi); }
+
+/* Chart labels: names the chart prints. The outer element is a zero-size anchor at the point;
+   the text centres on it. Colours follow the chart palette (day / dusk / night). */
+.chart-label { pointer-events: none; }
+.chart-label span {
+  position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); white-space: nowrap;
+  font: 600 12px/1.1 system-ui, -apple-system, "Segoe UI", sans-serif; color: #2d2a22;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff;
+}
+.chart-label.town span { font-size: 13.5px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; color: #3b3326; }
+.chart-label.water span { font-style: italic; color: #1d5f8a; }
+.chart-label.facility span { color: #7a1f93; }
+.chart-label.mile span { font-size: 10.5px; font-weight: 700; color: #4a4636; }
+#map[data-chart-mode="dusk"] .chart-label span { color: #f2eee4; text-shadow: 0 0 2px #1a1a1a, 0 0 3px #1a1a1a; }
+#map[data-chart-mode="dusk"] .chart-label.water span { color: #bfe4ff; }
+#map[data-chart-mode="dusk"] .chart-label.facility span { color: #e7b6f5; }
+#map[data-chart-mode="night"] .chart-label span { color: #9aa3ab; text-shadow: 0 0 2px #000, 0 0 3px #000; }
+#map[data-chart-mode="night"] .chart-label.water span { color: #6c9bbd; }
+#map[data-chart-mode="night"] .chart-label.facility span { color: #a879b8; }
+.cb-area small { opacity: 0.7; font-weight: 500; margin-left: 0.25em; }
+
+/* Map Settings: lake level and the surveyed-depth legend */
+.ll-val { min-width: 6.5em; text-align: center; font-weight: 700; font-size: 1.1rem; align-self: center; }
+.survey-legend { display: flex; flex-wrap: wrap; gap: 0.35rem 0.6rem; margin-top: 0.5rem; font-size: 0.85rem; }
+.survey-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.survey-legend i { width: 1.4rem; height: 0.9rem; border-radius: 2px; border: 1px solid rgba(0, 0, 0, 0.25); display: inline-block; }
 .chart-credit { position: absolute; left: 50%; transform: translateX(-50%); bottom: 0.3rem; font-size: 0.65rem; color: #fff; background: rgba(12, 13, 14, 0.75); padding: 0.05rem 0.5rem; z-index: 500; white-space: nowrap; }
 .leaflet-control-scale-line { background: rgba(12, 13, 14, 0.8); color: #fff; border-color: #fff; font-size: 0.75rem; }
 .leaflet-container { font-family: inherit; }

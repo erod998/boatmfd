@@ -43,8 +43,16 @@ Heading Up re-aims the chart with every wiggle of the boat, which at idle is a c
 swim, while Course Up holds the leg still and lets the boat icon swing against it, so the angle
 between the icon and straight-up is exactly how much you are crabbing off the track. With no Go
 To or route running it falls back to course over ground, then heading, so it is never stuck
-pointing somewhere stale. Cycle them with the compass button next to the zoom buttons, or
-**Options → Chart orientation**; both stay in sync.
+pointing somewhere stale. The chart button beside the zoom controls is labelled with the current
+mode (**N↑**, **H↑**, **C↑**) and switches in one press between North Up and whichever rotating
+mode you last chose; **Options → Chart orientation** cycles through all three. (It used to cycle
+all three itself, and since Heading Up and Course Up look alike on a straight run, getting back
+to North Up took two presses.)
+
+**Following the boat**: the chart keeps the boat centred (North Up) or a third of the way up the
+screen (Heading and Course Up) until you drag it. Then it stays where you put it, and a blue
+**Center** button appears above the ruler; tap it to go back to the boat. Pinching or the +/−
+buttons zoom without letting go of the boat.
 
 **The chart cursor** — what a tap on the chart does, the way a GPSMAP does it: it drops a cursor
 and does nothing else yet. The bar that appears says how far away it is and in which direction,
@@ -273,8 +281,12 @@ S-57 feature class as a queryable layer, so the fetch pulls real GeoJSON:
 depth areas with their actual depth ranges in metres, the shoreline, the
 navigable channel, and every buoy, beacon and light with full attribution.
 
-For Old Hickory Lake that is **822 features, 2.1 MB, in about 60 requests,
-taking 36 seconds** — once, ever, until you choose to refresh it.
+For the whole of Old Hickory Lake — Old Hickory Dam (river mile 216) up to Cordell Hull Dam at
+Carthage (mile 313), creek arms included — that is **about 9,000 features and 8 MB, in about 107
+requests, one every 3 seconds: 6–7 minutes**, once, until you choose to refresh it. (The first
+version covered only the lower lake and stopped at Gallatin.) The service publishes no rate
+limit and is a shared government server, so the fetcher never bursts; see
+`REQUEST_DELAY_S` in `app/chart_data.py`.
 
 ### Getting the charts
 
@@ -302,16 +314,64 @@ worth doing. It simply overwrites what's there.
 
 ### What you get on screen
 
-Depth-shaded water in bands (a 0–9 ft polygon shades as the shallow water it
-is), land and shoreline, the recommended track down the channel, caution areas,
-and the aids to navigation on top. Tap any of them:
+Land and shoreline; creeks and marina basins as water; depth-shaded water, with the
+**surveyed depths** (below) over the channel; the recommended track; bridges, the dam and lock;
+marinas, docks and piers; restricted areas and no-wake notice signs; caution areas and hazards;
+roads and railroads on land; and the aids to navigation on top. **Names** print the way a chart
+prints them — creeks and bays in italic blue, islands and bends, towns, marinas, bridges and river
+miles — upright even in Heading Up, and only as many as fit without overlapping. Detail comes in
+as you zoom: the whole lake at once is the shoreline, the channel and the town names, and buoys,
+mile markers, hazards and docks appear as you zoom in. Every group can be hidden under
+**Options → Map layers & colors**. Tap any of them:
 
 | Tap | It says |
 | --- | --- |
 | A beacon | `Spencer Creek Light (236.8)` — Starboard-Hand Lateral Mark, Red |
 | A light | `Fl(2)R 5s` — built from the S-57 characteristic, group and period |
-| A depth area | `0.0 ft to 9.0 ft` |
+| The chart, in the surveyed channel | `Depth 18.2 ft, surveyed 2019` — then the charted area below it |
+| A charted depth area | `0 ft to 9 ft` outside the channel, `9 ft or more` inside it |
+| A marina | its name, and what kind of facility it is |
 | A distance mark | `Mile 225`, Cumberland (CR) |
+
+Two things were wrong in how the chart drew before this version and are worth knowing about if
+you remember the old one: creeks and marina basins were filled in the **land** colour (Station
+Camp Creek, Cedar Creek and every marina looked like dry ground), and in **Heading Up the chart
+did not turn** — the boat, track and labels did, while the chart under them stayed north-up and
+drew in the wrong place.
+
+### Surveyed depths
+
+The Corps' chart only knows two depths on Old Hickory: **0–9 ft** outside the navigation channel
+and **9 ft or more** inside it. That is what the chart is for — the maintained 9-ft channel — and
+it is why tapping the chart used to say 0–9 ft or nothing.
+
+The Corps does survey the actual bottom. Its Nashville District runs condition surveys of the
+channel and publishes every one through **eHydro** — around 9,000 soundings per mile, across the
+old river bed from bank to bank. `app/fetch_depths.py` downloads them and turns them into a depth
+grid (25 ft cells, keeping the shallowest sounding in each, a newer survey replacing an older
+one) plus the surveyors' own printed soundings:
+
+```bash
+venv/bin/python -m app.fetch_depths old-hickory --dry-run   # list the surveys
+venv/bin/python -m app.fetch_depths old-hickory              # ~18 downloads, one every 5 s
+```
+
+On screen: the channel shaded by depth (darker is shallower, as on a paper chart; the colour key
+is under Map layers & colors), depth numbers once zoomed in, and the cursor reading the real
+depth wherever you tap in a surveyed stretch. The result is `data/charts/old-hickory/survey_depth.json`
+(680 KB, committed with the charts); the downloads are cached in `data/survey-cache/` so a re-run
+fetches only new surveys.
+
+**What it covers**: river miles **216–225** (Old Hickory Dam up past Hermitage, surveyed 2018–19)
+and **297–313** (the upper lake below Cordell Hull Dam, 2016–17) — the channel, not the coves,
+flats or creek arms, and not the middle of the lake between those two stretches. No public data
+covers those; Quickdraw, once a transducer is fitted, fills them in from your own sounder.
+
+**Lake level**: the surveys record bottom *elevations* (feet above NAVD88), so a depth is the lake
+level minus the bottom — and Old Hickory moves between 442 and 445 ft. **Options → Map layers &
+colors → Lake level** sets it (445 ft, normal summer pool, by default), the way a Garmin with
+lake charts does; every screen shares the setting. Set it to the day's level, which the Corps
+posts daily, and the chart agrees with the sounder.
 
 Day / Dusk / Night are real palettes applied to the vectors, not a CSS filter
 smeared over an image — so the boat, track and AIS targets keep their own

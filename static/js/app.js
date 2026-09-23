@@ -77,33 +77,81 @@ L.control.scale({ position: "bottomleft", metric: false, imperial: true, maxWidt
 // which is why it's fast, works entirely offline, stays crisp at any zoom, restyles for night by
 // changing colours rather than re-rendering, and can tell you what a buoy is when you tap it.
 //
-// Canvas renderer rather than SVG: a few hundred chart features plus the boat, track, AIS targets
-// and Quickdraw dots all redraw on every pan and rotation frame, and canvas handles that without
-// the per-element DOM cost SVG pays.
-const chartRenderer = L.canvas({ padding: 0.3 });
-const chartPane = map.createPane("chart");
+// Canvas rather than SVG: thousands of chart features would cost a DOM element each in SVG.
+//
+// Leaflet's canvas renderer clears and redraws everything on every "moveend", and a chart that
+// follows the boat -- or turns with it in Heading Up -- moves the map a fraction of a pixel every
+// animation frame. For the whole lake that is several thousand polygons, sixty times a second.
+// But what the canvas holds does not change when the map merely slides or turns: it is drawn in
+// layer coordinates, 30% larger than the screen on every side, and the pane transform does the
+// sliding and turning. So these renderers only redraw once the visible corners get near the edge
+// of what was last drawn, or the zoom or pixel origin changed -- about once every few seconds
+// when following the boat, instead of every frame.
+const LazyCanvas = L.Canvas.extend({
+  _update() {
+    const map = this._map;
+    if (this._bounds && !map._animatingZoom && this._drawnZoom === map.getZoom() &&
+        this._drawnOrigin && this._drawnOrigin.equals(map.getPixelOrigin())) {
+      const size = map.getSize();
+      const m = Math.max(size.x, size.y) * 0.1;
+      const inner = L.bounds(this._bounds.min.add([m, m]), this._bounds.max.subtract([m, m]));
+      const corners = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y]];
+      if (corners.every((c) => inner.contains(map.containerPointToLayerPoint(c)))) return;
+    }
+    L.Canvas.prototype._update.call(this);
+    this._drawnZoom = map.getZoom();
+    this._drawnOrigin = map.getPixelOrigin();
+  },
+});
+
+// Three layers of chart, bottom to top: the base (land, water, depth areas) in one canvas; the
+// surveyed-depth shading over it; then lines, aids to navigation and hazards in a second canvas,
+// so a buoy at the edge of the surveyed channel is never painted over by the depth shading.
+//
+// All three are created inside leaflet-rotate's rotating pane. A pane made with plain
+// createPane(name) lands in the map pane instead, which the plugin never turns: from the switch
+// to vector charts until this was found, Heading Up turned the boat, the track and the labels
+// while the chart underneath stayed north-up and drew in the wrong place.
+const rotatingPane = map.getPane("rotatePane");   // undefined only if rotation is off, and then the default is right
+const chartPane = map.createPane("chart", rotatingPane);
 chartPane.style.zIndex = 200;   // under every marker pane, over the map background
+map.createPane("survey", rotatingPane).style.zIndex = 205;
+map.createPane("chartTop", rotatingPane).style.zIndex = 210;
+const chartRenderer = new LazyCanvas({ padding: 0.3, pane: "chart" });
+const chartRendererTop = new LazyCanvas({ padding: 0.3, pane: "chartTop" });
+const TOP_KINDS = new Set(["coastline", "contour", "structure_line", "dock_line", "hazard_line", "track",
+  "landmark", "facility", "notice", "distance_mark", "danger_point", "beacon", "buoy", "light"]);
+const rendererFor = (kind) => (TOP_KINDS.has(kind)
+  ? { renderer: chartRendererTop, pane: "chartTop" } : { renderer: chartRenderer, pane: "chart" });
 
 // Depth shading bands, in metres, shallowest first. IENC gives each depth area a range
 // (Depth_Area_Value_1..2); the band is chosen from the deepest edge, so a 0-2.74 m polygon shades
 // as the shallow water it is. The whole point of a chart at a glance is "can I go there".
 const DEPTH_BANDS = [2.0, 5.0, 10.0];
 
+// survey: the surveyed-depth ramp, shallowest first, for SURVEY_BANDS_FT below -- darker blue is
+// less water, as on a paper chart, and the deep river bed goes nearly white.
 const CHART_PALETTES = {
   day: {
     land: "#e9dcc3", landEdge: "#b9ab8d", builtUp: "#ded2bc", water: ["#8ec9e8", "#b3dcf0", "#d3ebf8", "#e8f4fb"],
     coast: "#4a4636", contour: "#6f98ad", caution: "#e8d24a", danger: "#d1382f", track: "#b02a8f",
-    hazard: "#e07b20", text: "#1c1c1c", textHalo: "#ffffff", chartBg: "#c9e3f2",
+    hazard: "#e07b20", text: "#1c1c1c", textHalo: "#ffffff", chartBg: "#efe8da",
+    facility: "#8e2aa6", dock: "#8a7f6c", structure: "#c9bda4", road: "#c7b28c", rail: "#6b6254", restricted: "#c0268f",
+    survey: ["#4d98cf", "#6aaddb", "#89c0e4", "#a8d2ec", "#c4e1f2", "#dcedf8", "#f1f8fc"],
   },
   dusk: {
     land: "#8d8369", landEdge: "#6e664f", builtUp: "#847b63", water: ["#3d6c86", "#4e7f99", "#5e91ab", "#6ea0b9"],
     coast: "#3a372c", contour: "#7fa5b8", caution: "#c2ae3e", danger: "#c2352c", track: "#a3287f",
-    hazard: "#c46c1c", text: "#f0f0f0", textHalo: "#1a1a1a", chartBg: "#4a7891",
+    hazard: "#c46c1c", text: "#f0f0f0", textHalo: "#1a1a1a", chartBg: "#958c76",
+    facility: "#b85ad0", dock: "#6b6250", structure: "#7a7059", road: "#73664b", rail: "#4a4336", restricted: "#b13d8f",
+    survey: ["#2f5c77", "#3a6a86", "#467995", "#5388a3", "#6297b1", "#72a6be", "#83b4ca"],
   },
   night: {
     land: "#241f16", landEdge: "#4a412e", builtUp: "#2c261b", water: ["#0d2a3a", "#0a2231", "#071a26", "#05131c"],
     coast: "#6e6449", contour: "#3f6b82", caution: "#8a7a24", danger: "#a12b22", track: "#7d1f63",
-    hazard: "#8a5416", text: "#d6dade", textHalo: "#000000", chartBg: "#06131c",
+    hazard: "#8a5416", text: "#d6dade", textHalo: "#000000", chartBg: "#1b1812",
+    facility: "#8a3f9e", dock: "#4b4335", structure: "#342d21", road: "#3d3424", rail: "#2d271d", restricted: "#7a2461",
+    survey: ["#123a52", "#0f3247", "#0c2a3c", "#0a2332", "#081c29", "#061620", "#041017"],
   },
 };
 
@@ -130,29 +178,44 @@ function aidColor(props, p) {
 function chartStyle(kind, feature) {
   const p = palette();
   const props = feature.properties || {};
+  const r = rendererFor(kind);
   switch (kind) {
     case "depth":
-      return { renderer: chartRenderer, pane: "chart", stroke: false,
-               fillColor: p.water[depthBandIndex(props)], fillOpacity: 1 };
+      return { ...r, stroke: false, fillColor: p.water[depthBandIndex(props)], fillOpacity: 1 };
     case "area":
-      return { renderer: chartRenderer, pane: "chart", color: p.landEdge, weight: 1,
-               fillColor: p.land, fillOpacity: 1 };
+      return { ...r, color: p.landEdge, weight: 1, fillColor: p.land, fillOpacity: 1 };
+    case "water_area":   // creeks, the lock basin: water of uncharted depth
+      return { ...r, stroke: false, fillColor: p.water[1], fillOpacity: 1 };
+    case "facility_area":   // marina basins
+      return { ...r, color: p.facility, weight: 1.4, dashArray: "5 4", fillColor: p.water[2], fillOpacity: 1 };
+    case "dock":
+      return { ...r, color: p.dock, weight: 1, fillColor: p.dock, fillOpacity: 0.9 };
+    case "structure":
+      return { ...r, color: p.landEdge, weight: 1, fillColor: p.structure, fillOpacity: 1 };
+    case "road":
+      return { ...r, color: p.road, weight: 1.3, fill: false };
+    case "railroad":
+      return { ...r, color: p.rail, weight: 1.5, dashArray: "7 3", fill: false };
     case "caution":
-      return { renderer: chartRenderer, pane: "chart", color: p.caution, weight: 2, dashArray: "6 4",
-               fillColor: p.caution, fillOpacity: 0.16 };
+      return { ...r, color: p.caution, weight: 2, dashArray: "6 4", fillColor: p.caution, fillOpacity: 0.16 };
+    case "restricted":   // restricted areas and anchorages: magenta dashes, as charts print them
+      return { ...r, color: p.restricted, weight: 1.6, dashArray: "9 5", fillColor: p.restricted, fillOpacity: 0.05 };
     case "danger":
-      return { renderer: chartRenderer, pane: "chart", color: p.danger, weight: 2,
-               fillColor: p.danger, fillOpacity: 0.25 };
+      return { ...r, color: p.danger, weight: 2, fillColor: p.danger, fillOpacity: 0.25 };
     case "coastline":
-      return { renderer: chartRenderer, pane: "chart", color: p.coast, weight: 1.6, fill: false };
+      return { ...r, color: p.coast, weight: 1.6, fill: false };
     case "contour":
-      return { renderer: chartRenderer, pane: "chart", color: p.contour, weight: 1, dashArray: "5 4", fill: false };
+      return { ...r, color: p.contour, weight: 1, dashArray: "5 4", fill: false };
+    case "structure_line":
+      return { ...r, color: p.coast, weight: 2.6, fill: false };
+    case "dock_line":
+      return { ...r, color: p.dock, weight: 2, fill: false };
     case "track":
-      return { renderer: chartRenderer, pane: "chart", color: p.track, weight: 2, dashArray: "10 6", fill: false, opacity: 0.85 };
+      return { ...r, color: p.track, weight: 2, dashArray: "10 6", fill: false, opacity: 0.85 };
     case "hazard_line":
-      return { renderer: chartRenderer, pane: "chart", color: p.hazard, weight: 2, dashArray: "3 4", fill: false };
+      return { ...r, color: p.hazard, weight: 2, dashArray: "3 4", fill: false };
     default:
-      return { renderer: chartRenderer, pane: "chart", color: p.coast, weight: 1, fill: false };
+      return { ...r, color: p.coast, weight: 1, fill: false };
   }
 }
 
@@ -161,7 +224,15 @@ function chartStyle(kind, feature) {
 function chartPoint(kind, feature, latlng) {
   const p = palette();
   const props = feature.properties || {};
-  const base = { renderer: chartRenderer, pane: "chart" };
+  const base = rendererFor(kind);
+  if (kind === "facility") {
+    return L.circleMarker(latlng, { ...base, radius: 5.5, color: p.textHalo, weight: 1.5,
+      fillColor: p.facility, fillOpacity: 1 });
+  }
+  if (kind === "notice") {
+    return L.circleMarker(latlng, { ...base, radius: 4, color: p.text, weight: 1,
+      fillColor: "#f2c318", fillOpacity: 1 });
+  }
   if (kind === "buoy" || kind === "beacon") {
     return L.circleMarker(latlng, { ...base, radius: kind === "buoy" ? 5 : 4.5,
       color: p.textHalo, weight: 1.2, fillColor: aidColor(props, p), fillOpacity: 1 });
@@ -184,16 +255,28 @@ function chartPoint(kind, feature, latlng) {
 
 // Which chart layers each Options toggle controls, by the layer names app/chart_data.py writes.
 const CHART_LAYER_GROUPS = {
-  base: { label: "Land & shoreline", hint: "Land fill, the shoreline, bridges, dams and built-up areas",
-          layers: ["land", "rivers", "built_up", "harbour", "berths", "bridge", "dam", "shoreline_construction", "pylons_area", "coastline"] },
-  depths: { label: "Depths & contours", hint: "Depth-shaded water and depth contour lines",
+  base: { label: "Land & shoreline", hint: "Land fill, the shoreline, creeks, bridges, the dam and lock, and built-up areas",
+          layers: ["land", "lake", "rivers", "lock_basin", "built_up", "bridge", "dam", "dam_line", "lock_gate", "lock_gate_line",
+                   "shoreline_construction", "pylons_area", "landmark_area", "coastline"] },
+  depths: { label: "Charted depths & contours", hint: "The Corps chart's depth areas (0-9 ft outside the channel, 9 ft+ in it) and contour lines",
             layers: ["depth_area", "depth_contour"] },
   aids: { label: "Aids to navigation", hint: "Buoys, beacons, lights, daymarks and river mile markers",
           layers: ["lateral_buoy", "isolated_danger_buoy", "special_purpose_buoy", "lateral_beacon", "daymark", "light", "distance_mark", "recommended_track"] },
-  hazards: { label: "Hazards & caution areas", hint: "Wrecks, rocks, obstructions, cables, pipelines and caution areas",
-             layers: ["caution", "rock_area", "wreck_area", "obstruction_area", "obstruction", "underwater_rock", "wreck", "pile", "pylons", "overhead_cable", "submarine_pipeline", "obstruction_line"] },
-  landmarks: { label: "Landmarks", hint: "Charted landmarks and shoreline structures",
-               layers: ["landmark", "shoreline_construction_point"] },
+  facilities: { label: "Marinas & docks", hint: "Marinas, boat docks, piers and mooring facilities",
+                layers: ["harbour", "berths", "small_craft_facility_area", "pontoon", "floating_dock", "mooring_area", "mooring_line",
+                         "shoreline_construction_line", "harbour_facility", "small_craft_facility", "mooring_point", "berth_point"] },
+  hazards: { label: "Hazards & restricted areas", hint: "Wrecks, rocks, obstructions, cables, pipelines, caution and restricted areas, notice signs",
+             layers: ["caution", "cable_area", "restricted_area", "anchorage_area", "rock_area", "wreck_area", "obstruction_area", "obstruction",
+                      "underwater_rock", "wreck", "pile", "pylons", "caution_point", "overhead_cable", "overhead_pipeline", "submarine_pipeline",
+                      "submarine_cable", "obstruction_line", "notice_mark"] },
+  roads: { label: "Roads & railroads", hint: "Roads and railroads on land, for finding your way to a ramp or a marina",
+           layers: ["roads", "railroads"] },
+  landmarks: { label: "Landmarks", hint: "Charted landmarks, shoreline structures and river gauges",
+               layers: ["landmark", "shoreline_construction_point", "waterway_gauge"] },
+  // Not chart layers: drawn by the surveyed-depth layer and the label placer below.
+  survey: { label: "Surveyed depths", hint: "Real depths from the Corps of Engineers' channel surveys, shaded, with soundings when zoomed in",
+            layers: [] },
+  names: { label: "Names & labels", hint: "Creek, island, town and marina names, and river miles", layers: [] },
 };
 
 let chartLayerState = {};
@@ -207,8 +290,12 @@ const groupForLayer = (name) =>
 // ---------- Loading and drawing the chart ----------
 // Draw order matters on a chart: land and depth shading underneath, then lines, then the aids to
 // navigation on top where they can always be seen and tapped.
-const DRAW_ORDER = ["area", "depth", "caution", "danger", "coastline", "contour", "hazard_line",
-                     "track", "landmark", "distance_mark", "danger_point", "beacon", "buoy", "light"];
+const DRAW_ORDER = ["area", "water_area", "depth", "facility_area", "structure", "road", "railroad", "dock",
+                     "caution", "restricted", "danger", "coastline", "contour", "structure_line", "dock_line",
+                     "hazard_line", "track", "landmark", "facility", "notice", "distance_mark", "danger_point",
+                     "beacon", "buoy", "light"];
+// Kinds that are only names -- creek and island names, towns -- and are drawn as labels, not shapes.
+const LABEL_ONLY = new Set(["place", "place_area", "water_name", "water_name_area"]);
 
 const chartGroup = L.layerGroup().addTo(map);
 const chartLayers = {};        // layer name -> { kind, leafletLayer }
@@ -226,7 +313,25 @@ const DETAIL_FROM_ZOOM = (z) => (z >= 13 ? "detail" : "overview");
 // is everywhere. Areas are still identifiable -- the chart cursor names what it is sitting in.
 // Non-interactive layers are also skipped by the canvas renderer's hit-testing, which otherwise
 // ran a containment check against every polygon on every mouse move.
-const POINT_KINDS = new Set(["buoy", "beacon", "light", "distance_mark", "landmark", "danger_point"]);
+const POINT_KINDS = new Set(["buoy", "beacon", "light", "distance_mark", "landmark", "danger_point", "facility", "notice"]);
+
+// The zoom a kind of feature starts to show at. The whole lake at once is hundreds of pylons,
+// mooring posts and landmarks piled on the river line; a chartplotter brings detail in as you
+// zoom, and so does this. Kinds not listed show at every zoom.
+const KIND_MIN_ZOOM = {
+  buoy: 12, beacon: 12, light: 12, distance_mark: 12, facility: 12, road: 12, railroad: 12,
+  landmark: 14, danger_point: 13, notice: 14, dock: 13, dock_line: 13, structure_line: 12,
+};
+const kindShownAt = (kind, z) => z >= (KIND_MIN_ZOOM[kind] || 0);
+// Adds or removes each chart layer for the current zoom and the Map Settings toggles.
+function applyChartVisibility() {
+  const z = map.getZoom();
+  Object.entries(chartLayers).forEach(([name, { kind, layer }]) => {
+    const on = layerGroupOn(groupForLayer(name)) && kindShownAt(kind, z);
+    if (on && !chartGroup.hasLayer(layer)) layer.addTo(chartGroup);
+    else if (!on && chartGroup.hasLayer(layer)) chartGroup.removeLayer(layer);
+  });
+}
 const isPointGeom = (f) => !!f.geometry && /Point$/.test(f.geometry.type);
 
 function renderChartBundle(bundle) {
@@ -234,7 +339,9 @@ function renderChartBundle(bundle) {
   Object.keys(chartLayers).forEach((k) => delete chartLayers[k]);
   const entries = Object.entries(bundle.layers || {});
   entries.sort((a, b) => DRAW_ORDER.indexOf(a[1].kind) - DRAW_ORDER.indexOf(b[1].kind));
+  buildChartLabels(bundle.layers || {});
   entries.forEach(([name, { kind, geojson }]) => {
+    if (LABEL_ONLY.has(kind)) return;
     const tappable = POINT_KINDS.has(kind);
     const layer = L.geoJSON(geojson, {
       renderer: chartRenderer,
@@ -254,15 +361,19 @@ function renderChartBundle(bundle) {
       },
     });
     chartLayers[name] = { kind, layer };
-    if (layerGroupOn(groupForLayer(name))) layer.addTo(chartGroup);
   });
+  applyChartVisibility();
 }
 
+// Both detail levels stay in memory once loaded, so zooming back and forth across the threshold
+// swaps instantly instead of fetching several megabytes again each time.
+const chartBundles = {};
 async function loadChart(area, detail) {
   if (chartLoading) return;
   chartLoading = true;
   try {
-    const bundle = await (await fetch(`/api/chart/${area}/${detail}`)).json();
+    const key = `${area}/${detail}`;
+    const bundle = chartBundles[key] || (chartBundles[key] = await (await fetch(`/api/chart/${key}`)).json());
     if (!bundle || !bundle.layers) return;
     chartArea = area;
     chartDetail = detail;
@@ -284,6 +395,7 @@ async function initCharts() {
       return;
     }
     await loadChart(areas[0].name, DETAIL_FROM_ZOOM(map.getZoom()));
+    if (areas[0].survey) loadSurvey(areas[0].name);
   } catch (e) {
     setChartNotice("Chart data could not be read -- check the boat-dashboard service log");
   }
@@ -296,6 +408,278 @@ function refreshChartDetail() {
   if (wanted !== chartDetail) loadChart(chartArea, wanted);
 }
 
+// ---------- Surveyed depths: the Corps' channel surveys, shaded (app/survey_depths.py) ----------
+// The Corps chart only knows "0-9 ft" and "9 ft or more" on this lake. Its hydrographic surveys
+// know the actual bottom, to a tenth of a foot, across the old river bed -- river miles 216-225
+// and 297-313 on Old Hickory. The file stores bottom *elevations*; depth is the lake level minus
+// the bottom, so the shading and every sounding follow the Lake level setting (Map Settings), the
+// way a Garmin's lake charts do. Everything shallower is darker, as on a paper chart.
+const SURVEY_BANDS_FT = [3, 6, 10, 15, 20, 30];   // band edges; each palette has one more colour than edges
+const SURVEY_BAND_LABELS = ["< 3", "3-6", "6-10", "10-15", "15-20", "20-30", "30+"];
+let survey = null;            // the loaded grid, or null if this area has none
+let lakeLevelSetting = null;  // feet, shared by every screen (/api/chart-settings); null = normal pool
+const lakeLevel = () => (lakeLevelSetting != null ? lakeLevelSetting : survey ? survey.normal_pool_ft : null);
+function surveyBand(depthFt) {
+  let i = 0;
+  while (i < SURVEY_BANDS_FT.length && depthFt >= SURVEY_BANDS_FT[i]) i++;
+  return i;
+}
+
+// Web Mercator, as Leaflet lays out its tiles: global pixel position at a zoom's scale.
+const mercX = (lon, scale) => ((lon + 180) / 360) * scale;
+const mercY = (lat, scale) => {
+  const s = Math.sin((lat * Math.PI) / 180);
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * scale;
+};
+const mercLon = (x, scale) => (x / scale) * 360 - 180;
+const mercLat = (y, scale) => (180 / Math.PI) * Math.atan(Math.sinh(Math.PI - (2 * Math.PI * y) / scale));
+
+function drawSurveyTile(ctx, coords, size) {
+  const g = survey, p = palette();
+  const scale = size.x * Math.pow(2, coords.z);
+  const x0 = coords.x * size.x, y0 = coords.y * size.y;
+  const west = mercLon(x0, scale), east = mercLon(x0 + size.x, scale);
+  const north = mercLat(y0, scale), south = mercLat(y0 + size.y, scale);
+  const level10 = lakeLevel() * 10;
+  const iMin = Math.floor((west - g.west) / g.dlon), iMax = Math.floor((east - g.west) / g.dlon);
+  const jMin = Math.floor((south - g.south) / g.dlat), jMax = Math.floor((north - g.south) / g.dlat);
+  for (let j = jMin; j <= jMax; j++) {
+    const runs = g.rowMap.get(j);
+    if (!runs) continue;
+    const yTop = mercY(g.south + (j + 1) * g.dlat, scale) - y0;
+    const h = mercY(g.south + j * g.dlat, scale) - y0 - yTop;
+    for (const [start, values] of runs) {
+      const end = start + values.length - 1;
+      if (end < iMin || start > iMax) continue;
+      for (let i = Math.max(start, iMin); i <= Math.min(end, iMax); i++) {
+        const depth = (level10 - values[i - start]) / 10;
+        if (depth <= 0) continue;   // a bottom above today's lake level is dry, not water
+        const xl = mercX(g.west + i * g.dlon, scale) - x0;
+        const xr = mercX(g.west + (i + 1) * g.dlon, scale) - x0;
+        ctx.fillStyle = p.survey[surveyBand(depth)];
+        ctx.fillRect(xl, yTop, xr - xl + 0.6, h + 0.6);   // the overlap hides hairline seams between cells
+      }
+    }
+  }
+  // Soundings -- the surveyor's own chosen spot depths -- once zoomed in far enough to read them.
+  // Thinned to the shallowest in each ~34 px square, the square taken in global pixels so that a
+  // label straddling two tiles is chosen, and drawn, identically by both.
+  if (coords.z < 16 || !g.soundings.length) return;
+  const BIN = 34, MARGIN = 40;
+  const mlon = (MARGIN / scale) * 360;
+  const best = new Map();
+  for (const [lat, lon, e10] of g.soundings) {
+    if (lon < west - mlon || lon > east + mlon || lat < south - mlon || lat > north + mlon) continue;
+    const gx = mercX(lon, scale), gy = mercY(lat, scale);
+    const key = `${Math.floor(gx / BIN)},${Math.floor(gy / BIN)}`;
+    const cur = best.get(key);
+    if (!cur || e10 > cur[2]) best.set(key, [gx, gy, e10]);
+  }
+  ctx.font = "italic 600 11px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = p.textHalo;
+  ctx.fillStyle = p.text;
+  for (const [gx, gy, e10] of best.values()) {
+    const depth = (level10 - e10) / 10;
+    if (depth <= 0) continue;
+    const text = String(Math.floor(depth));   // charts round soundings down: never promise water that isn't there
+    ctx.strokeText(text, gx - x0, gy - y0);
+    ctx.fillText(text, gx - x0, gy - y0);
+  }
+}
+
+const SurveyLayer = L.GridLayer.extend({
+  createTile(coords) {
+    const tile = document.createElement("canvas");
+    const size = this.getTileSize();
+    const ratio = window.devicePixelRatio > 1 ? 2 : 1;
+    tile.width = size.x * ratio;
+    tile.height = size.y * ratio;
+    if (survey && lakeLevel() != null && layerGroupOn("survey")) {
+      const ctx = tile.getContext("2d");
+      ctx.scale(ratio, ratio);
+      drawSurveyTile(ctx, coords, size);
+    }
+    return tile;
+  },
+});
+const surveyLayer = new SurveyLayer({ pane: "survey", minZoom: 10, updateWhenIdle: false, keepBuffer: 2 });
+
+function surveyCell(i, j) {
+  const runs = survey.rowMap.get(j);
+  if (!runs) return null;
+  for (const [start, values] of runs) if (i >= start && i < start + values.length) return values[i - start];
+  return null;
+}
+// The surveyed depth at a point, and which survey it comes from, or null outside the surveys.
+function surveyDepthAt(latlng) {
+  if (!survey || lakeLevel() == null) return null;
+  const cell = surveyCell(Math.floor((latlng.lng - survey.west) / survey.dlon), Math.floor((latlng.lat - survey.south) / survey.dlat));
+  if (cell == null) return null;
+  const newestFirst = survey.surveys.slice().reverse();
+  const from = newestFirst.find((s) => s.outline.some((ring) => inRing(latlng.lng, latlng.lat, ring))) || null;
+  return { depth: (lakeLevel() * 10 - cell) / 10, bottom: cell / 10, survey: from };
+}
+
+async function loadSurvey(area) {
+  try {
+    const res = await fetch(`/api/chart/${area}/survey`);
+    if (!res.ok) return;
+    const g = await res.json();
+    g.rowMap = new Map(Object.entries(g.rows).map(([j, runs]) => [Number(j), runs]));
+    delete g.rows;
+    survey = g;
+    await refreshChartSettings();
+    if (!map.hasLayer(surveyLayer)) surveyLayer.addTo(map);
+    else surveyLayer.redraw();
+  } catch (e) {
+    // No survey for this area, or unreadable: the chart works without it.
+  }
+}
+
+async function refreshChartSettings() {
+  try {
+    const s = await (await fetch("/api/chart-settings")).json();
+    if (s.lake_level_ft !== lakeLevelSetting) {
+      lakeLevelSetting = s.lake_level_ft;
+      if (survey) surveyLayer.redraw();
+    }
+  } catch (e) { /* keep what we have */ }
+}
+// Another screen may change the lake level; pick it up without a reload.
+setInterval(() => { if (survey) refreshChartSettings(); }, 30000);
+
+async function setLakeLevel(ft) {
+  lakeLevelSetting = ft == null ? null : Math.round(ft * 10) / 10;
+  await postJson("/api/chart-settings", { lake_level_ft: lakeLevelSetting });
+  surveyLayer.redraw();
+  if (typeof cursorLatLng !== "undefined" && cursorLatLng) renderCursor();
+}
+
+// ---------- Chart labels: the names a chart prints ----------
+// Creek and bay names, islands and bends, towns, marinas, bridges, river miles. They are DOM
+// labels in the marker pane, which leaflet-rotate keeps upright while the chart turns, so they
+// always read the right way up in Heading Up. Only what fits is shown: the candidates on screen
+// are placed in priority order, and one that would overlap a label already placed is left out.
+const LABEL_STYLES = {
+  town: { cls: "town", priority: 1, minZoom: 10 },
+  water: { cls: "water", priority: 2, minZoom: 12 },
+  place: { cls: "place", priority: 3, minZoom: 13 },
+  facility: { cls: "facility", priority: 4, minZoom: 13 },
+  bridge: { cls: "place", priority: 5, minZoom: 14 },
+  mile: { cls: "mile", priority: 6, minZoom: 14 },
+};
+// Which chart layers carry names worth printing, and how.
+const LABEL_LAYERS = {
+  town: "town", land_region_point: "place", land_region: "place", water_name_point: "water",
+  water_name_area: "water", rivers: "water", harbour: "facility", berths: "facility",
+  small_craft_facility: "facility", small_craft_facility_area: "facility", harbour_facility: "facility",
+  bridge: "bridge", distance_mark: "mile",
+};
+const MAX_LABELS = 70;
+const labelLayer = L.layerGroup().addTo(map);
+const labelMarkers = new Map();   // key -> marker currently shown
+let chartLabels = [];
+
+// A point inside a polygon to hang its name on: the centroid of its largest ring when that falls
+// inside (a creek arm's centroid often lands on the bank), else the inside sample nearest to it.
+function labelPoint(geom) {
+  if (geom.type === "Point") return L.latLng(geom.coordinates[1], geom.coordinates[0]);
+  const polys = geom.type === "Polygon" ? [geom.coordinates] : geom.type === "MultiPolygon" ? geom.coordinates : [];
+  let best = null, bestArea = 0;
+  polys.forEach((rings) => {
+    const ring = rings[0] || [];
+    let a = 0, cx = 0, cy = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const f = ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+      a += f; cx += (ring[j][0] + ring[i][0]) * f; cy += (ring[j][1] + ring[i][1]) * f;
+    }
+    if (Math.abs(a) > bestArea) { bestArea = Math.abs(a); best = { rings, cx: cx / (3 * a), cy: cy / (3 * a) }; }
+  });
+  if (!best) return null;
+  const inside = (x, y) => inRing(x, y, best.rings[0]) && !best.rings.slice(1).some((h) => inRing(x, y, h));
+  if (inside(best.cx, best.cy)) return L.latLng(best.cy, best.cx);
+  const xs = best.rings[0].map((c) => c[0]), ys = best.rings[0].map((c) => c[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  let pick = null, pickD = Infinity;
+  for (let a = 1; a < 12; a++) for (let b = 1; b < 12; b++) {
+    const x = x0 + ((x1 - x0) * a) / 12, y = y0 + ((y1 - y0) * b) / 12;
+    const d = (x - best.cx) ** 2 + (y - best.cy) ** 2;
+    if (d < pickD && inside(x, y)) { pick = [x, y]; pickD = d; }
+  }
+  return pick ? L.latLng(pick[1], pick[0]) : null;
+}
+
+function buildChartLabels(layers) {
+  const seen = new Set();
+  chartLabels = [];
+  Object.entries(layers).forEach(([name, { geojson }]) => {
+    const style = LABEL_STYLES[LABEL_LAYERS[name]];
+    if (!style || !geojson) return;
+    (geojson.features || []).forEach((f) => {
+      const props = f.properties || {};
+      let text = String(props.Object_Name || "").trim();
+      if (name === "town") text = text.replace(/,\s*[A-Z]{2}$/, "");
+      if (name === "distance_mark") {
+        const mile = parseFloat(props.Waterway_Distance);
+        text = isFinite(mile) ? `Mile ${mile % 1 ? mile.toFixed(1) : mile}` : "";
+      }
+      if (!text || !f.geometry) return;
+      const at = labelPoint(f.geometry);
+      if (!at) return;
+      // The same name twice close together (a creek drawn in two pieces) is printed once.
+      const key = `${text}@${at.lat.toFixed(2)},${at.lng.toFixed(2)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      chartLabels.push({ key, text, at, ...style, w: text.length * (style.cls === "town" ? 8 : 6.6) + 8, h: 16 });
+    });
+  });
+  chartLabels.sort((a, b) => a.priority - b.priority);
+  placeLabels();
+}
+
+function labelIcon(label) {
+  const span = document.createElement("span");
+  span.textContent = label.text;   // chart data goes in as text, never as markup
+  return L.divIcon({ className: `chart-label ${label.cls}`, html: span, iconSize: [0, 0] });
+}
+
+function placeLabels() {
+  const show = new Set();
+  if (layerGroupOn("names") && map.getSize().x > 10) {
+    const z = map.getZoom(), size = map.getSize(), placed = [];
+    for (const l of chartLabels) {
+      if (z < l.minZoom) continue;
+      const pt = map.latLngToContainerPoint(l.at);
+      if (pt.x < -l.w || pt.y < -l.h || pt.x > size.x + l.w || pt.y > size.y + l.h) continue;
+      const box = [pt.x - l.w / 2, pt.y - l.h / 2, pt.x + l.w / 2, pt.y + l.h / 2];
+      if (placed.some((b) => b[0] < box[2] && box[0] < b[2] && b[1] < box[3] && box[1] < b[3])) continue;
+      placed.push(box);
+      show.add(l.key);
+      if (placed.length >= MAX_LABELS) break;
+    }
+  }
+  for (const [key, m] of labelMarkers) {
+    if (!show.has(key)) { labelLayer.removeLayer(m); labelMarkers.delete(key); }
+  }
+  for (const l of chartLabels) {
+    if (!show.has(l.key) || labelMarkers.has(l.key)) continue;
+    const m = L.marker(l.at, { icon: labelIcon(l), interactive: false, keyboard: false, zIndexOffset: -1000 });
+    labelLayer.addLayer(m);
+    labelMarkers.set(l.key, m);
+  }
+}
+// Re-placed when the view changes, but at most a few times a second: a chart following the boat
+// or turning with it changes the view every frame.
+let labelTimer = 0;
+function scheduleLabels() {
+  if (labelTimer) return;
+  labelTimer = setTimeout(() => { labelTimer = 0; placeLabels(); }, 300);
+}
+map.on("moveend zoomend rotate resize", scheduleLabels);
+
 // Night mode is now a real restyle rather than a CSS filter over a picture: same geometry, new colours.
 function restyleChart() {
   Object.entries(chartLayers).forEach(([name, { kind, layer }]) => {
@@ -306,6 +690,8 @@ function restyleChart() {
         if (kind === "buoy" || kind === "beacon") lyr.setStyle({ fillColor: aidColor(props, p), color: p.textHalo });
         else if (kind === "light") lyr.setStyle({ color: aidColor(props, p), fillColor: aidColor(props, p) });
         else if (kind === "danger_point") lyr.setStyle({ color: p.danger, fillColor: p.danger });
+        else if (kind === "facility") lyr.setStyle({ color: p.textHalo, fillColor: p.facility });
+        else if (kind === "notice") lyr.setStyle({ color: p.text });
         else lyr.setStyle({ color: p.coast, fillColor: p.coast });
       } else if (lyr.setStyle && lyr.feature) {
         lyr.setStyle(chartStyle(kind, lyr.feature));
@@ -313,16 +699,16 @@ function restyleChart() {
     });
   });
   mapEl.style.background = palette().chartBg;
+  mapEl.dataset.chartMode = chartColorMode;   // the chart labels take their colours from this
+  if (surveyLayer) surveyLayer.redraw();
 }
 
 function setChartLayerGroup(key, on) {
   chartLayerState[key] = on;
   try { localStorage.setItem("chartLayers", JSON.stringify(chartLayerState)); } catch (e) { /* storage unavailable */ }
-  Object.entries(chartLayers).forEach(([name, { layer }]) => {
-    if (groupForLayer(name) !== key) return;
-    if (on) layer.addTo(chartGroup);
-    else chartGroup.removeLayer(layer);
-  });
+  if (key === "survey") surveyLayer.redraw();
+  if (key === "names") placeLabels();
+  applyChartVisibility();
 }
 
 // ---------- Identify: tap a charted feature and find out what it is ----------
@@ -331,9 +717,11 @@ function setChartLayerGroup(key, on) {
 // in the notation actually printed on charts ("Fl(2)R 5s").
 const CHART_KIND_LABELS = {
   buoy: "Buoy", beacon: "Beacon", light: "Light", distance_mark: "River mile marker",
-  danger_point: "Hazard", landmark: "Landmark", depth: "Depth area", contour: "Depth contour",
+  danger_point: "Hazard", landmark: "Landmark", depth: "Charted depth area", contour: "Depth contour",
   coastline: "Shoreline", track: "Recommended track", caution: "Caution area",
-  danger: "Hazard area", area: "Land", hazard_line: "Hazard",
+  danger: "Hazard area", area: "Land", hazard_line: "Hazard", facility: "Marina / boating facility",
+  facility_area: "Marina", notice: "Notice mark", restricted: "Restricted area", water_area: "Water",
+  dock: "Dock", structure: "Structure", survey_depth: "Surveyed depth",
 };
 
 // "Flashing" + "(2)" + "Red" + "5 Seconds" is how a chart writes Fl(2)R 5s.
@@ -360,12 +748,27 @@ function chartFeatureSummary(kind, props) {
   if (props.Waterway_Distance != null && props.Waterway_Distance !== "") {
     rows.push(["Mile", `${props.Waterway_Distance} ${props.Horizontal_Units === "Statute Miles" ? "mi" : ""}`.trim()]);
   }
+  // S-57 "Category of ..." attributes say what a marina, notice mark or restricted area is.
+  Object.entries(props).forEach(([k, v]) => {
+    if (!/^Category_of_/.test(k) || ["Category_of_Lateral_Mark", "Category_of_Light", "Category_of_Recommended_Track"].includes(k)) return;
+    if (v && v !== "Unknown") rows.push([k.replace(/^Category_of_/, "").replace(/_/g, " "), String(v)]);
+  });
+  if (props.Restriction && props.Restriction !== "Unknown") rows.push(["Restriction", props.Restriction]);
+  if (props.Information) rows.push(["Note", props.Information]);
+  // The Corps chart gives this lake two depth areas: 0 to 2.74 m outside the channel, and "2.74 m
+  // to unknown" inside it. Said as what they mean rather than as "0.0 ft to 9.0 ft" and nothing.
   if (kind === "depth") {
     const lo = parseFloat(props.Depth_Area_Value_1), hi = parseFloat(props.Depth_Area_Value_2);
-    if (isFinite(hi)) {
-      const f = (m) => `${(m * 3.28084).toFixed(1)} ft`;
-      rows.push(["Depth", isFinite(lo) ? `${f(lo)} to ${f(hi)}` : `to ${f(hi)}`]);
-    }
+    const f = (m) => `${Math.round(m * 3.28084)} ft`;
+    if (isFinite(lo) && isFinite(hi)) rows.push(["Depth", `${f(lo)} to ${f(hi)}`]);
+    else if (isFinite(lo)) rows.push(["Depth", `${f(lo)} or more`]);
+  }
+  if (kind === "survey_depth") {
+    rows.push(["Depth", `${props.depth.toFixed(1)} ft`]);
+    rows.push(["Lake level", `${props.level.toFixed(1)} ft`]);
+    rows.push(["Bottom", `${props.bottom.toFixed(1)} ft (NAVD88)`]);
+    if (props.survey) rows.push(["Surveyed", props.survey.date || "--"], ["Survey", props.survey.name]);
+    rows.push(["Source", "US Army Corps of Engineers"]);
   }
   if (kind === "contour" && props.Value_of_Depth_Contour != null) {
     rows.push(["Contour", `${(parseFloat(props.Value_of_Depth_Contour) * 3.28084).toFixed(0)} ft`]);
@@ -578,7 +981,7 @@ document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("clic
 // snaps/glitches. isZooming skips those calls until the animation settles, then one corrective call on zoomend.
 let isZooming = false;
 map.on("zoomstart", () => { isZooming = true; });
-map.on("zoomend", () => { isZooming = false; lockBoatFrame(); refreshChartDetail(); });
+map.on("zoomend", () => { isZooming = false; lockBoatFrame(); refreshChartDetail(); applyChartVisibility(); });
 
 let nightMode = false;   // true only for the full night palette; the quick Night button and its label stay binary
 let chartColorMode = "day";
@@ -637,6 +1040,8 @@ try { if (ORIENTS.includes(localStorage.getItem("chartOrient"))) chartOrient = l
 // Both rotating modes share the same machinery -- spin the chart, lock the boat into its frame,
 // stop counter-rotating the boat icon -- and differ only in which angle goes to the top.
 const rotatedUp = () => chartOrient !== "north";
+let rotateChoice = chartOrient !== "north" ? chartOrient : "heading";   // what the chart button turns to from North Up
+try { if (["heading", "course"].includes(localStorage.getItem("chartRotateChoice"))) rotateChoice = localStorage.getItem("chartRotateChoice"); } catch (e) { /* storage unavailable */ }
 
 // The compass direction currently pointing up the screen: 0 in North Up, the (eased) heading in
 // Heading Up, the (eased) leg course in Course Up.
@@ -728,10 +1133,8 @@ function boatTick(now) {
   shownCourse = Math.abs(courseDiff) < 0.02 ? courseUpAngle()
     : (((shownCourse + courseDiff * Math.min(1, HEADING_OMEGA * dt)) % 360) + 360) % 360;
 
-  if (rotatedUp()) {
-    map.setBearing((360 - screenUpAngle()) % 360);   // that direction points up the screen
-    lockBoatFrame();
-  }
+  if (rotatedUp()) map.setBearing((360 - screenUpAngle()) % 360);   // that direction points up the screen
+  lockBoatFrame();
   // Heading Up: always straight up. Course Up: the boat's angle to the leg, which is exactly what
   // shows you crabbing off track. North Up: the plain heading. All three are this one expression.
   const svg = boatMarker.getElement() && boatMarker.getElement().querySelector("svg");
@@ -770,20 +1173,39 @@ function setBoatTarget(lat, lon, heading, cogDeg, sogKn) {
 // locked screen position at all. panBy(offset) moves map CONTENT the opposite way from `offset` (verified
 // empirically against a live map: a panBy of (0, +50) moved a fixed point 50px UP the screen), so to slide the
 // boat from where it currently renders to where it belongs, the offset passed in is current-minus-desired.
+//
+// It also does North Up now, where the boat sits at the centre: the chart follows the boat, the
+// way a chartplotter's does, until the chart is dragged -- then it stays put and the Center
+// button appears. (North Up used to let the boat drift to the edge of the screen and then jump
+// the whole chart to catch up.)
 function lockBoatFrame() {
-  if (!rotatedUp() || shownLat == null || isZooming) return;
+  if (!following || shownLat == null || isZooming) return;
   const size = map.getSize();
   if (size.x < 10 || size.y < 10) return;  // not laid out yet (e.g. its screen isn't showing)
   const boatPt = map.latLngToContainerPoint(L.latLng(shownLat, shownLon));
-  const desiredPt = L.point(size.x / 2, (size.y * 2) / 3);
+  const desiredPt = rotatedUp() ? L.point(size.x / 2, (size.y * 2) / 3) : L.point(size.x / 2, size.y / 2);
   const delta = boatPt.subtract(desiredPt);
-  if (Math.abs(delta.x) > 0.25 || Math.abs(delta.y) > 0.25) map.panBy(delta, { animate: false });
+  // panBy rounds to whole pixels, so anything under half a pixel would be a no-op move event.
+  if (Math.abs(delta.x) >= 0.5 || Math.abs(delta.y) >= 0.5) map.panBy(delta, { animate: false });
 }
 
+// ---------- Following the boat, and the Center button ----------
+let following = true;
+function setFollowing(on) {
+  following = on;
+  document.querySelectorAll('[data-act="recenter"]').forEach((b) => { b.hidden = on; });
+}
+map.on("dragstart", () => setFollowing(false));   // only a finger (or mouse) dragging the chart
+document.querySelectorAll('[data-act="recenter"]').forEach((b) => b.addEventListener("click", () => centerOnBoat()));
+
+// The chart button says which way is up, the way a chartplotter labels its orientation, rather
+// than showing a compass-and-arrow icon that looked like a "center on the boat" button.
+const ORIENT_SHORT = { north: "N\u2191", heading: "H\u2191", course: "C\u2191" };
 function syncOrientUI() {
   document.querySelectorAll(".zoom button.orient").forEach((b) => {
     b.classList.toggle("active", rotatedUp());
-    b.title = ORIENT_LABELS[chartOrient];
+    b.textContent = ORIENT_SHORT[chartOrient];
+    b.title = `${ORIENT_LABELS[chartOrient]} (tap for ${rotatedUp() ? "North Up" : ORIENT_LABELS[rotateChoice]})`;
     b.setAttribute("aria-label", `Chart orientation: ${ORIENT_LABELS[chartOrient]}`);
   });
   const opt = document.getElementById("optOrient");
@@ -793,12 +1215,14 @@ function syncOrientUI() {
 function setChartOrient(mode) {
   chartOrient = ORIENTS.includes(mode) ? mode : "north";
   if (rotatedUp()) {
+    rotateChoice = chartOrient;
+    try { localStorage.setItem("chartRotateChoice", rotateChoice); } catch (e) { /* storage unavailable */ }
     shownCourse = courseUpAngle();   // enter Course Up already aimed, rather than swinging round from 0
     map.setBearing((360 - (chartOrient === "course" ? shownCourse : shownHeading)) % 360);
     lockBoatFrame();
   } else {
     map.setBearing(0);
-    if (shownLat != null) map.panTo([shownLat, shownLon]);  // north-up expects the boat back at plain center
+    if (shownLat != null && following) map.panTo([shownLat, shownLon]);  // north-up expects the boat back at plain center
   }
   // North Up gets no per-frame orienting (nothing is turning), so set these once on the way in.
   orientCompassRose();
@@ -806,9 +1230,12 @@ function setChartOrient(mode) {
   syncOrientUI();
   try { localStorage.setItem("chartOrient", chartOrient); } catch (e) { /* storage unavailable */ }
 }
-// The on-chart button cycles North -> Heading -> Course, the same order Options lists them in.
+// Options cycles through all three. The on-chart button is a one-press toggle between North Up and
+// whichever rotating mode was last chosen: it used to cycle all three, and since Heading Up and
+// Course Up look the same on a straight run, the middle press seemed to do nothing -- getting back
+// to North Up took two.
 const nextOrient = () => ORIENTS[(ORIENTS.indexOf(chartOrient) + 1) % ORIENTS.length];
-document.querySelectorAll('[data-act="orient"]').forEach((b) => b.addEventListener("click", () => setChartOrient(nextOrient())));
+document.querySelectorAll('[data-act="orient"]').forEach((b) => b.addEventListener("click", () => setChartOrient(rotatedUp() ? "north" : rotateChoice)));
 syncOrientUI();  // the saved preference (read into chartOrient above) needs applying to the button/Options too, not just the map
 
 // a top-down boat, rotated to the heading
@@ -830,10 +1257,14 @@ setTrackVisible(trackVisible);
 applyVesselSettings();
 initCharts();   // load whatever charts are on disk; the rest of the dashboard works without them
 
-// Keep the boat on screen, but leave the chart alone for a while after the driver pans or zooms it.
-let lastUserMove = 0;
-["pointerdown", "wheel"].forEach((ev) => map.getContainer().addEventListener(ev, () => (lastUserMove = Date.now()), true));
-const centerOnBoat = () => { lastUserMove = 0; if (lastData && lastData.gps.has_fix) map.setView([lastData.gps.lat, lastData.gps.lon], map.getZoom()); };
+// Back to the boat, and following it again. Not animated: an animated pan that is still running
+// when an Options panel closes and the chart resizes ends up off-centre.
+function centerOnBoat() {
+  setFollowing(true);
+  if (shownLat == null) return;
+  if (rotatedUp()) lockBoatFrame();
+  else map.setView([shownLat, shownLon], map.getZoom(), { animate: false });
+}
 
 async function setWaypoint(lat, lon, name = "WP") {
   await postJson("/api/waypoint", { lat, lon, name });
@@ -915,10 +1346,19 @@ function cursorRangeHtml() {
 function renderCursor() {
   if (!cursorLatLng) return;
   const areas = areasAt(cursorLatLng);
+  // A surveyed depth leads, when the cursor is on one: it is the real number.
+  const sd = surveyDepthAt(cursorLatLng);
+  if (sd && sd.depth > 0) {
+    areas.unshift({ name: "survey", kind: "survey_depth",
+                    props: { depth: sd.depth, bottom: sd.bottom, level: lakeLevel(), survey: sd.survey } });
+  }
   const lines = areas.map((a, i) => {
     const { title, rows } = chartFeatureSummary(a.kind, a.props);
     const depth = rows.find(([k]) => k === "Depth");
-    return `<button class="cb-area" data-i="${i}">${depth ? `Depth ${depth[1]}` : title}<span>›</span></button>`;
+    const text = !depth ? title
+      : a.kind === "survey_depth" ? `Depth <b>${depth[1]}</b> <small>surveyed${a.props.survey && a.props.survey.date ? " " + a.props.survey.date.slice(0, 4) : ""}</small>`
+        : `Charted depth ${depth[1]}`;
+    return `<button class="cb-area" data-i="${i}">${text}<span>›</span></button>`;
   }).join("");
   cursorBar.innerHTML =
     `<div class="cb-top"><div class="cb-range">${cursorRangeHtml()}</div>` +
@@ -1064,9 +1504,6 @@ function renderGps(gps) {
   setBoatTarget(gps.lat, gps.lon, gps.heading_deg || 0, gps.cog_deg, gps.sog_kn);
   animBind("sog", toSpeed(gps.sog_kn), 1);
   animBind("hdg", gps.heading_deg, 0);
-  if (!rotatedUp() && Date.now() - lastUserMove > 20000 && !map.getBounds().pad(-0.3).contains([gps.lat, gps.lon])) {
-    map.panTo([gps.lat, gps.lon]);
-  }
 }
 
 // A ~600-point polyline was getting fully re-projected and redrawn every second regardless of
