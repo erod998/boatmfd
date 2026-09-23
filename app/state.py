@@ -40,6 +40,9 @@ class Settings:
     batt_r_top: float = float(os.environ.get("BOAT_BATT_R_TOP", "47000"))
     batt_r_bottom: float = float(os.environ.get("BOAT_BATT_R_BOTTOM", "10000"))
     w1_dir: str = os.environ.get("BOAT_W1_DIR", "/sys/bus/w1/devices")  # DS18B20 temperature probes
+    # Tank size, so a fuel percentage can become gallons remaining -- and from there the
+    # Fuel Remaining, Economy and Range data fields a GPSMAP shows.
+    fuel_capacity_gal: float = float(os.environ.get("BOAT_FUEL_CAPACITY_GAL", "40"))
     engine_hp: float = float(os.environ.get("BOAT_ENGINE_HP", "135"))  # for the fuel-burn estimate
     engine_wot_rpm: float = float(os.environ.get("BOAT_ENGINE_WOT_RPM", "4600"))
     # The CAN interface to the NMEA 2000 network (engine converter, Fusion stereo, fuel sensor), e.g. can0. Empty = simulated stereo.

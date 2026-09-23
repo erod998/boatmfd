@@ -17,7 +17,8 @@ def fix(lat=LAT, lon=LON, hdop=1.0, has_fix=True):
 
 
 def nav(distance_nm=1.0, xte_nm=0.0):
-    return {"bearing_deg": 0, "distance_nm": distance_nm, "eta_minutes": None, "xte_nm": xte_nm}
+    return {"bearing_deg": 0, "course_deg": 0, "distance_nm": distance_nm, "vmg_kn": None,
+            "ete_s": None, "xte_nm": xte_nm, "turn_deg": None}
 
 
 def ids(alerts):

@@ -122,7 +122,7 @@ class RouteTracker:
     def is_active(self):
         return self._active_route_id is not None
 
-    def tick(self, lat, lon, sog_kn):
+    def tick(self, lat, lon, sog_kn, cog_deg=None):
         """Call once a fix arrives; advances to the next leg on arrival. Returns the current
         leg's nav info (like waypoint_nav) plus route context, or None if no route is active."""
         if self._active_route_id is None:
@@ -133,13 +133,13 @@ class RouteTracker:
             return None
         target = route.points[self._active_leg]
         origin = route.points[self._active_leg - 1]
-        nav = waypoint_nav(lat, lon, sog_kn, target["lat"], target["lon"], origin["lat"], origin["lon"])
+        nav = waypoint_nav(lat, lon, sog_kn, target["lat"], target["lon"], origin["lat"], origin["lon"], cog_deg)
         advanced = False
         if nav["distance_nm"] <= ARRIVAL_RADIUS_NM and self._active_leg < len(route.points) - 1:
             self._active_leg += 1
             target = route.points[self._active_leg]
             origin = route.points[self._active_leg - 1]
-            nav = waypoint_nav(lat, lon, sog_kn, target["lat"], target["lon"], origin["lat"], origin["lon"])
+            nav = waypoint_nav(lat, lon, sog_kn, target["lat"], target["lon"], origin["lat"], origin["lon"], cog_deg)
             advanced = True
         finished = nav["distance_nm"] <= ARRIVAL_RADIUS_NM and self._active_leg == len(route.points) - 1
         return {

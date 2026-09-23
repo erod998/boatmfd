@@ -151,7 +151,7 @@ fetch("/api/telemute").then((r) => r.json()).then((d) => { telemuteEnabled = d.e
 function renderOptions() {
   $("optNight").textContent = chartColorMode === "day" ? "Off" : chartColorMode === "dusk" ? "Dusk" : "On";
   $("optUnits").textContent = unit === "mph" ? "mph / mi" : "kn / nm";
-  $("optOrient").textContent = headingUp ? "Heading Up" : "North Up";
+  $("optOrient").textContent = ORIENT_LABELS[chartOrient];
   $("optTelemute").textContent = telemuteEnabled ? "On" : "Off";
 }
 
@@ -160,7 +160,7 @@ document.querySelectorAll("[data-opt]").forEach((b) => b.addEventListener("click
   if (opt === "night") { setChartMode(nightMode ? "day" : "night"); renderOptions(); }
   else if (opt === "units") { toggleUnits(); renderOptions(); }
   else if (opt === "alarms") openAlarmMenu(null);
-  else if (opt === "orient") { setChartOrient(headingUp ? "north" : "heading"); renderOptions(); }
+  else if (opt === "orient") { setChartOrient(nextOrient()); renderOptions(); }
   else if (opt === "telemute") {
     const res = await (await postJson("/api/telemute", { enabled: !telemuteEnabled })).json();
     telemuteEnabled = res.enabled;
@@ -293,6 +293,31 @@ function buildMapSettingsMenu() {
   };
   refreshCr();
   crToggle.addEventListener("click", () => { setVesselSetting("compassRoseOn", !vesselSettings.compassRoseOn); refreshCr(); });
+
+  const RING_SPACINGS = [0.1, 0.25, 0.5, 1, 2];
+  const rrBlock = document.createElement("div");
+  rrBlock.className = "al-block";
+  rrBlock.innerHTML = '<div class="al-head"><span class="al-name">Range Rings</span></div>' +
+    '<div class="al-cap">Distance circles around the boat, spaced evenly and labelled</div>' +
+    '<button class="btn al-toggle"></button><div class="al-row rr-space"></div>';
+  body.appendChild(rrBlock);
+  const rrToggle = rrBlock.querySelector(".al-toggle");
+  const rrSpace = rrBlock.querySelector(".rr-space");
+  const refreshRr = () => {
+    rrToggle.textContent = vesselSettings.rangeRingsOn ? "Range Rings are ON" : "Range Rings are OFF";
+    rrToggle.classList.toggle("primary", vesselSettings.rangeRingsOn);
+    rrSpace.hidden = !vesselSettings.rangeRingsOn;
+    rrSpace.replaceChildren(...RING_SPACINGS.map((nm) => {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.textContent = `${toDist(nm).toFixed(2)} ${UNITS[unit].dist}`;
+      b.classList.toggle("primary", Math.abs(vesselSettings.rangeRingSpacingNm - nm) < 1e-6);
+      b.addEventListener("click", () => { setVesselSetting("rangeRingSpacingNm", nm); refreshRr(); });
+      return b;
+    }));
+  };
+  refreshRr();
+  rrToggle.addEventListener("click", () => { setVesselSetting("rangeRingsOn", !vesselSettings.rangeRingsOn); refreshRr(); });
 
   // ---------------- User Data: the recorded breadcrumb trail ----------------
   mapSettingsSection(body, "User Data");

@@ -357,6 +357,24 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 #linkBanner { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 #soundHint { position: absolute; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 
+/* Measure Distance: the live range/bearing readout, and the ruler button beside the zoom controls. */
+#measureReadout { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 1000;
+  display: flex; align-items: baseline; gap: 0.5rem; background: rgba(10, 11, 13, 0.94);
+  border: 1px solid #39d0d8; border-radius: 0.4rem; padding: 0.35rem 0.8rem; color: #e8eaec; font-size: 0.95rem; }
+#measureReadout[hidden] { display: none; }
+#measureReadout b { font-size: 1.3rem; font-weight: 600; }
+#measureReadout span { color: var(--dim); }
+.zoom button.measure.active { background: #0e6a70; border-color: #39d0d8; }
+
+/* The distance printed on the outermost range ring. */
+.range-ring-label { display: block; text-align: center; font-size: 0.72rem; font-weight: 600;
+  color: rgba(255, 255, 255, 0.82); text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; }
+
+/* Group headings in the data-field picker: thirty-odd fields need dividers to be usable at speed. */
+.pick-group { padding: 0.7rem 0.2rem 0.25rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--dim); border-bottom: 1px solid #2c2f34; margin-bottom: 0.2rem; }
+.pick-group:first-child { padding-top: 0.1rem; }
+
 /* Shown when there is no chart to draw, so an empty map reads as a diagnosable state and not a crash. */
 #chartNotice { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000;
   max-width: 80%; text-align: center; line-height: 1.5; background: rgba(10, 11, 13, 0.94);

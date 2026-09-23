@@ -15,12 +15,12 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .ais import SimulatedAIS
 from .alarms import AlarmManager
@@ -125,30 +125,43 @@ _recent_boundary_events: dict = {}  # boundary id -> (event dict, monotonic expi
 BOUNDARY_EVENT_HOLD_S = 8.0
 
 
+# Bounds on everything that arrives from a screen. These are not paranoia about the dashboard's
+# own UI -- they are what stops one malformed request from poisoning the track, the nav solution
+# and the alarm state for the rest of the trip. A NaN latitude is the worst case: it compares
+# False against everything, so it silently survives range checks written by hand and then makes
+# every distance it touches NaN too. A Field constraint rejects it at the door.
+Latitude = Field(ge=-90.0, le=90.0)
+Longitude = Field(ge=-180.0, le=180.0)
+Name = Field(default=None, max_length=60)
+
+
 class WaypointIn(BaseModel):
-    lat: float
-    lon: float
-    name: str = "WP"
+    lat: float = Latitude
+    lon: float = Longitude
+    name: str = Field(default="WP", max_length=60)
 
 
 class LightingIn(BaseModel):
-    preset: Optional[str] = None
-    r: Optional[int] = None
-    g: Optional[int] = None
-    b: Optional[int] = None
-    brightness: Optional[float] = None
+    preset: Optional[str] = Field(default=None, max_length=40)
+    r: Optional[int] = Field(default=None, ge=0, le=255)
+    g: Optional[int] = Field(default=None, ge=0, le=255)
+    b: Optional[int] = Field(default=None, ge=0, le=255)
+    brightness: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     on: Optional[bool] = None
 
 
 class MediaIn(BaseModel):
-    action: str
-    value: Optional[int] = None
-    zone: int = 1  # as numbered on the stereo: 1 = Zone 1
+    action: str = Field(max_length=40)
+    value: Optional[int] = Field(default=None, ge=0, le=100)
+    # As numbered on the stereo: 1 = Zone 1. Settings caps a Fusion head unit at four zones.
+    zone: int = Field(default=1, ge=1, le=4)
 
 
 class AlarmIn(BaseModel):
     enabled: Optional[bool] = None
-    level: Optional[float] = None
+    # Wide, because each alarm's level is in its own units (volts, psi, degrees, feet); the
+    # point of the bound is to exclude NaN and absurdities, not to second-guess the scale.
+    level: Optional[float] = Field(default=None, ge=-10_000.0, le=10_000.0)
 
 
 class AlarmSoundIn(BaseModel):
@@ -157,16 +170,16 @@ class AlarmSoundIn(BaseModel):
 
 class VolumeBoostIn(BaseModel):
     enabled: Optional[bool] = None
-    boost_pct: Optional[float] = None
-    smoothing_pct: Optional[float] = None
+    boost_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    smoothing_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
 
 
 class SaveTrackIn(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Name
 
 
 class RenameTrackIn(BaseModel):
-    name: str
+    name: str = Field(max_length=60)
 
 
 class TelemuteIn(BaseModel):
@@ -180,44 +193,44 @@ class CalibrationIn(BaseModel):
 
 
 class CreateWaypointIn(BaseModel):
-    lat: float
-    lon: float
-    name: Optional[str] = None
+    lat: float = Latitude
+    lon: float = Longitude
+    name: Optional[str] = Name
 
 
 class UpdateWaypointIn(BaseModel):
-    name: Optional[str] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
+    name: Optional[str] = Name
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    lon: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
 
 
 class RoutePointIn(BaseModel):
-    lat: float
-    lon: float
-    name: str = "WPT"
+    lat: float = Latitude
+    lon: float = Longitude
+    name: str = Field(default="WPT", max_length=60)
 
 
 class CreateRouteIn(BaseModel):
-    points: list[RoutePointIn]
-    name: Optional[str] = None
+    points: list[RoutePointIn] = Field(min_length=2, max_length=100)
+    name: Optional[str] = Name
 
 
 class RenameRouteIn(BaseModel):
-    name: str
+    name: str = Field(max_length=60)
 
 
 class CreateBoundaryIn(BaseModel):
-    lat: float
-    lon: float
-    radius_ft: float
-    name: Optional[str] = None
-    alarm_on: str = "exit"
+    lat: float = Latitude
+    lon: float = Longitude
+    radius_ft: float = Field(gt=0.0, le=100_000.0)
+    name: Optional[str] = Name
+    alarm_on: Literal["enter", "exit", "both"] = "exit"
 
 
 class UpdateBoundaryIn(BaseModel):
-    name: Optional[str] = None
-    radius_ft: Optional[float] = None
-    alarm_on: Optional[str] = None
+    name: Optional[str] = Name
+    radius_ft: Optional[float] = Field(default=None, gt=0.0, le=100_000.0)
+    alarm_on: Optional[Literal["enter", "exit", "both"]] = None
     enabled: Optional[bool] = None
 
 
@@ -227,12 +240,12 @@ class SwitchIn(BaseModel):
 
 class NavAlarmSettingsIn(BaseModel):
     arrival_enabled: Optional[bool] = None
-    arrival_radius_nm: Optional[float] = None
+    arrival_radius_nm: Optional[float] = Field(default=None, gt=0.0, le=100.0)
     off_course_enabled: Optional[bool] = None
-    off_course_xte_nm: Optional[float] = None
-    anchor_radius_ft: Optional[float] = None
+    off_course_xte_nm: Optional[float] = Field(default=None, gt=0.0, le=100.0)
+    anchor_radius_ft: Optional[float] = Field(default=None, gt=0.0, le=100_000.0)
     gps_accuracy_enabled: Optional[bool] = None
-    gps_accuracy_hdop_max: Optional[float] = None
+    gps_accuracy_hdop_max: Optional[float] = Field(default=None, gt=0.0, le=100.0)
 
 
 class QuickdrawIn(BaseModel):
@@ -735,6 +748,12 @@ def _read_engine_and_boat():
     """The fast readings. The simulated engine follows boat speed, so it gets the latest GPS speed."""
     fix = _latest["fix"]
     engine = engine_info.read(fix.sog_kn if fix else 0.0)
+    # A level alone cannot answer "how far can I get on this?", which is the question the
+    # Fuel Remaining / Economy / Range fields exist for. Gallons can.
+    engine["fuel_capacity_gal"] = settings.fuel_capacity_gal
+    engine["fuel_remaining_gal"] = (
+        round(settings.fuel_capacity_gal * engine["fuel_pct"] / 100.0, 2)
+        if engine.get("fuel_pct") is not None else None)
     boat = boat_info.read((engine["rpm"] or 0) > 500)
     alarms.evaluate(engine, boat)
     telemute.tick(alarms.active())
@@ -764,11 +783,12 @@ def _full_frame():
             fix.lat, fix.lon, fix.sog_kn,
             waypoint["lat"], waypoint["lon"],
             waypoint["origin_lat"], waypoint["origin_lon"],
+            fix.cog_deg,
         )
         nav["waypoint"] = {"lat": waypoint["lat"], "lon": waypoint["lon"], "name": waypoint["name"]}
         nav["relative_bearing_deg"] = relative_bearing(fix.heading_deg, nav["bearing_deg"])
 
-    route_nav = route_tracker.tick(fix.lat, fix.lon, fix.sog_kn) if fix.has_fix else None
+    route_nav = route_tracker.tick(fix.lat, fix.lon, fix.sog_kn, fix.cog_deg) if fix.has_fix else None
     if route_nav and route_nav["finished"]:
         route_tracker.stop()
 

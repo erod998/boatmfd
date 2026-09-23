@@ -394,7 +394,8 @@ function showChartFeature(layerName, kind, props) {
 // distance or how far it will travel in a set time at its current speed, and a compass rose is a fixed-size
 // ring around the boat marked with the compass points. Both are per-browser display preferences, like the
 // chart layer toggles above, not shared server-side.
-let vesselSettings = { headingLineOn: true, headingLineMode: "distance", headingLineNm: 0.3, headingLineMinutes: 10, compassRoseOn: false };
+let vesselSettings = { headingLineOn: true, headingLineMode: "distance", headingLineNm: 0.3, headingLineMinutes: 10,
+  compassRoseOn: false, rangeRingsOn: false, rangeRingSpacingNm: 0.25 };
 try { Object.assign(vesselSettings, JSON.parse(localStorage.getItem("vesselSettings")) || {}); } catch (e) { /* storage unavailable */ }
 
 function saveVesselSettings() {
@@ -433,6 +434,34 @@ const compassRoseIcon = L.divIcon({
 // naturally keeps its N/E/S/W points aimed at true directions on screen, exactly like a real one would.
 const compassRoseMarker = L.marker([0, 0], { icon: compassRoseIcon, interactive: false, zIndexOffset: -1000 });
 
+// Range rings: concentric circles at a fixed real-world spacing around the boat, so distance to
+// anything on screen can be eyeballed without measuring it. Drawn in metres (L.circle, not
+// L.circleMarker) so they scale with zoom the way real distance does -- the opposite of the
+// compass rose above, which is deliberately a fixed size on screen.
+const RANGE_RING_COUNT = 4;
+const NM_TO_M = 1852;
+const rangeRingGroup = L.layerGroup();
+const rangeRings = Array.from({ length: RANGE_RING_COUNT }, () =>
+  L.circle([0, 0], { radius: 0, fill: false, color: "rgba(255,255,255,0.4)", weight: 1, dashArray: "3 6", interactive: false }).addTo(rangeRingGroup));
+const rangeRingLabel = L.marker([0, 0], {
+  icon: L.divIcon({ className: "", html: '<span class="range-ring-label"></span>', iconSize: [70, 16], iconAnchor: [35, 8] }),
+  interactive: false,
+}).addTo(rangeRingGroup);
+
+function updateRangeRings() {
+  if (!vesselSettings.rangeRingsOn || shownLat == null) return;
+  const spacing = vesselSettings.rangeRingSpacingNm;
+  rangeRings.forEach((ring, i) => {
+    ring.setLatLng([shownLat, shownLon]);
+    ring.setRadius(spacing * (i + 1) * NM_TO_M);
+  });
+  // Label the outermost ring, due north of the boat, with the distance it actually represents.
+  const outer = spacing * RANGE_RING_COUNT;
+  rangeRingLabel.setLatLng(projectLatLng(shownLat, shownLon, 0, outer));
+  const el = rangeRingLabel.getElement() && rangeRingLabel.getElement().querySelector(".range-ring-label");
+  if (el) el.textContent = `${toDist(outer).toFixed(2)} ${UNITS[unit].dist}`;
+}
+
 const headingLine = L.polyline([], { color: "#ffcf40", weight: 2, opacity: 0.85, dashArray: "1 7" }).addTo(map);
 
 function updateHeadingLine() {
@@ -446,6 +475,8 @@ function updateHeadingLine() {
 function applyVesselSettings() {
   if (vesselSettings.compassRoseOn) compassRoseMarker.addTo(map);
   else map.removeLayer(compassRoseMarker);
+  if (vesselSettings.rangeRingsOn) { rangeRingGroup.addTo(map); updateRangeRings(); }
+  else map.removeLayer(rangeRingGroup);
   updateHeadingLine();   // no-ops safely until there's a first fix to draw from (see below)
 }
 // Not called yet here: updateHeadingLine() reads the eased boat position declared further down this file,
@@ -536,8 +567,27 @@ function setChartMode(mode) {
 // the boat icon. map.setBearing() is from leaflet-rotate: it takes the compass direction that should point
 // up, which is the *opposite* sense from a heading (confirmed against the plugin's own source, not guessed),
 // hence 360-heading.
-let headingUp = false;
-try { headingUp = localStorage.getItem("chartOrient") === "heading"; } catch (e) { /* storage unavailable */ }
+const ORIENTS = ["north", "heading", "course"];
+const ORIENT_LABELS = { north: "North Up", heading: "Heading Up", course: "Course Up" };
+let chartOrient = "north";
+try { if (ORIENTS.includes(localStorage.getItem("chartOrient"))) chartOrient = localStorage.getItem("chartOrient"); } catch (e) { /* storage unavailable */ }
+// Both rotating modes share the same machinery -- spin the chart, lock the boat into its frame,
+// stop counter-rotating the boat icon -- and differ only in which angle goes to the top.
+const rotatedUp = () => chartOrient !== "north";
+
+// Course Up points the *intended leg* at the top of the screen, not the bow. That is the whole
+// difference: Heading Up re-aims the chart with every wiggle of the boat, which on a lake at
+// idle is a slow constant swim, while Course Up holds the leg still and lets the boat icon swing
+// against it. With nothing to follow there is no course, so it falls back to the direction of
+// travel and finally to the heading -- never leaving the chart stuck pointing somewhere stale.
+function courseUpAngle() {
+  const nav = activeNav(lastData);
+  if (nav && nav.course_deg != null) return nav.course_deg;
+  if (nav && nav.bearing_deg != null) return nav.bearing_deg;
+  const fix = lastData && lastData.gps && lastData.gps.has_fix ? lastData.gps : null;
+  if (fix && fix.sog_kn > 0.5 && fix.cog_deg != null) return fix.cog_deg;
+  return shownHeading;
+}
 
 // ---------- Smoothly animated boat: heading and position ----------
 // GPS fixes arrive once a second; heading is a simple wrapped-angle ease toward the latest one (a
@@ -557,6 +607,7 @@ try { headingUp = localStorage.getItem("chartOrient") === "heading"; } catch (e)
 // "settled": a real boat is essentially always moving or turning a little.
 let shownHeading = 0;
 let targetHeading = 0;
+let shownCourse = 0;   // eased Course Up angle, see courseUpAngle()
 let headingEverSet = false;   // the very first heading is applied at once, not spun up to from zero
 let shownLat = null, shownLon = null;
 let drLat = null, drLon = null, drCogDeg = 0, drSogKn = 0, drAnchorT = 0;  // dead-reckoning anchor
@@ -590,10 +641,20 @@ function boatTick(now) {
   boatMarker.setLatLng([shownLat, shownLon]);
   compassRoseMarker.setLatLng([shownLat, shownLon]);
   updateHeadingLine();
+  // Course Up eases toward its target the same way heading does, so advancing to the next leg
+  // of a route turns the chart rather than snapping it round.
+  const courseDiff = angleDiff(courseUpAngle(), shownCourse);
+  shownCourse = Math.abs(courseDiff) < 0.02 ? courseUpAngle()
+    : (((shownCourse + courseDiff * Math.min(1, HEADING_OMEGA * dt)) % 360) + 360) % 360;
+
   const svg = boatMarker.getElement() && boatMarker.getElement().querySelector("svg");
-  if (headingUp) {
-    map.setBearing((360 - shownHeading) % 360);   // the current heading points up; the boat icon stays put
-    if (svg) svg.style.transform = "rotate(0deg)";
+  if (rotatedUp()) {
+    const up = chartOrient === "course" ? shownCourse : shownHeading;
+    map.setBearing((360 - up) % 360);   // that direction points up the screen
+    // In Heading Up the boat is always pointing straight up so its icon needs no rotation; in
+    // Course Up the chart holds the leg still, so the icon has to show the boat's own angle
+    // relative to it -- that offset is exactly what tells you you're crabbing off the track.
+    if (svg) svg.style.transform = `rotate(${chartOrient === "course" ? angleDiff(shownHeading, up) * -1 : 0}deg)`;
     lockBoatFrame();
   } else if (svg) {
     svg.style.transform = `rotate(${shownHeading}deg)`;
@@ -630,7 +691,7 @@ function setBoatTarget(lat, lon, heading, cogDeg, sogKn) {
 // empirically against a live map: a panBy of (0, +50) moved a fixed point 50px UP the screen), so to slide the
 // boat from where it currently renders to where it belongs, the offset passed in is current-minus-desired.
 function lockBoatFrame() {
-  if (!headingUp || shownLat == null || isZooming) return;
+  if (!rotatedUp() || shownLat == null || isZooming) return;
   const size = map.getSize();
   if (size.x < 10 || size.y < 10) return;  // not laid out yet (e.g. its screen isn't showing)
   const boatPt = map.latLngToContainerPoint(L.latLng(shownLat, shownLon));
@@ -640,25 +701,32 @@ function lockBoatFrame() {
 }
 
 function syncOrientUI() {
-  document.querySelectorAll(".zoom button.orient").forEach((b) => b.classList.toggle("active", headingUp));
+  document.querySelectorAll(".zoom button.orient").forEach((b) => {
+    b.classList.toggle("active", rotatedUp());
+    b.title = ORIENT_LABELS[chartOrient];
+    b.setAttribute("aria-label", `Chart orientation: ${ORIENT_LABELS[chartOrient]}`);
+  });
   const opt = document.getElementById("optOrient");
-  if (opt) opt.textContent = headingUp ? "Heading Up" : "North Up";
+  if (opt) opt.textContent = ORIENT_LABELS[chartOrient];
 }
 
 function setChartOrient(mode) {
-  headingUp = mode === "heading";
-  if (headingUp) {
-    map.setBearing((360 - shownHeading) % 360);
+  chartOrient = ORIENTS.includes(mode) ? mode : "north";
+  if (rotatedUp()) {
+    shownCourse = courseUpAngle();   // enter Course Up already aimed, rather than swinging round from 0
+    map.setBearing((360 - (chartOrient === "course" ? shownCourse : shownHeading)) % 360);
     lockBoatFrame();
   } else {
     map.setBearing(0);
     if (shownLat != null) map.panTo([shownLat, shownLon]);  // north-up expects the boat back at plain center
   }
   syncOrientUI();
-  try { localStorage.setItem("chartOrient", headingUp ? "heading" : "north"); } catch (e) { /* storage unavailable */ }
+  try { localStorage.setItem("chartOrient", chartOrient); } catch (e) { /* storage unavailable */ }
 }
-document.querySelectorAll('[data-act="orient"]').forEach((b) => b.addEventListener("click", () => setChartOrient(headingUp ? "north" : "heading")));
-syncOrientUI();  // the saved preference (read into headingUp above) needs applying to the button/Options too, not just the map
+// The on-chart button cycles North -> Heading -> Course, the same order Options lists them in.
+const nextOrient = () => ORIENTS[(ORIENTS.indexOf(chartOrient) + 1) % ORIENTS.length];
+document.querySelectorAll('[data-act="orient"]').forEach((b) => b.addEventListener("click", () => setChartOrient(nextOrient())));
+syncOrientUI();  // the saved preference (read into chartOrient above) needs applying to the button/Options too, not just the map
 
 // a top-down boat, rotated to the heading
 const boatIcon = L.divIcon({
@@ -689,10 +757,77 @@ async function setWaypoint(lat, lon, name = "WP") {
 }
 const clearWaypoint = () => fetch("/api/waypoint", { method: "DELETE" });
 map.on("click", async (e) => {
+  if (measureClick(e.latlng)) return;   // measuring takes the tap instead of dropping a waypoint
   $("chartFeature").hidden = true;   // a tap on open water dismisses a stale feature readout
   await setWaypoint(e.latlng.lat, e.latlng.lng);
   if (typeof openPanel === "function") openPanel("waypoint");
 });
+
+// ---------- Measure distance (the chart's ruler button) ----------
+// A GPSMAP's "Measure Distance": tap once to anchor, and the range and bearing from that point
+// to wherever you tap or drag next read out continuously. Starts anchored at the boat, which is
+// the question actually being asked most of the time -- "how far is that from me?"
+let measureFrom = null;                 // null = tool is off entirely
+const measureReadout = document.createElement("div");
+measureReadout.id = "measureReadout";
+measureReadout.hidden = true;
+mapEl.appendChild(measureReadout);
+const measureLine = L.polyline([], { color: "#39d0d8", weight: 2, dashArray: "6 4", interactive: false });
+const measureEnds = L.layerGroup();
+
+function bearingBetween(a, b) {
+  const rad = Math.PI / 180;
+  const dLon = (b.lng - a.lng) * rad;
+  const y = Math.sin(dLon) * Math.cos(b.lat * rad);
+  const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) - Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos(dLon);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+}
+
+function measureActive() { return measureFrom !== null; }
+
+function setMeasure(on) {
+  if (on && shownLat == null) return;   // nothing sensible to anchor to before the first fix
+  measureFrom = on ? L.latLng(shownLat, shownLon) : null;
+  if (on) {
+    measureLine.addTo(map);
+    measureEnds.addTo(map);
+    measureTo(measureFrom);
+  } else {
+    map.removeLayer(measureLine);
+    map.removeLayer(measureEnds);
+    measureReadout.hidden = true;
+  }
+  document.querySelectorAll('[data-act="measure"]').forEach((b) => b.classList.toggle("active", on));
+}
+
+function measureTo(latlng) {
+  if (!measureActive()) return;
+  measureLine.setLatLngs([measureFrom, latlng]);
+  measureEnds.clearLayers();
+  [measureFrom, latlng].forEach((p, i) => L.circleMarker(p, {
+    radius: 5, color: "#39d0d8", weight: 2, fillColor: i ? "#39d0d8" : "#0b0c0e", fillOpacity: 1, interactive: false,
+  }).addTo(measureEnds));
+  // Leaflet's own great-circle distance, in metres; the ruler agrees with the nav fields because
+  // both are great-circle rather than one being a flat-earth shortcut.
+  const nm = map.distance(measureFrom, latlng) / 1852;
+  const el = measureReadout;
+  if (el.parentElement !== mapEl) mapEl.appendChild(el);
+  el.hidden = false;
+  el.innerHTML = `<b>${toDist(nm).toFixed(2)}</b> ${UNITS[unit].dist}` +
+    `<span>${bearingBetween(measureFrom, latlng).toFixed(0)}°</span>`;
+}
+
+// First tap re-anchors, so you can measure between two arbitrary points and not only from the
+// boat; the move handler keeps the readout live as the finger travels.
+function measureClick(latlng) {
+  if (!measureActive()) return false;
+  measureFrom = latlng;
+  measureTo(latlng);
+  return true;
+}
+map.on("mousemove", (e) => { if (measureActive()) measureTo(e.latlng); });
+document.querySelectorAll('[data-act="measure"]').forEach((b) =>
+  b.addEventListener("click", () => setMeasure(!measureActive())));
 
 function fmtCoord(v, isLat) {
   const dir = isLat ? (v >= 0 ? "N" : "S") : v >= 0 ? "E" : "W";
@@ -710,7 +845,7 @@ function renderGps(gps) {
   setBoatTarget(gps.lat, gps.lon, gps.heading_deg || 0, gps.cog_deg, gps.sog_kn);
   animBind("sog", toSpeed(gps.sog_kn), 1);
   animBind("hdg", gps.heading_deg, 0);
-  if (!headingUp && Date.now() - lastUserMove > 20000 && !map.getBounds().pad(-0.3).contains([gps.lat, gps.lon])) {
+  if (!rotatedUp() && Date.now() - lastUserMove > 20000 && !map.getBounds().pad(-0.3).contains([gps.lat, gps.lon])) {
     map.panTo([gps.lat, gps.lon]);
   }
 }
@@ -738,22 +873,92 @@ function fmtClockTime(value) {
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// A GPSMAP carries something like forty data fields and sorts them into groups in its "Edit
+// Overlays" picker. A flat alphabetical list is not something anyone navigates while driving a
+// boat, so every field here declares the group it belongs to and the picker renders headings.
+//
+// Fields that depend on something not currently true -- a nav field with no Go To running, a trip
+// field with no trip started, anything at all without a GPS fix -- return null and read "--",
+// which is what a real unit does rather than showing a stale or invented number.
+const activeNav = (d) => (d && (d.nav || d.route_nav)) || null;
+const navVal = (d, key) => { const n = activeNav(d); return n && n[key] != null ? n[key] : null; };
+const fixOf = (d) => (d && d.gps && d.gps.has_fix ? d.gps : null);
+const tripOf = (d) => (d && d.trip) || null;
+
+// Distance per gallon at the current instant: how a GPSMAP's Fuel Economy field reads, and the
+// basis for Range. Meaningless at idle, where the boat burns fuel and covers no ground.
+function economyNow(d) {
+  const fix = fixOf(d);
+  const gph = d && d.engine ? d.engine.fuel_gph : null;
+  if (!fix || !gph || gph <= 0.05 || fix.sog_kn < 0.5) return null;
+  return toDist(fix.sog_kn) / gph;   // distance-per-hour over gallons-per-hour
+}
+
 const OVERLAY_FIELDS = {
-  sog: { label: "Speed", decimals: 1, unit: () => UNITS[unit].speed, get: (d) => (d && d.gps.has_fix ? toSpeed(d.gps.sog_kn) : null) },
-  hdg: { label: "Heading", decimals: 0, unit: () => "°", get: (d) => (d && d.gps.has_fix ? d.gps.heading_deg : null) },
-  cog: { label: "Course", decimals: 0, unit: () => "°", get: (d) => (d && d.gps.has_fix ? d.gps.cog_deg : null) },
-  depth: { label: "Depth", decimals: 1, unit: () => "ft", get: (d) => (d ? d.boat_info.depth_ft : null) },
-  wtemp: { label: "Water Temp", decimals: 0, unit: () => "°F", get: (d) => (d ? d.boat_info.water_temp_f : null) },
-  battery: { label: "Battery", decimals: 1, unit: () => "V", get: (d) => (d ? d.boat_info.battery_voltage : null) },
-  fuel: { label: "Fuel", decimals: 0, unit: () => "%", get: (d) => (d ? d.engine.fuel_pct : null) },
-  rpm: { label: "RPM", decimals: 0, unit: () => "", get: (d) => (d ? d.engine.rpm : null) },
-  coolant: { label: "Coolant", decimals: 0, unit: () => "°F", get: (d) => (d ? d.engine.coolant_f : null) },
-  tripdist: { label: "Trip Dist", decimals: 1, unit: () => UNITS[unit].dist, get: (d) => (d && d.trip ? toDist(d.trip.distance_nm) : null) },
-  time: { label: "Time", isTime: true, get: () => new Date() },
-  sunrise: { label: "Sunrise", isTime: true, get: (d) => (d && d.sun ? d.sun.sunrise : null) },
-  sunset: { label: "Sunset", isTime: true, get: (d) => (d && d.sun ? d.sun.sunset : null) },
-  moonphase: {
-    label: "Moon Phase", isText: true,
+  // ---- Navigation (needs an active Go To or route) ----
+  brg: { isAngle: true, group: "Navigation", label: "Bearing", decimals: 0, unit: () => "°", get: (d) => navVal(d, "bearing_deg") },
+  crs: { isAngle: true, group: "Navigation", label: "Course", decimals: 0, unit: () => "°", get: (d) => navVal(d, "course_deg") },
+  dtw: { group: "Navigation", label: "Distance", decimals: 2, unit: () => UNITS[unit].dist,
+         get: (d) => { const v = navVal(d, "distance_nm"); return v == null ? null : toDist(v); } },
+  ete: { group: "Navigation", label: "Time To Dest", isDuration: true, get: (d) => navVal(d, "ete_s") },
+  eta: { group: "Navigation", label: "Arrival Time", isTime: true,
+         get: (d) => { const s = navVal(d, "ete_s"); return s == null ? null : new Date(Date.now() + s * 1000); } },
+  vmg: { group: "Navigation", label: "VMG", decimals: 1, unit: () => UNITS[unit].speed,
+         get: (d) => { const v = navVal(d, "vmg_kn"); return v == null ? null : toSpeed(v); } },
+  xte: { group: "Navigation", label: "Cross Track", decimals: 2, unit: () => UNITS[unit].dist,
+         get: (d) => { const v = navVal(d, "xte_nm"); return v == null ? null : toDist(v); } },
+  turn: { group: "Navigation", label: "Turn", isText: true,
+          get: (d) => { const v = navVal(d, "turn_deg");
+                        return v == null ? null : `${Math.abs(v).toFixed(0)}° ${v < 0 ? "L" : "R"}`; } },
+  wpname: { group: "Navigation", label: "Destination", isText: true,
+            get: (d) => { const n = activeNav(d); return n && n.waypoint ? n.waypoint.name : null; } },
+
+  // ---- Vessel ----
+  sog: { group: "Vessel", label: "Speed", decimals: 1, unit: () => UNITS[unit].speed,
+         get: (d) => { const f = fixOf(d); return f ? toSpeed(f.sog_kn) : null; } },
+  hdg: { isAngle: true, group: "Vessel", label: "Heading", decimals: 0, unit: () => "°", get: (d) => { const f = fixOf(d); return f ? f.heading_deg : null; } },
+  cog: { isAngle: true, group: "Vessel", label: "Course Over Ground", decimals: 0, unit: () => "°", get: (d) => { const f = fixOf(d); return f ? f.cog_deg : null; } },
+  pos: { group: "Vessel", label: "Position", isText: true,
+         get: (d) => { const f = fixOf(d); return f ? fmtCoord(f.lat, true) : null; },
+         sub: (d) => { const f = fixOf(d); return f ? fmtCoord(f.lon, false) : ""; } },
+  hdop: { group: "Vessel", label: "GPS Accuracy", decimals: 1, unit: () => "HDOP", get: (d) => (d && d.gps ? d.gps.hdop : null) },
+  sats: { group: "Vessel", label: "Satellites", decimals: 0, unit: () => "", get: (d) => (d && d.gps ? d.gps.satellites : null) },
+
+  // ---- Depth & water ----
+  depth: { group: "Depth & Water", label: "Depth", decimals: 1, unit: () => "ft", get: (d) => (d ? d.boat_info.depth_ft : null) },
+  wtemp: { group: "Depth & Water", label: "Water Temp", decimals: 0, unit: () => "°F", get: (d) => (d ? d.boat_info.water_temp_f : null) },
+
+  // ---- Engine ----
+  rpm: { group: "Engine", label: "RPM", decimals: 0, unit: () => "", get: (d) => (d ? d.engine.rpm : null) },
+  coolant: { group: "Engine", label: "Engine Temp", decimals: 0, unit: () => "°F", get: (d) => (d ? d.engine.coolant_f : null) },
+  oil: { group: "Engine", label: "Oil Pressure", decimals: 0, unit: () => "psi", get: (d) => (d ? d.engine.oil_pressure_psi : null) },
+  trim: { group: "Engine", label: "Trim", decimals: 0, unit: () => "%", get: (d) => (d ? d.engine.trim_pct : null) },
+  battery: { group: "Engine", label: "Battery", decimals: 1, unit: () => "V", get: (d) => (d ? d.boat_info.battery_voltage : null) },
+
+  // ---- Fuel ----
+  fuel: { group: "Fuel", label: "Fuel Level", decimals: 0, unit: () => "%", get: (d) => (d ? d.engine.fuel_pct : null) },
+  fuelrem: { group: "Fuel", label: "Fuel Remaining", decimals: 1, unit: () => "gal", get: (d) => (d ? d.engine.fuel_remaining_gal : null) },
+  fuelrate: { group: "Fuel", label: "Fuel Rate", decimals: 1, unit: () => "gph", get: (d) => (d ? d.engine.fuel_gph : null) },
+  economy: { group: "Fuel", label: "Fuel Economy", decimals: 1, unit: () => `${UNITS[unit].dist}/gal`, get: economyNow },
+  range: { group: "Fuel", label: "Range", decimals: 0, unit: () => UNITS[unit].dist,
+           get: (d) => { const e = economyNow(d), gal = d && d.engine ? d.engine.fuel_remaining_gal : null;
+                         return e == null || gal == null ? null : e * gal; } },
+
+  // ---- Trip (needs a trip started on the Trip screen) ----
+  tripdist: { group: "Trip", label: "Trip Distance", decimals: 2, unit: () => UNITS[unit].dist,
+              get: (d) => { const t = tripOf(d); return t ? toDist(t.distance_nm) : null; } },
+  triptime: { group: "Trip", label: "Trip Time", isDuration: true, get: (d) => { const t = tripOf(d); return t ? t.duration_s : null; } },
+  avgspeed: { group: "Trip", label: "Average Speed", decimals: 1, unit: () => UNITS[unit].speed,
+              get: (d) => { const t = tripOf(d); return t ? toSpeed(t.avg_speed_kn) : null; } },
+  maxspeed: { group: "Trip", label: "Max Speed", decimals: 1, unit: () => UNITS[unit].speed,
+              get: (d) => { const t = tripOf(d); return t ? toSpeed(t.max_speed_kn) : null; } },
+  tripfuel: { group: "Trip", label: "Trip Fuel Used", decimals: 1, unit: () => "gal", get: (d) => { const t = tripOf(d); return t ? t.fuel_gal : null; } },
+
+  // ---- Time ----
+  time: { group: "Time", label: "Time of Day", isTime: true, get: () => new Date() },
+  sunrise: { group: "Time", label: "Sunrise", isTime: true, get: (d) => (d && d.sun ? d.sun.sunrise : null) },
+  sunset: { group: "Time", label: "Sunset", isTime: true, get: (d) => (d && d.sun ? d.sun.sunset : null) },
+  moonphase: { group: "Time", label: "Moon Phase", isText: true,
     get: (d) => (d && d.sun ? d.sun.moon_phase : null),
     sub: (d) => (d && d.sun && d.sun.moon_illumination != null ? `${Math.round(d.sun.moon_illumination * 100)}%` : ""),
   },
@@ -763,7 +968,18 @@ let overlayPickCallback = null;
 function openOverlayPicker(onPick) {
   overlayPickCallback = onPick;
   const body = $("overlayPickBody");
-  body.replaceChildren(...Object.entries(OVERLAY_FIELDS).map(([key, f]) => {
+  // Thirty-odd fields in one flat list is unusable at the helm, so break them under their
+  // group headings in declaration order -- Navigation first, the way a GPSMAP orders them.
+  const rows = [];
+  let lastGroup = null;
+  Object.entries(OVERLAY_FIELDS).forEach(([key, f]) => {
+    if (f.group !== lastGroup) {
+      lastGroup = f.group;
+      const h = document.createElement("div");
+      h.className = "pick-group";
+      h.textContent = f.group;
+      rows.push(h);
+    }
     const b = document.createElement("button");
     b.className = "row";
     b.innerHTML = `<span>${f.label}</span><span class="row-val">›</span>`;
@@ -771,8 +987,9 @@ function openOverlayPicker(onPick) {
       closePanels();
       if (overlayPickCallback) overlayPickCallback(key);
     });
-    return b;
-  }));
+    rows.push(b);
+  });
+  body.replaceChildren(...rows);
   openPanel("overlaypick");
 }
 
@@ -822,13 +1039,19 @@ function overlayBoxes(container, storageKey, defaultFields) {
         valEl.classList.remove("text");
         valEl.querySelector("b").textContent = fmtClockTime(val);
         valEl.querySelector("small").textContent = "";
+      } else if (f.isDuration) {
+        valEl.classList.remove("text");
+        valEl.querySelector("b").textContent = val == null ? "--" : fmtDuration(val);
+        valEl.querySelector("small").textContent = "";
       } else if (f.isText) {
         valEl.classList.add("text");
         valEl.querySelector("b").textContent = val == null ? "--" : val;
         valEl.querySelector("small").textContent = f.sub ? f.sub(data) : "";
       } else {
         valEl.classList.remove("text");
-        valEl.querySelector("b").textContent = val == null ? "--" : val.toFixed(f.decimals);
+        // A rounded 359.96 must not print as "360": compass readings run 0..359.
+        const shown = val == null ? null : f.isAngle ? Math.round(val) % 360 : val;
+        valEl.querySelector("b").textContent = shown == null ? "--" : shown.toFixed(f.isAngle ? 0 : f.decimals);
         valEl.querySelector("small").textContent = f.unit ? f.unit() : "";
       }
     });
@@ -847,7 +1070,7 @@ function renderNav(nav, routeNav, boatLatLng) {
   // A single Go To (nav) and an active Route (routeNav) are mutually exclusive server-side, but
   // either one drives the exact same on-chart marker/line and Waypoint-panel readout.
   const active = nav || (routeNav && { bearing_deg: routeNav.bearing_deg, distance_nm: routeNav.distance_nm,
-    eta_minutes: routeNav.eta_minutes, xte_nm: routeNav.xte_nm,
+    ete_s: routeNav.ete_s, xte_nm: routeNav.xte_nm, vmg_kn: routeNav.vmg_kn, turn_deg: routeNav.turn_deg,
     waypoint: { lat: routeNav.leg_lat, lon: routeNav.leg_lon, name: `${routeNav.route_name}: ${routeNav.leg_name}` } });
   if (!active) {
     $("wpEmpty").hidden = false;
@@ -858,10 +1081,13 @@ function renderNav(nav, routeNav, boatLatLng) {
   }
   $("wpEmpty").hidden = true;
   $("wpInfo").hidden = false;
-  $("wpBearing").textContent = active.bearing_deg.toFixed(0);
+  $("wpBearing").textContent = Math.round(active.bearing_deg) % 360;
   $("wpDist").textContent = toDist(active.distance_nm).toFixed(2);
-  $("wpEta").textContent = active.eta_minutes != null ? active.eta_minutes.toFixed(0) : "--";
+  $("wpEte").textContent = active.ete_s != null ? fmtDuration(active.ete_s) : "--";
   $("wpXte").textContent = active.xte_nm != null ? toDist(active.xte_nm).toFixed(2) : "--";
+  $("wpVmg").textContent = active.vmg_kn != null ? toSpeed(active.vmg_kn).toFixed(1) : "--";
+  $("wpTurn").textContent = active.turn_deg != null
+    ? `${Math.abs(active.turn_deg).toFixed(0)}° ${active.turn_deg < 0 ? "L" : "R"}` : "--";
 
   const wpLatLng = [active.waypoint.lat, active.waypoint.lon];
   if (!waypointMarker) waypointMarker = L.circleMarker(wpLatLng, { radius: 9, color: "#fff", weight: 2, fillColor: "#e0202b", fillOpacity: 1 }).addTo(map);

@@ -36,9 +36,25 @@ position, GPS status), **Day/Night** chart mode, **Alerts** (the alarms and
 warnings below, and a missing GPS fix; the icon turns amber/red with a count)
 and **Options** (units, alarms, chart orientation, map layers & colors, centre chart on
 boat, waypoints, calibration). Tap the speed gauge to switch between mph and knots. The
-chart defaults to **Old Hickory Lake, TN (37075)**, and can show **North Up** (default) or
-**Heading Up** — toggle it with the small compass button next to the zoom buttons on the
-chart itself, or **Options → Chart orientation**; both stay in sync.
+chart defaults to **Old Hickory Lake, TN (37075)**, and has the three orientations a GPSMAP
+does: **North Up** (default), **Heading Up** (the bow points to the top of the screen) and
+**Course Up** (the *active leg* points to the top). Course Up is the one worth knowing about —
+Heading Up re-aims the chart with every wiggle of the boat, which at idle is a constant slow
+swim, while Course Up holds the leg still and lets the boat icon swing against it, so the angle
+between the icon and straight-up is exactly how much you are crabbing off the track. With no Go
+To or route running it falls back to course over ground, then heading, so it is never stuck
+pointing somewhere stale. Cycle them with the compass button next to the zoom buttons, or
+**Options → Chart orientation**; both stay in sync.
+
+**Measure Distance** (the ruler button beside the zoom controls): tap once to anchor — it starts
+at the boat, which is the question usually being asked — and the range and bearing to wherever
+you tap or drag next read out continuously at the top of the chart. Tapping again re-anchors, so
+it measures between two arbitrary points as well as from the boat.
+
+**Range Rings** (**Options → Map layers & colors → My Vessel**): four concentric circles around
+the boat at a spacing you pick, the outermost labelled with its radius, so distance to anything
+on screen can be eyeballed without measuring it. Drawn in real distance rather than screen
+pixels, so they scale with zoom the way the chart does.
 
 The boat's position and heading are eased continuously (every animation frame, not once a
 second when a GPS fix arrives) — the same idea as the spring-smoothed gauges, but for a
@@ -75,9 +91,29 @@ themselves, which live on the server (`/api/track`, `/api/tracks`).
 
 **Data overlays** (the Speed/Heading/Depth/... boxes on the Helm and Nav. Chart screens): **hold**
 any box (same gesture, and the same fill-as-you-hold feedback, as the RPM display and alarm
-menus) to swap in a different field — Speed, Heading, Course, Depth, Water Temp, Battery, Fuel,
-RPM, Coolant, Trip Distance, Time, Sunrise, Sunset, or Moon Phase — matching a real GPSMAP's
-"Edit Overlays". Which fields are picked, per screen, is a per-browser preference (localStorage);
+menus) to swap in a different field, matching a real GPSMAP's "Edit Overlays". There are **36
+fields in seven groups**, and the picker shows the group headings because a flat list of that
+many is not something anyone navigates while driving:
+
+| Group | Fields |
+| --- | --- |
+| **Navigation** | Bearing, Course, Distance, Time To Dest, Arrival Time, VMG, Cross Track, Turn, Destination |
+| **Vessel** | Speed, Heading, Course Over Ground, Position, GPS Accuracy, Satellites |
+| **Depth & Water** | Depth, Water Temp |
+| **Engine** | RPM, Engine Temp, Oil Pressure, Trim, Battery |
+| **Fuel** | Fuel Level, Fuel Remaining, Fuel Rate, Fuel Economy, Range |
+| **Trip** | Trip Distance, Trip Time, Average Speed, Max Speed, Trip Fuel Used |
+| **Time** | Time of Day, Sunrise, Sunset, Moon Phase |
+
+The Navigation group needs a Go To or a route running and reads `--` otherwise, the Trip group
+needs a trip started, and everything reads `--` without a GPS fix — which is what a real unit
+does rather than showing a stale or invented number. **VMG** is velocity made good: how fast the
+distance to the destination is actually shrinking, which is only the same as speed when steering
+straight at it. **Time To Dest** is computed from VMG rather than speed for exactly that reason
+— sliding sideways past a waypoint at 20 kn is not arriving at 20 kn — and reads `--` when VMG
+has gone negative, because a boat pointed away is not arriving at all. **Fuel Remaining**,
+**Economy** and **Range** need the tank size (`BOAT_FUEL_CAPACITY_GAL`, default 40).
+Which fields are picked, per screen, is a per-browser preference (localStorage);
 the Chart screen defaults to Speed/Heading/Depth/Water Temp and the Helm screen (which already
 shows speed via its own dial) to Depth/Water Temp, same as before this was made editable.
 Sunrise, sunset and moon phase come from `app/celestial.py` — sunrise/sunset from the standard
@@ -394,6 +430,7 @@ export BOAT_N2K_FUEL_TANK_INSTANCE=0     # fuel level
 export BOAT_BATTERY_ADC=true             # only if you fitted the ADS1115 for the battery
 export BOAT_REDLINE_RPM=4800             # your engine's maximum WOT RPM
 export BOAT_ENGINE_HP=135 BOAT_ENGINE_WOT_RPM=4600      # only used for the fuel-burn estimate
+export BOAT_FUEL_CAPACITY_GAL=40                        # tank size: turns fuel % into gallons, economy and range
 # export BOAT_N2K_TEMP=oil               # if the converter reports its temperature as oil temperature
 ```
 
@@ -473,6 +510,7 @@ python -m venv --system-site-packages venv && venv/bin/pip install -r requiremen
 export BOAT_SENSORS=real
 export BOAT_REDLINE_RPM=4800                            # your engine's maximum WOT RPM
 export BOAT_ENGINE_HP=135 BOAT_ENGINE_WOT_RPM=4600      # only used for the fuel-burn estimate
+export BOAT_FUEL_CAPACITY_GAL=40                        # tank size: turns fuel % into gallons, economy and range
 ```
 
 **Calibrate** from a phone at the boat: open `http://<pi-address>:8090/calibrate`.
@@ -914,8 +952,9 @@ Browser libraries therefore live in `static/vendor/`, committed. See
 - The depth and sea-temperature decoding (PGN 128267, 130311) follows canboat's PGN layouts
   and is tested against a fake transducer on a virtual CAN bus, **not against a real
   transducer**: confirm its instance number and offset sign on `/calibrate` before trusting it.
-- Chart rotation (Heading Up) uses [leaflet-rotate](https://github.com/Raruto/leaflet-rotate),
-  a third-party Leaflet plugin loaded from a CDN, not a first-party part of Leaflet itself.
+- Chart rotation (Heading Up and Course Up) uses [leaflet-rotate](https://github.com/Raruto/leaflet-rotate),
+  a third-party Leaflet plugin, not a first-party part of Leaflet itself. It is vendored into
+  `static/vendor/` along with Leaflet, because the boat has no internet — see "The offline guard".
   Its bearing convention and click-to-latlng math were checked by hand against its own source
   and by comparing real clicks to their expected position at several bearings; it has not been
   used on a touchscreen on a moving boat.
