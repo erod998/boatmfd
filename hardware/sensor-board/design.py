@@ -11,8 +11,8 @@ fuel 0, trim 1, battery 2, gauge supply 3 on the first ADS1115, oil 4 on the sec
 from dataclasses import dataclass, field
 
 TITLE = "Boat MFD sensor board"
-REVISION = "1.0"
-DATE = "2026-09-22"
+REVISION = "1.1"
+DATE = "2026-09-23"
 
 # ---------------------------------------------------------------- the input channels
 # (name, helm-connector pin, ADC, ADC pin, top resistor). ADS1115 pins: AIN0=4, AIN1=5, AIN2=6, AIN3=7.
@@ -33,11 +33,24 @@ CHANNELS = [
 PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
            33: "TACH_GPIO",   # GPIO13: tach            (BOAT_TACH_GPIO=13)
            37: "OW",          # GPIO26: 1-Wire probes   (dtoverlay=w1-gpio,gpiopin=26)
+           # NMEA 2000: the CAN controller on SPI0, interrupt on GPIO25 -- the pins every Pi CAN HAT
+           # uses, so the stock overlay drives it:
+           #   dtparam=spi=on   dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25
+           19: "SPI_MOSI",    # GPIO10
+           21: "SPI_MISO",    # GPIO9
+           23: "SPI_SCLK",    # GPIO11
+           24: "SPI_CE0",     # GPIO8
+           22: "CAN_INT",     # GPIO25
            6: "GND", 9: "GND", 14: "GND", 20: "GND", 25: "GND", 30: "GND", 34: "GND", 39: "GND"}
 
 # The ignition side of the tach input. Kept 3 mm from everything else (board.py, and the
 # custom rule in sensor-board.kicad_dru).
 TACH_HV_NETS = ["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"]
+
+# The NMEA 2000 network's side of the CAN isolator: powered from the network's own NET-S and
+# referenced to its NET-C, never to the Pi's ground. Kept 2 mm from everything else (board.py,
+# sensor-board.kicad_dru), with its own ground pour.
+N2K_BUS_NETS = ["N2K_NET_S", "N2K_12V", "N2K_GND", "N2K_5V", "N2K_H", "N2K_L", "N2K_TERM"]
 
 
 @dataclass
@@ -59,11 +72,12 @@ class Part:
 # The small parts use the project library (footprints.py): KiCad's own footprints with their
 # silkscreen moved to the fab layer, since this board is too dense for their outlines.
 R0805, R1206 = "sensor-board:R_0805_2012Metric_NoSilk", "sensor-board:R_1206_3216Metric_NoSilk"
-C0805 = "sensor-board:C_0805_2012Metric_NoSilk"
+C0805, C1206 = "sensor-board:C_0805_2012Metric_NoSilk", "sensor-board:C_1206_3216Metric_NoSilk"
 
 
 def yageo(value, size):
-    code = {"39k": "39KL", "47k": "47KL", "10k": "10KL", "1k": "1KL", "3.3k": "3K3L", "4.7k": "4K7L", "100": "100RL"}[value]
+    code = {"39k": "39KL", "47k": "47KL", "10k": "10KL", "1k": "1KL", "3.3k": "3K3L", "4.7k": "4K7L", "100": "100RL",
+            "120": "120RL"}[value]
     return f"RC{size}FR-07{code}"
 
 
@@ -72,7 +86,9 @@ def resistor(ref, value, a, b, size="0805", **kw):
                 mpn=yageo(value, size), **kw)
 
 
-def capacitor(ref, value, a, b, **kw):
+def capacitor(ref, value, a, b, size="0805", **kw):
+    if size == "1206":   # the one that sees the NMEA 2000 network's 12 V: 50 V rated
+        return Part(ref, "Device:C", value, C1206, {"1": a, "2": b}, mpn={"1u": "CL31B105KBHNNNE"}[value], **kw)
     mpn = {"100n": "CL21B104KBCNNNC", "1u": "CL21B105KAFNNNE", "10n": "CL21B103KBANNNC"}[value]
     return Part(ref, "Device:C", value, C0805, {"1": a, "2": b}, mpn=mpn, **kw)
 
@@ -138,6 +154,52 @@ def build_parts():
         resistor("R24", "4.7k", "OW", "+3V3", sch=(322.58, 187.96), note="1-Wire pull-up"),
     ]
 
+    # ---------------- NMEA 2000: an isolated CAN interface ----------------
+    # For the Fusion stereo, and anything else on the backbone (the depth transducer). A CAN FD
+    # controller on the Pi's SPI bus, and an isolated transceiver whose bus side is powered from the
+    # network's own 12 V (NET-S), as every NMEA 2000 device's is: the Pi's ground never joins the
+    # network's, so no ground loop through the stereo's power and the Pi's. About 1 LEN.
+    parts += [
+        Part("U4", "Interface_CAN_LIN:MCP2517FD-xSL", "MCP2518FD", "Package_SO:SOIC-14_3.9x8.7mm_P1.27mm",
+             {"1": "CAN_TXD", "2": "CAN_RXD", "4": "CAN_INT", "6": "CAN_CLK", "7": "GND",
+              "10": "SPI_SCLK", "11": "SPI_MOSI", "12": "SPI_MISO", "13": "SPI_CE0", "14": "+3V3"},
+             mpn="MCP2518FDT-E/SL", sch=(299.72, 320.04),
+             note="SPI CAN FD controller (pin-for-pin successor to the MCP2517FD; Linux driver mcp251xfd)"),
+        Part("Y1", "Oscillator:ASE-xxxMHz", "40MHz", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm",
+             {"1": "+3V3", "2": "GND", "3": "CAN_CLK", "4": "+3V3"},
+             mpn="40 MHz 3.3 V CMOS oscillator, 3.2 x 2.5 mm (Abracon ASE series or equal)", sch=(345.44, 304.8),
+             note="U4's clock (oscillator=40000000 in the overlay)"),
+        capacitor("C12", "100n", "+3V3", "GND", sch=(368.3, 337.82), note="U4 decoupling"),
+        capacitor("C13", "1u", "+3V3", "GND", sch=(381.0, 337.82), note="U4 decoupling"),
+        capacitor("C14", "100n", "+3V3", "GND", sch=(393.7, 337.82), note="Y1 decoupling"),
+        resistor("R27", "10k", "SPI_CE0", "+3V3", sch=(332.74, 347.98), note="keeps U4 deselected while the Pi boots"),
+        resistor("R28", "10k", "CAN_INT", "+3V3", sch=(345.44, 347.98), note="interrupt pull-up"),
+        Part("U5", "Interface_CAN_LIN:ISO1044BD", "ISO1044BD", "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+             {"1": "+3V3", "2": "CAN_TXD", "3": "CAN_RXD", "4": "GND",
+              "5": "N2K_L", "6": "N2K_H", "7": "N2K_GND", "8": "N2K_5V"},
+             mpn="ISO1044BDR", sch=(226.06, 320.04),
+             note="isolated CAN transceiver: the Pi side and the network side share no ground"),
+        capacitor("C15", "100n", "+3V3", "GND", sch=(254.0, 342.9), note="U5 Pi-side decoupling"),
+        # the network side
+        Part("D9", "Diode:SS14", "SS14", "Diode_SMD:D_SMA", {"1": "N2K_12V", "2": "N2K_NET_S"},
+             mpn="SS14", sch=(76.2, 312.42), note="reverse-polarity protection on NET-S"),
+        Part("D10", "Diode:SMAJ18A", "SMAJ18A", "Diode_SMD:D_SMA", {"1": "N2K_12V", "2": "N2K_GND"},
+             mpn="SMAJ18A", sch=(96.52, 332.74), note="clamps surges on the network's power"),
+        capacitor("C16", "1u", "N2K_12V", "N2K_GND", size="1206", sch=(111.76, 332.74), note="regulator input (50 V)"),
+        Part("U6", "Regulator_Linear:L78L05_SOT89", "L78L05", "Package_TO_SOT_SMD:SOT-89-3",
+             {"1": "N2K_5V", "2": "N2K_GND", "3": "N2K_12V"}, mpn="L78L05ABUTR", sch=(137.16, 312.42),
+             note="5 V for U5's network side, from NET-S"),
+        capacitor("C17", "1u", "N2K_5V", "N2K_GND", sch=(160.02, 332.74), note="regulator output"),
+        capacitor("C18", "100n", "N2K_5V", "N2K_GND", sch=(172.72, 332.74), note="U5 network-side decoupling"),
+        Part("D11", "Power_Protection:NUP2105L", "NUP2105L", "sensor-board:SOT-23_NoSilk",
+             {"1": "N2K_H", "2": "N2K_L", "3": "N2K_GND"}, mpn="NUP2105LT1G", sch=(190.5, 350.52),
+             note="ESD and surge protection for NET-H / NET-L"),
+        resistor("R26", "120", "N2K_H", "N2K_TERM", sch=(208.28, 358.14), note="bench terminator, only with JP1 bridged"),
+        Part("JP1", "Jumper:SolderJumper_2_Open", "TERM", "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm",
+             {"1": "N2K_TERM", "2": "N2K_L"}, sch=(241.3, 360.68),
+             note="bridge ONLY to test on the bench with no backbone: a device on a real network must not terminate it"),
+    ]
+
     # ---------------- connectors ----------------
     helm = {str(pin): f"{name}_IN" for name, pin, _, _, _ in CHANNELS}
     helm.update({"7": "GND", "8": "GND"})
@@ -158,8 +220,14 @@ def build_parts():
              "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical", {str(k): v for k, v in PI_PINS.items()},
              mpn="2x20 female stacking header, 2.54 mm, extra-tall (e.g. Adafruit 1979)", sch=(35.56, 83.82),
              note="to the Raspberry Pi"),
+        Part("J5", "Connector_Generic:Conn_01x05", "NMEA 2000",
+             "Connector_Phoenix_MC:PhoenixContact_MC_1,5_5-GF-3.81_1x05_P3.81mm_Horizontal_ThreadedFlange",
+             {"2": "N2K_NET_S", "3": "N2K_GND", "4": "N2K_H", "5": "N2K_L"},
+             mpn="Phoenix MC 1,5/ 5-GF-3,81 (plug: MC 1,5/ 5-STF-3,81)", sch=(35.56, 320.04),
+             note="NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"),
     ]
-    for i, ref in enumerate(("H1", "H2", "H3", "H4")):
+    # H5 carries the part of the board that reaches past the Pi's edge.
+    for i, ref in enumerate(("H1", "H2", "H3", "H4", "H5")):
         parts.append(Part(ref, "Mechanical:MountingHole", "MountingHole", "MountingHole:MountingHole_2.7mm_M2.5", {},
                           sch=(368.3 + i * 10.16, 185.42), note="M2.5"))
     return parts

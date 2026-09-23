@@ -6,6 +6,7 @@ divider and clamp, and the tach's optocoupler input -- are drawn as wired circui
 dots. Everything that crosses between blocks (connector pins, the ADC inputs, the Pi header, GND
 and +3V3) connects through net labels and power symbols. `kicad-cli sch erc` (build.py) checks it.
 """
+import copy
 import math
 import uuid
 from collections import Counter
@@ -67,7 +68,10 @@ def flat_symbol(lib_id):
     # un-overridden ones -- ki_fp_filters, say -- makes KiCad flag the copy as out of date.)
     own = {p[1]: p for p in find_all(node, "property")}
     out = ["symbol", q(lib_id)]
-    for child in base[2:]:
+    # Copies, not the parent's own lists: the unit renaming below edits them in place, and two
+    # symbols derived from one parent (SMAJ5.0A and SMAJ18A both extend SM6T6V8A) would otherwise
+    # both end up with the second one's unit names -- a duplicate KiCad refuses to load.
+    for child in copy.deepcopy(base[2:]):
         if isinstance(child, list) and child[0] == "property":
             out.append(own.pop(child[1], child))
         else:
@@ -172,7 +176,7 @@ class Sheet:
         if rot == 180 and just == ["left"]:
             just = ["right"]                        # KiCad mirrors the justification of a symbol turned over
         node = ["symbol", ["lib_id", q(lib_id)], ["at", num(x), num(y), str(rot)], ["unit", "1"],
-                ["exclude_from_sim", "no"], ["in_bom", "no" if ref.startswith(("#", "H")) else "yes"],
+                ["exclude_from_sim", "no"], ["in_bom", "no" if ref.startswith(("#", "H", "JP")) else "yes"],
                 ["on_board", "no" if ref.startswith("#") else "yes"], ["dnp", "no"], ["uuid", q(uid("sym", ref))],
                 prop("Reference", ref, *rpos, hide=hidden_ref, justify=just, angle=fa),
                 prop("Value", value, *vpos, hide=hide_value, justify=just, angle=fa)]
@@ -325,13 +329,18 @@ def build():
               "C7": (386.08, 58.42), "C8": (398.78, 58.42), "C9": (386.08, 114.3), "C10": (398.78, 114.3),
               "R22": (175.26, 190.5), "R23": (190.5, 190.5),
               "D8": (254.0, 210.82), "R25": (269.24, 190.5), "R24": (284.48, 190.5),
-              "H1": (340.36, 190.5), "H2": (350.52, 190.5), "H3": (360.68, 190.5), "H4": (370.84, 190.5)}
+              "H1": (340.36, 190.5), "H2": (350.52, 190.5), "H3": (360.68, 190.5), "H4": (370.84, 190.5),
+              "H5": (381.0, 190.5)}
+    # The NMEA 2000 block, in signal order from the drop cable to the Pi, at the positions design.py gives.
+    others.update({ref: parts[ref].sch for ref in
+                   ("J5", "D9", "D10", "C16", "U6", "C17", "C18", "D11", "R26", "JP1", "U5", "C15",
+                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28") if ref in parts})
     for ref, (x, y) in others.items():
         if ref == "D8":
             place(ref, x, y, text_side="below")
         elif ref.startswith("H"):
             place(ref, x, y, hide_value=True)
-        elif ref in ("R22", "R24"):
+        elif ref in ("R22", "R24", "R27", "R28"):
             place(ref, x, y, rot=180)       # pull-ups: turned so +3V3 is at the top
         else:
             place(ref, x, y)
@@ -339,6 +348,12 @@ def build():
     sh.power("+3V3", 340.36, 215.9, "down")
     sh.flag(2, 355.6, 215.9)
     sh.power("GND", 355.6, 215.9, "down")
+    # The network side is powered from NET-S, which comes in through a connector and a diode --
+    # nothing KiCad recognises as a supply -- so its two rails get flags of their own.
+    for n, (net, x) in enumerate((("N2K_12V", 60.96), ("N2K_GND", 45.72)), start=3):
+        sh.flag(n, x, 350.52)
+        sh.path((x, 350.52), (x, 355.6))
+        sh.net_label(net, x, 355.6, "down")
 
     for part in design.PARTS:
         for number in {k for (r, k) in sh.pin_at if r == part.ref}:
@@ -354,7 +369,9 @@ def build():
     for body, x, y in [("RASPBERRY PI HEADER", 20.32, 50.8), ("HELM: gauge taps and battery", 20.32, 142.24),
                        ("TACH: Delco EST (ignition side)", 20.32, 190.5), ("TEMPERATURE PROBES", 20.32, 218.44),
                        ("CONVERTERS", 342.9, 45.72), ("1-WIRE PROBES", 246.38, 167.64),
-                       ("TACH OUTPUT", 167.64, 167.64), ("MOUNTING / POWER FLAGS", 330.2, 167.64)]:
+                       ("TACH OUTPUT", 167.64, 167.64), ("MOUNTING / POWER FLAGS", 330.2, 167.64),
+                       ("NMEA 2000: network side (isolated, powered by NET-S)", 20.32, 294.64),
+                       ("NMEA 2000: Pi side", 213.36, 294.64)]:
         sh.items.append(text(body, x, y, size=2.0, bold=True))
     sh.items.append(text(
         "Each gauge tap: the S (or I) terminal -> 10k in heatshrink AT THE GAUGE -> J1 -> 39k -> node (10k to GND, BAT54S clamp to GND/3V3)\n"
@@ -366,10 +383,17 @@ def build():
         "Software: BOAT_SENSORS=real BOAT_SENDER_WIRING=tap BOAT_TACH_PULL=none BOAT_TACH_GPIO=13 BOAT_OIL_SENDER=true;\n"
         "dtoverlay=w1-gpio,gpiopin=26. Channel map: fuel 0, trim 1, battery 2, gauge supply 3, oil 4 -- see SENSOR_BOARD.md.",
         20.32, 256.54, size=1.5))
+    sh.items.append(text(
+        "NMEA 2000 (Fusion stereo, depth transducer): J5 takes a drop cable -- 1 shield (not connected), 2 NET-S, 3 NET-C, 4 NET-H, 5 NET-L.\n"
+        "U5 isolates the network from the Pi: its network side runs from NET-S through D9 (reverse polarity), D10 (surges) and U6 (5 V), and N2K_GND is\n"
+        "the network's 0 V, not the Pi's GND. Keep every N2K_* net 2 mm from all other copper (sensor-board.kicad_dru). About 1 LEN.\n"
+        "JP1 (open) adds a 120 ohm terminator for a bench test with no backbone -- never bridge it on the boat: the backbone is terminated at its ends.\n"
+        "Pi: dtparam=spi=on  dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25  ->  can0 at 250 kbit/s;  BOAT_CAN=can0.",
+        20.32, 381.0, size=1.5))
     sh.junctions()
 
     return ["kicad_sch", ["version", "20250114"], ["generator", q("eeschema")], ["generator_version", q("9.0")],
-            ["uuid", q(ROOT)], ["paper", q("A3")],
+            ["uuid", q(ROOT)], ["paper", q("A2")],
             ["title_block", ["title", q(design.TITLE)], ["date", q(design.DATE)], ["rev", q(design.REVISION)],
              ["comment", "1", q("Passive taps on the existing analog gauges -- they stay connected and working")],
              ["comment", "2", q("Generated from design.py by schematic.py; edit those, not this file")]],

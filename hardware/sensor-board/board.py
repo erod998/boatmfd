@@ -3,6 +3,8 @@
 Placement is a table below; routing is router.py under the design rules:
   * 0.2 mm tracks and clearance (the ADS1115's 0.5 mm pin pitch needs no finer);
   * 3 mm between the tach's ignition side and everything else, 0.6 mm inside its resistor chain;
+  * 2 mm between the NMEA 2000 network's side of the CAN isolator and everything else, with its
+    own ground pour, kept 4 mm from the Pi's mounting hole beside it;
   * the top layer preferred, so the bottom stays a ground plane; GND pours on both layers, kept
     out of the ignition side; a stitching via beside every surface-mount GND pad.
 Footprints link to their schematic symbols (same UUIDs as schematic.py), so KiCad's
@@ -24,28 +26,53 @@ HERE = Path(__file__).parent
 KICAD = Path(r"C:\Users\erod9\AppData\Local\Programs\KiCad\10.0")
 FP_DIR = KICAD / "share" / "kicad" / "footprints"
 OX, OY = 100.0, 50.0                 # where the board sits on KiCad's page
-W, H = 65.0, 56.0                    # the Raspberry Pi HAT outline (KiCad's own HAT template)
+# The Raspberry Pi HAT outline (KiCad's own HAT template), 20 mm longer on the side away from the
+# header: rev 1.0 was the plain 65 x 56 HAT and had no room left for the NMEA 2000 interface.
+# The extra 20 mm reaches past the Pi's USB-C / micro-HDMI edge, about 5 mm above those plugs.
+W, H, HAT_H = 65.0, 76.0, 56.0
 TRACK, HV_TRACK, VIA_D, VIA_DRILL = 0.2, 0.25, 0.6, 0.3
 HV = set(design.TACH_HV_NETS)
 SERIES = {"TACH_IN", "TACH_A", "TACH_B"}   # the nets the ignition spike is divided across
+N2K = set(design.N2K_BUS_NETS)
+N2K_CLEAR = 2.0
+# Room the network side's tracks get beyond its pads, left and right; none upward, where the
+# isolator's Pi-side pins are only 3.4 mm away.
+N2K_ROUTE_MARGIN = 1.5
+# The network side's power is carried on wider tracks.
+WIDE = {"N2K_NET_S": 0.4, "N2K_12V": 0.4, "N2K_GND": 0.4, "N2K_5V": 0.4}
+HOLES = [(3.5, 3.5), (61.5, 3.5), (3.5, 52.5), (61.5, 52.5), (61.5, 72.5)]
 
 # ---------------------------------------------------------------- placement (board mm, degrees CCW)
 LANE_Y = [11.5, 16.5, 21.5, 26.5, 31.5, 36.5]    # one per channel, top to bottom
 PLACE = {
     "J4": (8.37, 4.77, -90, "B"),                 # the Pi header, underneath (as KiCad's HAT template)
     "H1": (3.5, 3.5, 0, "F"), "H2": (61.5, 3.5, 0, "F"), "H3": (3.5, 52.5, 0, "F"), "H4": (61.5, 52.5, 0, "F"),
+    "H5": (61.5, 72.5, 0, "F"),                   # supports the part past the Pi's edge
     # Helm plug on the left edge (over the Pi's SD-card end): plug faces out, pin 1 at the top.
     "J1": (8.7, 14.665, -90, "F"),
     # Converters and their decoupling.
     "U1": (38.8, 18.0, 0, "F"), "U2": (38.8, 29.0, 0, "F"),
     "C7": (43.6, 17.6, -90, "F"), "C8": (45.7, 17.6, -90, "F"),
     "C9": (43.6, 28.6, -90, "F"), "C10": (45.7, 28.6, -90, "F"),
-    # Tach, bottom right. The ignition side (left of U3) is kept 3 mm from everything else.
-    "J2": (42.0, 47.3, 0, "F"),
-    "R19": (36.0, 41.5, 90, "F"), "R20": (38.8, 41.5, -90, "F"), "R21": (41.6, 41.5, 90, "F"),
-    "D7": (44.4, 41.5, -90, "F"), "C11": (47.3, 41.5, -90, "F"),
-    "U3": (55.5, 41.5, 0, "F"),
-    "R23": (56.5, 35.8, 0, "F"), "R22": (60.0, 35.8, 0, "F"),
+    # Tach, bottom right, its plug on the bottom edge. The ignition side (left of U3) is kept
+    # 3 mm from everything else.
+    "J2": (42.0, 67.3, 0, "F"),
+    "R19": (36.0, 61.5, 90, "F"), "R20": (38.8, 61.5, -90, "F"), "R21": (41.6, 61.5, 90, "F"),
+    "D7": (44.4, 61.5, -90, "F"), "C11": (47.3, 61.5, -90, "F"),
+    "U3": (55.5, 61.5, 0, "F"),
+    "R23": (55.5, 54.3, 0, "F"), "R22": (55.5, 51.8, 0, "F"),
+    # NMEA 2000, bottom left: the drop-cable plug on the bottom edge, the network side in the row
+    # above it, the isolator across the boundary (Pi-side pins up, network-side pins down), and
+    # the CAN controller above that, where rev 1.0 had its pinout legend.
+    "J5": (9.0, 67.3, 0, "F"),
+    "D9": (5.5, 58.2, 0, "F"), "D10": (5.5, 62.0, 0, "F"),
+    "U6": (13.5, 59.0, 0, "F"), "C16": (17.8, 59.0, 90, "F"),
+    "C17": (20.3, 59.0, 90, "F"), "C18": (21.6, 55.2, 0, "F"),
+    "D11": (25.0, 61.5, 0, "F"), "R26": (28.5, 58.0, 90, "F"), "JP1": (28.5, 61.8, 90, "F"),
+    "U5": (16.5, 52.0, -90, "F"), "C15": (22.0, 49.8, 0, "F"),
+    "U4": (20.5, 44.3, 90, "F"), "Y1": (28.5, 45.5, 0, "F"), "C14": (28.5, 42.0, 0, "F"),
+    "C12": (13.0, 42.2, 90, "F"), "C13": (13.0, 45.6, 90, "F"),
+    "R27": (32.2, 42.0, 90, "F"), "R28": (32.2, 46.0, 90, "F"),
     # Probes on the right edge, and their protection.
     "J3": (56.3, 26.0, 90, "F"),
     "D8": (49.8, 22.2, 180, "F"), "R25": (51.4, 18.8, 180, "F"), "R24": (51.4, 15.6, 180, "F"),
@@ -59,8 +86,16 @@ for i, y in enumerate(LANE_Y):
 
 # Routing order: the constrained nets first.
 ORDER = (["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"] +
+         ["N2K_NET_S", "N2K_12V", "N2K_GND", "N2K_5V", "N2K_H", "N2K_L", "N2K_TERM"] +
+         ["CAN_TXD", "CAN_RXD", "CAN_CLK"] +
          [f"{n}_{s}" for n, *_ in design.CHANNELS for s in ("IN", "DIV", "ADC")] +
-         ["TACH_OUT", "TACH_GPIO", "OW_EXT", "OW", "SDA", "SCL", "+3V3"])
+         ["SDA", "SCL",
+          "CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK",
+          "TACH_OUT", "TACH_GPIO", "OW_EXT", "OW", "+3V3"])
+# The SPI bus runs the length of the board, from the header down to the CAN controller, across
+# every input lane and past the converters: it prefers the bottom layer, leaving the top to the
+# parts it passes.
+PREFER_BOTTOM = {"CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK"}
 
 
 def mm(v):
@@ -101,6 +136,10 @@ def clearance(a, b):
         return 3.0
     if a in HV and b in HV and (a in SERIES or b in SERIES):
         return 0.6
+    # The network side against the Pi side. (An unused pad -- net None -- is neither: the drop
+    # connector's shield pin sits 3.81 mm from NET-S and must not force 2 mm around it.)
+    if a is not None and b is not None and (a in N2K) != (b in N2K):
+        return N2K_CLEAR
     return 0.2
 
 
@@ -127,6 +166,14 @@ def pad_item(pad, net):
     ang = round(pad.GetOrientationDegrees()) % 180
     if ang == 90:
         sx, sy = sy, sx
+    if shape == pcbnew.PAD_SHAPE_CUSTOM:
+        # A custom pad (SOT-89's tab, a solder jumper's half-moons) is far bigger than its anchor
+        # size says: the router has to see the whole of it, or it runs tracks straight across.
+        bb = pad.GetBoundingBox()
+        x0, y0 = pcbnew.ToMM(bb.GetX()) - OX, pcbnew.ToMM(bb.GetY()) - OY
+        w, h = pcbnew.ToMM(bb.GetWidth()), pcbnew.ToMM(bb.GetHeight())
+        layers = [l for l, cu in ((TOP, pcbnew.F_Cu), (BOTTOM, pcbnew.B_Cu)) if pad.IsOnLayer(cu)]
+        return Item(net, layers, "rect", x=x0 + w / 2, y=y0 + h / 2, hw=w / 2, hh=h / 2, corner=0.0)
     layers = []
     if pad.IsOnLayer(pcbnew.F_Cu):
         layers.append(TOP)
@@ -224,21 +271,42 @@ class Board:
                 self.router.items.append(item)
                 self.pad_items[(part.ref, num)] = item
             self.fps[part.ref] = fp
-        for hx, hy in [(3.5, 3.5), (61.5, 3.5), (3.5, 52.5), (61.5, 52.5)]:
+        for hx, hy in HOLES:
             self.router.holes.append((hx, hy, 2.75 / 2 + 0.5))
-        # Nothing but the ignition side inside the tach's isolation zone (set after placement,
-        # from the parts that are actually there).
+        # Nothing but the ignition side inside the tach's isolation zone, and nothing but the
+        # NMEA 2000 network's side inside its zone (both set after placement, from the parts that
+        # are actually there).
         self.router.keepouts.append((*self.hv_zone(), lambda n: n in HV))
+        self.router.keepouts.append((*self.n2k_zone(), lambda n: n in N2K))
+        # ...and the network side's own tracks stay inside their routing area, so every one of
+        # them is at least 2 mm from the Pi's ground pour outside it.
+        rx0, ry0, rx1, _ = self.n2k_route()
+        not_n2k = lambda n: n not in N2K
+        self.router.keepouts += [(0.0, 0.0, W, ry0, not_n2k), (0.0, ry0, rx0, H, not_n2k), (rx1, ry0, W, H, not_n2k)]
 
-    def hv_zone(self, grow=3.0):
+    def zone_of(self, nets, grow):
+        """The rectangle around every pad on these nets, grown by `grow`, down to the bottom edge."""
         xs, ys = [], []
         for (ref, num), it in self.pad_items.items():
-            if it.net in HV:
+            if it.net in nets:
                 g = it.geo
                 hw, hh = (g["hw"], g["hh"]) if it.kind == "rect" else (g["r"], g["r"])
                 xs += [g["x"] - hw, g["x"] + hw]
                 ys += [g["y"] - hh, g["y"] + hh]
         return (max(0.0, min(xs) - grow), max(0.0, min(ys) - grow), min(W, max(xs) + grow), H)
+
+    def hv_zone(self):
+        return self.zone_of(HV, 3.0)
+
+    def n2k_route(self):
+        """Where the network side's tracks may run: its pads, plus a margin left and right."""
+        x0, y0, x1, y1 = self.zone_of(N2K, 0.0)
+        return max(0.0, x0 - N2K_ROUTE_MARGIN), y0, min(W, x1 + N2K_ROUTE_MARGIN), y1
+
+    def n2k_zone(self):
+        """The routing area plus the 2 mm isolation: no Pi-side copper at all inside this."""
+        x0, y0, x1, y1 = self.n2k_route()
+        return max(0.0, x0 - N2K_CLEAR), y0 - N2K_CLEAR, min(W, x1 + N2K_CLEAR), y1
 
     # ---------------------------------------------------------------- routing
     def add_track(self, net, a, b, layer, width):
@@ -283,8 +351,9 @@ class Board:
 
     def route_net(self, net):
         members = [(r, p) for r, p in design.nets()[net] if (r, p) in self.pad_items]
-        width = HV_TRACK if net in HV else TRACK
+        width = HV_TRACK if net in HV else WIDE.get(net, TRACK)
         self.router.track = width
+        self.router.layer_cost = (3, 1) if net in PREFER_BOTTOM else (1, 3)
         if len(members) < 2:
             return
         # Grow a tree: start at the first pad, then join the nearest remaining pad each time.
@@ -340,7 +409,29 @@ class Board:
     def pours(self):
         gnd = self.net("GND")
         inset = 0.3
-        pts = [(inset, inset), (W - inset, inset), (W - inset, H - inset), (inset, H - inset)]
+        # The Pi's ground pour everywhere except the NMEA 2000 network's corner, which gets a pour
+        # of the network's own ground instead, 2 mm in from it all round -- and, at the top, 4 mm
+        # clear of the Pi's mounting hole there, so a metal standoff or screw head can never bridge
+        # the isolation.
+        nx0, ny0, nx1, _ = self.n2k_zone()
+        rx0, ry0, rx1, _ = self.n2k_route()
+        hole_y = max(hy for hx, hy in HOLES if hx < nx1 and hy < ny0 + 6) + 4.0
+        pts = [(inset, inset), (W - inset, inset), (W - inset, H - inset), (nx1, H - inset), (nx1, ny0), (inset, ny0)]
+        n2k_pts = [(max(inset, rx0), max(ry0, hole_y)), (rx1, max(ry0, hole_y)),
+                   (rx1, H - inset), (max(inset, rx0), H - inset)]
+        for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+            z = pcbnew.ZONE(self.board)
+            z.SetLayer(layer)
+            z.SetNet(self.net("N2K_GND"))
+            ol = z.Outline()
+            ol.NewOutline()
+            for x, y in n2k_pts:
+                ol.Append(mm(x + OX), mm(y + OY))
+            z.SetMinThickness(mm(0.2))
+            z.SetThermalReliefGap(mm(0.4))
+            z.SetThermalReliefSpokeWidth(mm(0.4))
+            z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+            self.board.Add(z)
         for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
             z = pcbnew.ZONE(self.board)
             z.SetLayer(layer)
@@ -394,15 +485,19 @@ class Board:
             elif just == "right":
                 t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_RIGHT)
             self.board.Add(t)
-        # Every connector's pinout in one block in the free bottom-left corner; there is no room
-        # beside the connectors without landing on pads.
-        lines = [("J1 HELM", 41.6), ("1 FUEL S    5 OIL S", 42.8), ("2 TRIM S    6 SPARE", 44.0),
-                 ("3 BATT+     7 GAUGE G", 45.2), ("4 GAUGE I   8 BATT-", 46.4),
-                 ("J2 DELCO EST TACH", 47.8), ("1 GRAY WIRE  2 GND", 49.0),
-                 ("J3 1 3V3  2 DATA  3 GND", 50.4),
-                 (f"{design.TITLE} r{design.REVISION}", 51.8), ("github.com/erod998/boatmfd", 53.0)]
-        for body, y in lines:
-            text(body, 12.4, y, 0.8, just="left")
+        # Every connector's pinout in one block, in the space the tach moved out of; there is no
+        # room beside the connectors without landing on pads.
+        lines = ["J1 HELM", "1 FUEL S    5 OIL S", "2 TRIM S    6 SPARE", "3 BATT+     7 GAUGE G",
+                 "4 GAUGE I   8 BATT-", "", "J2 DELCO EST TACH", "1 GRAY WIRE  2 GND", "",
+                 "J3 1 3V3  2 DATA  3 GND", "", "J5 NMEA 2000 - ISOLATED", "1 SHLD 2 NET-S 3 NET-C",
+                 "4 NET-H  5 NET-L", "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
+        y = 34.6
+        for body in lines:
+            if body:
+                text(body, 34.6, y, 0.8, just="left")
+            y += 1.2 if body else 0.5
+        # The bench-only terminator: say what the pads are for, and what not to do with them.
+        text("TERM", 30.7, 61.8, 0.8, rot=90)
 
     # ---------------------------------------------------------------- all of it
     def titles(self):
@@ -412,7 +507,7 @@ class Board:
         tb.SetTitle(design.TITLE)
         tb.SetRevision(design.REVISION)
         tb.SetDate(design.DATE)
-        tb.SetComment(0, "Passive taps on the existing gauges; Delco EST tach")
+        tb.SetComment(0, "Passive taps on the existing gauges; Delco EST tach; isolated NMEA 2000")
         tb.SetComment(1, "Generated from design.py by board.py; edit those, not this file")
         self.board.SetTitleBlock(tb)
         self.board.GetDesignSettings().SetAuxOrigin(V(0, H))
@@ -448,6 +543,13 @@ def write_rules(path):
 (rule "tach series chain"
   (constraint clearance (min 0.6mm))
   (condition "A.NetClass == 'TACH_HV' && B.NetClass == 'TACH_HV' && A.NetName != B.NetName && ({patterns})"))
+
+# The NMEA 2000 network's side of the CAN isolator (NET-S, NET-C, NET-H, NET-L and its 5 V) is
+# referenced to the network's ground, not the Pi's: 2 mm from every other net. Unused pads (the
+# drop connector's shield pin) and unnetted mounting features have no net and are not counted.
+(rule "nmea 2000 isolation"
+  (constraint clearance (min 2mm))
+  (condition "A.NetClass == 'N2K_BUS' && B.NetClass != 'N2K_BUS' && B.NetClass != 'TACH_HV' && B.NetName != '' && B.NetName != 'unconnected-(J5-Pin_1-Pad1)'"))
 """, encoding="utf-8")
 
 
@@ -458,9 +560,11 @@ def write_project(path):
     default = dict(pro["net_settings"]["classes"][0])
     default.update({"name": "Default", "clearance": 0.2, "track_width": TRACK, "via_diameter": VIA_D, "via_drill": VIA_DRILL})
     hv = dict(default, name="TACH_HV", track_width=HV_TRACK, priority=0)
-    pro["net_settings"]["classes"] = [default, hv]
-    pro["net_settings"]["netclass_patterns"] = [{"netclass": "TACH_HV", "pattern": pcb_net_name(n)}
-                                                for n in design.TACH_HV_NETS]
+    n2k = dict(default, name="N2K_BUS", track_width=0.4, priority=1)
+    pro["net_settings"]["classes"] = [default, hv, n2k]
+    pro["net_settings"]["netclass_patterns"] = (
+        [{"netclass": "TACH_HV", "pattern": pcb_net_name(n)} for n in design.TACH_HV_NETS] +
+        [{"netclass": "N2K_BUS", "pattern": pcb_net_name(n)} for n in design.N2K_BUS_NETS])
     rules = pro["board"]["design_settings"]["rules"]
     rules.update({"min_clearance": 0.15, "min_track_width": 0.15, "min_via_diameter": 0.5, "min_via_annular_width": 0.1,
                   "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_to_hole": 0.25,

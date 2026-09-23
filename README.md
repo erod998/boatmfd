@@ -720,6 +720,9 @@ does not power the bus, so:
    Power the bus from exactly one place. The CX5003 has its own red/black
    power wires as well as the "Micro-C" bus connector.
 2. Give the Pi a CAN interface. Any of these gives you a `can0`:
+   - **The sensor board** ([SENSOR_BOARD.md](SENSOR_BOARD.md), rev 1.1 on): it has an isolated
+     NMEA 2000 interface built in -- a drop cable into J5, and the network side is powered from
+     the backbone and isolated from the Pi, like any NMEA 2000 device. Nothing else to buy.
    - **[PiCAN-M](https://copperhilltech.com/pican-m-nmea-0183-nmea-2000-hat-for-raspberry-pi/)**:
      a Pi HAT built for NMEA 2000, with a Micro-C connector for a
      plain drop cable and an optional 3 A supply that runs the Pi from 12 V. The
@@ -760,6 +763,7 @@ does not power the bus, so:
 
    | HAT | `config.txt` lines |
    | --- | --- |
+   | Sensor board, J5 (SPI0 CE0, GPIO 25) | `dtparam=spi=on` and `dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25` |
    | Waveshare 2-CH CAN HAT (`can0`) | `dtparam=spi=on` and `dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=23` |
    | MacArthur HAT (SPI0 CE1, GPIO 25) | `dtparam=spi=on` and `dtoverlay=mcp251xfd,spi0-1,oscillator=20000000,interrupt=25` (the settings OpenPlotter's CAN app uses for it) |
 

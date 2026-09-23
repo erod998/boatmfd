@@ -100,6 +100,8 @@ def package(footprint):
     chip = re.match(r"[RC]_(\d{4})_", name)
     if chip:
         return chip.group(1)
+    if name.startswith("Oscillator_SMD"):
+        return name.split("_")[-1]            # "3.2x2.5mm"
     if name.startswith("D_"):
         name = name[2:]
     return name.split("_")[0]
@@ -110,7 +112,7 @@ def bom():
     parity check has just proved matches both the schematic and the board."""
     groups = {}
     for p in design.PARTS:
-        if p.symbol.startswith("Mechanical:"):
+        if p.symbol.startswith(("Mechanical:", "Jumper:")):   # holes and solder jumpers are copper, not parts
             continue
         key = (p.value, p.footprint, p.mpn)
         groups.setdefault(key, []).append(p)

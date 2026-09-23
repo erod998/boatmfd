@@ -16,7 +16,7 @@ starting point, not gospel, and check current price/stock before ordering.
 | 1 | Raspberry Pi 4 or 5 (4 GB+), power supply, microSD (32 GB+) or SSD | Runs the dashboard | $60-100 |
 | 2 | [Orient Display 10.1" 1280x800, HDMI/USB](https://www.orientdisplay.com/products/10-1-raspberry-pi-tft-with-pcap1280x800-900-nits-hdmi-usb-interface/) (`AFY1280800A2-10.1INTH-C-HDMI`) | The screen | ~$180 |
 | 3 | Matsutec CX5003 analog-to-NMEA 2000 converter | Reads your MerCruiser's tach, trim, oil, and (once you add one) a coolant-temp sender | ~$130 |
-| 4 | A NMEA 2000 interface for the Pi — PiCAN-M **or** MacArthur HAT (undecided as of this writing; see README's "The NMEA 2000 backbone" section) | Lets the Pi join the CAN bus | $60-100 |
+| 4 | A NMEA 2000 interface for the Pi — **built into the [sensor board](SENSOR_BOARD.md)** (rev 1.1: isolated, J5 takes a drop cable), or a PiCAN-M / MacArthur HAT (see README's "The NMEA 2000 backbone" section) | Lets the Pi join the CAN bus | included / $60-100 |
 | 5 | NMEA 2000 backbone parts: a power tee, 2 terminators (120 Ω), 3-5 A fuse, T-connectors and drop cables for the CX5003, the Fusion, the Pi's HAT and the depth transducer | Ties everything together | $60-100 |
 | 6 | Depth transducer: **Airmar DST800PV-N2** (plastic, thru-hull, NMEA 2000 native) — see "Choosing a transducer" below | Makes the Depth box real | $370-410 |
 | 7 | VDO-type engine temperature sender (301-22 Ω, matches the CX5003's temperature input) | Coolant temperature, since the boat has none | $15-30 |
@@ -101,7 +101,8 @@ section — this is the short version of the order to do it in:
    fuel and trim senders, and the new engine-temperature sender). Set its speed-ratio DIP
    switches for a 4-cylinder 4-stroke gasoline engine (ratio 2) and, for the fuel sender's
    "switch" wire, connect it to ground for a US-standard 240-33 Ω sender.
-3. Set up the Pi's NMEA 2000 interface (item #4) and bring the interface up
+3. Set up the Pi's NMEA 2000 interface (item #4; for the sensor board's, see SENSOR_BOARD.md's
+   "NMEA 2000" section) and bring the interface up
    (`sudo ip link set can0 up type can bitrate 250000 restart-ms 100`; `candump can0` should show frames
    once the CX5003 has power).
 4. On the Pi:

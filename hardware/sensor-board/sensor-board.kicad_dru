@@ -11,3 +11,10 @@
 (rule "tach series chain"
   (constraint clearance (min 0.6mm))
   (condition "A.NetClass == 'TACH_HV' && B.NetClass == 'TACH_HV' && A.NetName != B.NetName && (A.NetName == '/TACH_A' || A.NetName == '/TACH_B' || A.NetName == '/TACH_IN')"))
+
+# The NMEA 2000 network's side of the CAN isolator (NET-S, NET-C, NET-H, NET-L and its 5 V) is
+# referenced to the network's ground, not the Pi's: 2 mm from every other net. Unused pads (the
+# drop connector's shield pin) and unnetted mounting features have no net and are not counted.
+(rule "nmea 2000 isolation"
+  (constraint clearance (min 2mm))
+  (condition "A.NetClass == 'N2K_BUS' && B.NetClass != 'N2K_BUS' && B.NetClass != 'TACH_HV' && B.NetName != '' && B.NetName != 'unconnected-(J5-Pin_1-Pad1)'"))

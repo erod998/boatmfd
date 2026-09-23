@@ -1,7 +1,9 @@
 # Sensor board: passive taps on the existing gauges
 
 A Raspberry Pi HAT that reads **fuel level, trim, oil pressure, battery voltage and RPM** by
-*listening* to the wires the boat's analog gauges already use. Nothing is disconnected: every
+*listening* to the wires the boat's analog gauges already use -- and, since rev 1.1, puts the Pi on
+the boat's **NMEA 2000** network (the Fusion stereo, the depth transducer) through an isolated
+CAN interface, so no separate CAN HAT is needed. Nothing is disconnected: every
 analog gauge stays wired exactly as it is and keeps working, so if the Pi is off or broken the
 helm is just a normal helm. It replaces buying an engine-data converter (the CX5003 route).
 
@@ -45,6 +47,8 @@ analog gauges.
   the analog tach's ground ────────────────────────────────── J2.2 TACH_GND
 
   DS18B20 probes (engine, water) ──────────────────────────── J3   3V3 / DATA / GND ──────── GPIO 26
+
+  NMEA 2000 drop cable (Fusion stereo, depth transducer) ───── J5 ── isolated CAN ── SPI0 + GPIO 25 (can0)
 ```
 
 - **Taps** read the voltage on each gauge's **S** (sender) terminal, and once on the gauges' shared
@@ -131,6 +135,37 @@ software default `BOAT_BATT_R_TOP=47000`, `BOAT_BATT_R_BOTTOM=10000` matches.
   R22 is the pull-up.
 - The board draws about 1 mA from the gray wire, next to the analog tach, which stays connected.
 
+### NMEA 2000: isolated CAN interface
+
+```
+                    THE NETWORK'S SIDE (its own 0 V: N2K_GND)          │  THE PI'S SIDE
+  J5.2 NET-S ──[ D9 SS14 ]──┬── N2K_12V ──[ U6 L78L05 ]── N2K_5V ──┐   │
+                            ├─[ D10 SMAJ18A ]─ N2K_GND             │   │
+                            └─[ C16 1µ 50V ]── N2K_GND   C17, C18 ─┤   │
+  J5.3 NET-C ── N2K_GND                                            │   │
+  J5.4 NET-H ──┬── D11 NUP2105L ── N2K_GND              U5 ISO1044 ┴ VCC2 │ VCC1 ── 3V3
+  J5.5 NET-L ──┤   R26 120 + JP1 (open)                    CANH/CANL  │  TXD/RXD ── U4 MCP2518FD ── SPI0: GPIO 8-11
+  J5.1 shield: not connected                                          │             INT ────── GPIO 25
+                                                                      │             OSC1 ───── Y1 40 MHz
+```
+
+- **U4 (MCP2518FD)** is a CAN FD controller on the Pi's SPI0, the same chip family as the
+  MacArthur HAT and most current CAN HATs; Raspberry Pi OS's own `mcp251xfd` driver makes it
+  `can0`. R27 keeps it deselected while the Pi boots, R28 pulls its interrupt line up.
+- **U5 (ISO1044)** is an isolated CAN transceiver: its Pi side runs from 3V3 and the Pi's ground,
+  its network side from the NMEA 2000 network's own NET-S and NET-C. The two never share a ground,
+  so the stereo's power wiring and the Pi's can't form a ground loop through the CAN wires, which
+  is what the NMEA 2000 standard expects of a device with its own power supply.
+- **D9** stops a reversed NET-S from doing anything; **D10** clamps surges on it; **U6** makes 5 V
+  for U5's network side. The board draws well under 50 mA from the network: **1 LEN**.
+- **D11** protects NET-H and NET-L from ESD and surges.
+- **JP1 is open, and stays open on the boat.** Bridging it puts R26 (120 Ω) across NET-H/NET-L,
+  for a bench test with just the Pi and the stereo and no backbone. A device on a real network
+  must not terminate it -- the backbone's two terminators do that.
+- The network side is its own island on the board: every N2K net is at least **2 mm** from all
+  other copper (a rule KiCad's DRC checks, in `sensor-board.kicad_dru`), with its own ground pour,
+  kept 4 mm clear of the Pi mounting hole beside it so a metal standoff can't bridge the two.
+
 ### 1-Wire temperature probes
 
 ```
@@ -171,10 +206,12 @@ the header would double them up.
 | 6, 9, 14, 20, 25, 30, 34, 39 | GND | |
 | 33 | GPIO 13 | tach |
 | 37 | GPIO 26 | 1-Wire |
+| 19, 21, 23, 24 | GPIO 10, 9, 11, 8 (SPI0 MOSI, MISO, SCLK, CE0) | NMEA 2000 CAN controller |
+| 22 | GPIO 25 | CAN controller interrupt |
 
-Everything else is left free -- GPIO 4 (used for NMEA 0183 by some marine HATs), the SPI bus and
-GPIO 25 (used by many CAN HATs for the Fusion stereo over NMEA 2000) included. The header is a
-stacking socket, so another HAT can go on top; check its pin list against this one first.
+Everything else is left free, GPIO 4 (used for NMEA 0183 by some marine HATs) included. The
+header is a stacking socket, so another HAT can go on top; check its pin list against this one
+first -- in particular, a CAN HAT on SPI0 CE0 would clash with the one built in here.
 
 ## Connectors
 
@@ -195,6 +232,11 @@ board edge.
 | **J2** tach (2, bottom edge) | 1 | TACH | the **Delco EST gray tach wire**, at the analog tach's signal terminal |
 | | 2 | TACH_GND | the analog tach's **G** terminal -- twist these two wires together |
 | **J3** probes (3, right edge) | 1 / 2 / 3 | 3V3 / DATA / GND | DS18B20 red / yellow / black |
+| **J5** NMEA 2000 (5, bottom edge) | 1 | shield | the drop cable's bare drain wire -- **not connected** here (the backbone grounds its shield at the power tee) |
+| | 2 | NET-S | red: the network's +12 V |
+| | 3 | NET-C | black: the network's 0 V |
+| | 4 | NET-H | white: CAN high |
+| | 5 | NET-L | blue: CAN low |
 | **J4** | | | the Pi's 40-pin header, underneath |
 
 The silkscreen carries this pinout in a legend block in the bottom-left corner.
@@ -222,9 +264,17 @@ The full list, with manufacturer part numbers, is
 | D1–D6 | 6 | BAT54S (SOT-23) | clamps |
 | D7 | 1 | 1N4148W (SOD-123) | across the opto LED |
 | D8 | 1 | SMAJ5.0A (SMA) | 1-Wire line |
-| J1 / J2 / J3 | 1 each | Phoenix MC 1,5/ 8-, 2-, 3-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
+| U4 | 1 | **MCP2518FD** (Microchip, SOIC-14) | CAN controller |
+| U5 | 1 | **ISO1044BD** (TI, SOIC-8) | isolated CAN transceiver |
+| U6 | 1 | L78L05 (SOT-89) | 5 V for the network side |
+| Y1 | 1 | 40 MHz 3.3 V oscillator, 3.2 × 2.5 mm | CAN controller clock |
+| D9 / D10 / D11 | 1 each | SS14 / SMAJ18A (SMA) / NUP2105L (SOT-23) | reverse polarity / surge / CAN ESD |
+| R26, JP1 | 1 | 120 Ω 0805 + solder jumper (open) | bench-only terminator |
+| C12-C18 | 7 | 100 nF / 1 µF 0805, one 1 µF **50 V 1206** (C16) | decoupling |
+| J1 / J2 / J3 / J5 | 1 each | Phoenix MC 1,5/ 8-, 2-, 3-, 5-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
-| — | 4 | M2.5 standoffs and screws | HAT mounting holes |
+| — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
+| — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
 | **Rg** | 5 | **10 kΩ ¼ W through-hole** + adhesive-lined heatshrink | at the gauge end of each tap wire (fuel, trim, gauge I, oil, and spare if used) |
 | — | 1 | inline fuse holder + 1 A fuse | J1.3 battery feed, at its source |
 | — | 1–2 | DS18B20 waterproof probes | engine (on the thermostat housing), water |
@@ -234,8 +284,12 @@ The full list, with manufacturer part numbers, is
 
 ## Ordering the board
 
-The board is a standard 2-layer, 1.6 mm, 65 × 56 mm Pi HAT: 0.2 mm tracks and spacing, 0.3 mm
-vias, all within any online fab's standard service.
+The board is a 2-layer, 1.6 mm, **65 × 76 mm** Pi HAT: the standard HAT outline and mounting
+holes, 20 mm longer on the side away from the header to make room for the NMEA 2000 interface.
+Those 20 mm reach past the Pi 4's USB-C / micro-HDMI edge and sit about 5 mm above those plugs
+(on the Pi's usual 11 mm standoffs) -- fine for straight plugs; check first if you use a
+right-angle HDMI adapter there. H5, in the extra corner, takes a standoff to the enclosure.
+0.2 mm tracks and spacing, 0.3 mm vias, all within any online fab's standard service.
 
 - **Bare board:** upload `fab/sensor-board-gerbers.zip`. Any colour and finish (HASL lead-free
   is fine; ENIG makes the fine-pitch ADS1115 easier to solder by hand).
@@ -250,7 +304,8 @@ vias, all within any online fab's standard service.
 ## Layout
 
 - **Two layers**, a GND pour on both with a stitching via beside every surface-mount ground pad
-  -- **except around the tach input**: J2, R19–R21, C11, D7 and U3's pins 1–2 are on their own
+  -- **except under the NMEA 2000 network's side** (its own pour, 2 mm away; see above) and
+  **around the tach input**: J2, R19–R21, C11, D7 and U3's pins 1–2 are on their own
   nets (TACH_*) with **at least 3 mm clearance** to everything else and no pour near them. That
   side sees the ignition; no board ground goes anywhere near it. Inside it, the three series
   resistors' nets keep 0.6 mm from each other. Both rules are in `sensor-board.kicad_dru`, so
@@ -294,7 +349,10 @@ check reports anything.
    terminal, twisted together to J2. The analog tach stays connected.
 5. **Battery:** from the always-on helm +12 V feed, through a 1 A inline fuse at the feed, to J1.3;
    helm ground to J1.8.
-6. Keep the tap and tach wires away from ignition leads, and zip-tie them against chafe.
+6. **NMEA 2000:** a drop cable from a T on the backbone to J5 (colours in the Connectors table).
+   The backbone needs its power tee and two terminators, as always; see README's "The NMEA 2000
+   backbone".
+7. Keep the tap and tach wires away from ignition leads, and zip-tie them against chafe.
 
 ## Bring-up, one block at a time
 
@@ -313,7 +371,13 @@ Do these in order, and don't connect the gauges until the board has passed the b
    to correct it.
 4. **Gauges.** Wire the taps (above). Key ON, engine off: the page shows the gauge supply and
    "gauges on", and each tap shows a voltage between 0 and the supply.
-5. **The ratiometric check** (tells you what kind of gauges you have): once fuel is calibrated,
+5. **NMEA 2000.** With the overlay below set and the Pi rebooted, `dmesg | grep -i mcp251xfd`
+   shows the controller and `ip link` lists `can0`. Connect J5 to the backbone, power the network,
+   then `sudo ip link set can0 up type can bitrate 250000 restart-ms 100` and `candump can0`: with
+   the stereo on you see its frames. The dashboard's Media card finds the stereo by itself. (For a
+   bench test with no backbone, bridge JP1 and power NET-S/NET-C from a 12 V supply -- then
+   un-bridge it before the board goes on the boat.)
+6. **The ratiometric check** (tells you what kind of gauges you have): once fuel is calibrated,
    note the fuel % with the key on, then start the engine. It should stay put. If it moves by more
    than a percent or two, your gauges regulate their own supply: switch the page to **Plain volts**
    and capture the points again.
@@ -328,6 +392,7 @@ BOAT_SENDER_WIRING=tap          # listen to the gauges instead of driving the se
 BOAT_TACH_GPIO=13               # the board's tach output (header pin 33)
 BOAT_TACH_PULL=none             # the board has its own pull-up (R22)
 BOAT_OIL_SENDER=true            # the oil tap on U2
+BOAT_CAN=can0                   # the NMEA 2000 interface on J5 (Fusion stereo, depth)
 # BOAT_TACH_PPR=2               # the default: 2 pulses per revolution on a 4-cylinder
 # BOAT_FUEL_SENDER=false        # only if fuel level comes from NMEA 2000 instead
 ```
@@ -337,6 +402,9 @@ And once on the Pi:
 ```bash
 sudo raspi-config nonint do_i2c 0
 echo "dtoverlay=w1-gpio,gpiopin=26" | sudo tee -a /boot/firmware/config.txt
+echo "dtparam=spi=on" | sudo tee -a /boot/firmware/config.txt
+echo "dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25" | sudo tee -a /boot/firmware/config.txt
+sudo apt install can-utils && venv/bin/pip install python-can
 sudo apt install python3-lgpio && venv/bin/pip install smbus2
 ```
 
@@ -363,10 +431,6 @@ the same level replaces the old one.
 
 ---
 
-## Later: NMEA 2000 on the same board
-
-The Fusion stereo needs a CAN interface. A proven CAN HAT stacked on this board's header is the
-low-risk route; putting CAN on a second revision of this board is also reasonable (an MCP2518FD
-controller with a 40 MHz crystal on SPI0 and an interrupt pin, a CAN transceiver, and an M12
-"Micro-C" connector). Leave out any termination resistor -- an NMEA 2000 device is a drop on a
-backbone that is already terminated at both ends.
+`can0` has to be up before the dashboard starts: the `ExecStartPre` line in README's systemd
+unit does that. Add it to the Pi's unit **once this board is fitted** -- without a `can0` to bring
+up, that line fails and takes the whole service down with it, which is why it is left out today.

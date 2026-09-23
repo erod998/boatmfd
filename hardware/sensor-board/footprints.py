@@ -17,7 +17,8 @@ LIB_DIR = HERE / f"{LIB}.pretty"
 KICAD_FP = Path(r"C:\Users\erod9\AppData\Local\Programs\KiCad\10.0\share\kicad\footprints")
 
 SOURCES = [("Resistor_SMD", "R_0805_2012Metric"), ("Resistor_SMD", "R_1206_3216Metric"),
-           ("Capacitor_SMD", "C_0805_2012Metric"), ("Package_TO_SOT_SMD", "SOT-23")]
+           ("Capacitor_SMD", "C_0805_2012Metric"), ("Capacitor_SMD", "C_1206_3216Metric"),
+           ("Package_TO_SOT_SMD", "SOT-23")]
 
 
 def build():
