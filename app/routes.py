@@ -4,13 +4,13 @@ A route is a saved, ordered list of points; RouteTracker also tracks the one rou
 being navigated (if any) and which leg of it is active, auto-advancing to the next leg once the
 boat arrives at the current one, the same "arrival" concept the Navigation Alarms use.
 """
-import json
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .nav import haversine_distance_nm, waypoint_nav
+from .storage import read_records, write_json
 
 ARRIVAL_RADIUS_NM = 0.05  # about 300 ft: close enough to call a leg "arrived" and advance
 
@@ -46,16 +46,10 @@ class RouteTracker:
         self._active_leg = 0  # index into the active route's points; navigating TO this point
 
     def _load(self):
-        if not self.storage_path.exists():
-            return []
-        try:
-            raw = json.loads(self.storage_path.read_text())
-            return [Route(**r) for r in raw]
-        except (json.JSONDecodeError, TypeError):
-            return []
+        return read_records(self.storage_path, Route)
 
     def _save(self):
-        self.storage_path.write_text(json.dumps([asdict(r) for r in self._routes], indent=2))
+        write_json(self.storage_path, [asdict(r) for r in self._routes], indent=2)
 
     # ---------------- saved routes: create/list/get/rename/delete ----------------
     def create(self, points, name=None):

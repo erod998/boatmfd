@@ -3,13 +3,14 @@ boat threshold alarms in alarms.py because they depend on navigation state (how 
 waypoint is, how far off the direct line to it, a dropped-anchor reference point, the GPS fix's
 own reported accuracy) rather than a single steady instrument reading.
 """
-import json
+import math
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
 from .nav import haversine_distance_nm
+from .storage import read_dict, write_json
 
 NM_TO_FT = 6076.12
 
@@ -37,21 +38,30 @@ class NavAlarmManager:
 
     # ---------------- settings ----------------
     def _load(self):
-        if not self.storage_path or not self.storage_path.exists():
-            return
-        try:
-            saved = json.loads(self.storage_path.read_text())
-            for key in asdict(self.settings):
-                if key in saved:
-                    setattr(self.settings, key, saved[key])
-        except (OSError, ValueError, TypeError):
-            pass
+        """Settings from disk, each one only if it is the same kind of value as its default.
 
-    def _save(self):
+        This used to setattr whatever the file held. A readable file with the wrong type in it --
+        a hand edit, or a value from an older version -- then made every arrival or off-course
+        comparison raise inside the telemetry loop, once a second, so no frame ever reached the
+        screens again. A bad value now just leaves that one setting at its default."""
         if not self.storage_path:
             return
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        self.storage_path.write_text(json.dumps(asdict(self.settings)))
+        saved = read_dict(self.storage_path)
+        for key, default in asdict(self.settings).items():
+            value = saved.get(key)
+            if isinstance(default, bool):
+                ok = isinstance(value, bool)
+            elif isinstance(default, (int, float)):
+                ok = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                      and math.isfinite(value) and value > 0)
+            else:
+                ok = value is None or isinstance(value, type(default))
+            if key in saved and ok:
+                setattr(self.settings, key, value)
+
+    def _save(self):
+        if self.storage_path:
+            write_json(self.storage_path, asdict(self.settings))
 
     def update_settings(self, **kwargs):
         for key, value in kwargs.items():

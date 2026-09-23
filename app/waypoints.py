@@ -4,11 +4,11 @@ database you pick a destination from -- Garmin's own "Waypoints" list (mark, sav
 rename, edit position, delete) -- while `waypoint`/`/api/waypoint` is just "where am I headed
 right now," which may or may not be one of these.
 """
-import json
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from .storage import read_records, write_json
 
 
 @dataclass
@@ -27,16 +27,10 @@ class SavedWaypoints:
         self._points: list = self._load()
 
     def _load(self):
-        if not self.storage_path.exists():
-            return []
-        try:
-            raw = json.loads(self.storage_path.read_text())
-            return [Waypoint(**w) for w in raw]
-        except (json.JSONDecodeError, TypeError):
-            return []
+        return read_records(self.storage_path, Waypoint)
 
     def _save(self):
-        self.storage_path.write_text(json.dumps([asdict(w) for w in self._points], indent=2))
+        write_json(self.storage_path, [asdict(w) for w in self._points], indent=2)
 
     def create(self, lat, lon, name=None):
         wp = Waypoint(

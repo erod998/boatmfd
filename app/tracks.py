@@ -3,13 +3,13 @@ saved as a named, permanent record before it's trimmed away, the way a Garmin ch
 you save the active track. Separate from TripTracker (trips.py), which is a start/stop-logged trip
 with distance/fuel/average speed; a saved track is just the recorded path itself.
 """
-import json
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .nav import haversine_distance_nm
+from .storage import read_records, write_json
 
 
 @dataclass
@@ -34,16 +34,10 @@ class SavedTracks:
         self._tracks: list = self._load()
 
     def _load(self):
-        if not self.storage_path.exists():
-            return []
-        try:
-            raw = json.loads(self.storage_path.read_text())
-            return [SavedTrack(**t) for t in raw]
-        except (json.JSONDecodeError, TypeError):
-            return []
+        return read_records(self.storage_path, SavedTrack)
 
     def _save(self):
-        self.storage_path.write_text(json.dumps([asdict(t) for t in self._tracks], indent=2))
+        write_json(self.storage_path, [asdict(t) for t in self._tracks], indent=2)
 
     def save(self, points, name=None):
         if not points:

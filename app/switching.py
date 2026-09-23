@@ -5,9 +5,9 @@ and off instead of a dash full of physical switches. There is no real switching 
 this is a simulator in the same spirit as SimulatedGPS/SimulatedMedia elsewhere in this app --
 the circuits just remember their own on/off state.
 """
-import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from .storage import read_json, write_json
 
 DEFAULT_CIRCUITS = [
     {"id": "nav_lights", "name": "Navigation Lights"},
@@ -35,17 +35,13 @@ class SwitchingPanel:
         self._circuits: list = self._load()
 
     def _load(self):
-        if self.storage_path.exists():
-            try:
-                raw = json.loads(self.storage_path.read_text())
-                saved = {c["id"]: c.get("on", False) for c in raw if isinstance(c, dict) and "id" in c}
-                return [Circuit(id=d["id"], name=d["name"], on=saved.get(d["id"], False)) for d in DEFAULT_CIRCUITS]
-            except (json.JSONDecodeError, TypeError, KeyError):
-                pass
-        return [Circuit(**d) for d in DEFAULT_CIRCUITS]
+        raw = read_json(self.storage_path, [])
+        saved = {c["id"]: bool(c.get("on", False)) for c in raw if isinstance(c, dict) and "id" in c} \
+            if isinstance(raw, list) else {}
+        return [Circuit(id=d["id"], name=d["name"], on=saved.get(d["id"], False)) for d in DEFAULT_CIRCUITS]
 
     def _save(self):
-        self.storage_path.write_text(json.dumps([asdict(c) for c in self._circuits], indent=2))
+        write_json(self.storage_path, [asdict(c) for c in self._circuits], indent=2)
 
     def list(self):
         return [asdict(c) for c in self._circuits]

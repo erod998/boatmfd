@@ -4,12 +4,10 @@ from whatever the user set it to, easing back down as RPM falls. Two knobs, both
 dashboard: how much to add at redline, and how heavily to smooth the ramp so it doesn't chase
 every small RPM flicker. Settings are saved to disk so they survive a restart.
 """
-import json
 import math
-import os
-import tempfile
 import time
 from pathlib import Path
+from .storage import read_dict, write_json
 
 DEFAULTS = {"enabled": False, "boost_pct": 25.0, "smoothing_pct": 50.0}
 MAX_SMOOTHING_TAU_S = 4.0  # smoothing_pct 100 -> about a 4s time constant; 0 -> essentially instant
@@ -28,33 +26,19 @@ class VolumeBoost:
         self._last_t = clock()
 
     def _load(self):
-        if not self._path or not self._path.exists():
-            return
-        try:
-            saved = json.loads(self._path.read_text())
-            if isinstance(saved.get("enabled"), bool):
-                self._cfg["enabled"] = saved["enabled"]
-            for key in ("boost_pct", "smoothing_pct"):
-                value = saved.get(key)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    self._cfg[key] = float(value)
-        except (OSError, ValueError):
-            pass  # a damaged file means defaults, never a crash at startup
-
-    def _save(self):
         if not self._path:
             return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".volboost-", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as handle:
-                handle.write(json.dumps(self._cfg))
-            os.replace(tmp, self._path)
-        except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+        saved = read_dict(self._path)   # a damaged file means defaults (and is kept), never a crash
+        if isinstance(saved.get("enabled"), bool):
+            self._cfg["enabled"] = saved["enabled"]
+        for key in ("boost_pct", "smoothing_pct"):
+            value = saved.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 100:
+                self._cfg[key] = float(value)
+
+    def _save(self):
+        if self._path:
+            write_json(self._path, self._cfg)
 
     def config(self):
         return dict(self._cfg)

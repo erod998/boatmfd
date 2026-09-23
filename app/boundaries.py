@@ -4,13 +4,13 @@ this starts with circles only, since drawing a circle on a touchscreen (tap a ce
 radius) is a lot simpler than collecting an ordered ring of polygon points, and a circle already
 covers the common cases (stay within/away from an area) a personal boat is likely to actually use.
 """
-import json
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .nav import haversine_distance_nm
+from .storage import read_records, write_json
 
 NM_TO_FT = 6076.12
 
@@ -35,16 +35,10 @@ class BoundaryManager:
         self._inside = {}  # boundary id -> bool, last known state, to detect crossings
 
     def _load(self):
-        if not self.storage_path.exists():
-            return []
-        try:
-            raw = json.loads(self.storage_path.read_text())
-            return [Boundary(**b) for b in raw]
-        except (json.JSONDecodeError, TypeError):
-            return []
+        return read_records(self.storage_path, Boundary)
 
     def _save(self):
-        self.storage_path.write_text(json.dumps([asdict(b) for b in self._boundaries], indent=2))
+        write_json(self.storage_path, [asdict(b) for b in self._boundaries], indent=2)
 
     def create(self, lat, lon, radius_ft, name=None, alarm_on="exit"):
         if alarm_on not in ("enter", "exit", "both"):

@@ -4,11 +4,9 @@ actually heard, then let go on its own a few seconds later. Fusion has no TelMut
 NMEA 2000 itself, but its ordinary mute message (fusion.set_mute, already used for the dashboard's
 own Mute button) has the same audible effect without extra wiring, so that's what this sends.
 """
-import json
-import os
-import tempfile
 import time
 from pathlib import Path
+from .storage import read_dict, write_json
 
 MUTE_SECONDS = 8.0  # how long a fresh alarm keeps the stereo muted; a new alarm during that window extends it
 
@@ -25,29 +23,15 @@ class AlarmMute:
         self._load()
 
     def _load(self):
-        if not self._path or not self._path.exists():
-            return
-        try:
-            saved = json.loads(self._path.read_text())
-            if isinstance(saved.get("enabled"), bool):
-                self.enabled = saved["enabled"]
-        except (OSError, ValueError):
-            pass
-
-    def _save(self):
         if not self._path:
             return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".telemute-", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as handle:
-                handle.write(json.dumps({"enabled": self.enabled}))
-            os.replace(tmp, self._path)
-        except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+        saved = read_dict(self._path)
+        if isinstance(saved.get("enabled"), bool):
+            self.enabled = saved["enabled"]
+
+    def _save(self):
+        if self._path:
+            write_json(self._path, {"enabled": self.enabled})
 
     def set_enabled(self, on):
         on = bool(on)
