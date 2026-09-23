@@ -11,6 +11,7 @@ So these are committed rather than fetched:
 | `leaflet.css`, `leaflet.js` | 1.9.4 | cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/ |
 | `leaflet-rotate.js` | 0.2.8 | cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js |
 | `images/` | 1.9.4 | Leaflet's own control/marker sprites, referenced by leaflet.css |
+| `geojson-vt.js` | 3.2.1 (ISC, Mapbox) | cdn.jsdelivr.net/npm/geojson-vt@3.2.1/geojson-vt.js -- cuts the chart into map tiles in the browser |
 
 To upgrade, re-download the same paths at the new version, bump the table, and check the
 chart screen still draws. Do not replace these with CDN URLs.

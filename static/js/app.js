@@ -66,7 +66,9 @@ const dials = {};
 // Old Hickory Lake (Cumberland River) at Hendersonville, TN 37075.
 // rotate: true (from the leaflet-rotate plugin) lets the chart turn to Heading Up; rotateControl/shiftKeyRotate are
 // its own touch/mouse rotate gestures, turned off since bearing is driven only from GPS heading (see setChartOrient).
-const map = L.map("map", { zoomControl: false, attributionControl: false, minZoom: 5, maxZoom: 18, rotate: true, rotateControl: false, shiftKeyRotate: false }).setView([36.306, -86.563], 14);
+// fadeAnimation off: the chart is map tiles (see "The chart as map tiles"), and a chart that fades
+// in, tile by tile, after every zoom is not what a chartplotter does -- and the fade costs frames.
+const map = L.map("map", { zoomControl: false, attributionControl: false, minZoom: 5, maxZoom: 18, rotate: true, rotateControl: false, shiftKeyRotate: false, fadeAnimation: false }).setView([36.306, -86.563], 14);
 L.control.scale({ position: "bottomleft", metric: false, imperial: true, maxWidth: 110 }).addTo(map);
 
 // ---------- The chart itself: USACE Inland ENC vectors, drawn here, from local disk ----------
@@ -104,9 +106,10 @@ const LazyCanvas = L.Canvas.extend({
   },
 });
 
-// Three layers of chart, bottom to top: the base (land, water, depth areas) in one canvas; the
-// surveyed-depth shading over it; then lines, aids to navigation and hazards in a second canvas,
-// so a buoy at the edge of the surveyed channel is never painted over by the depth shading.
+// Four layers of chart, bottom to top: the base (land, water, depth areas, roads) as map tiles; the
+// surveyed-depth shading over it; the chart's lines (shoreline, channel, cables) as tiles again; and
+// the aids to navigation and hazards as markers on top, where they can be tapped -- so a buoy at the
+// edge of the surveyed channel is never painted over by the depth shading.
 //
 // All three are created inside leaflet-rotate's rotating pane. A pane made with plain
 // createPane(name) lands in the map pane instead, which the plugin never turns: from the switch
@@ -117,12 +120,12 @@ const chartPane = map.createPane("chart", rotatingPane);
 chartPane.style.zIndex = 200;   // under every marker pane, over the map background
 map.createPane("survey", rotatingPane).style.zIndex = 205;
 map.createPane("chartTop", rotatingPane).style.zIndex = 210;
-const chartRenderer = new LazyCanvas({ padding: 0.3, pane: "chart" });
-const chartRendererTop = new LazyCanvas({ padding: 0.3, pane: "chartTop" });
-const TOP_KINDS = new Set(["coastline", "contour", "structure_line", "dock_line", "hazard_line", "track",
-  "landmark", "facility", "notice", "distance_mark", "danger_point", "beacon", "buoy", "light"]);
-const rendererFor = (kind) => (TOP_KINDS.has(kind)
-  ? { renderer: chartRendererTop, pane: "chartTop" } : { renderer: chartRenderer, pane: "chart" });
+map.createPane("chartPoints", rotatingPane).style.zIndex = 212;
+const chartRendererPoints = new LazyCanvas({ padding: 0.3, pane: "chartPoints" });
+// The chart's lines, drawn over the surveyed-depth shading; every other area and line kind is drawn
+// under it. Point kinds are markers (POINT_KINDS, below).
+const TOP_LINE_KINDS = new Set(["coastline", "contour", "structure_line", "dock_line", "hazard_line", "track"]);
+const rendererFor = () => ({ renderer: chartRendererPoints, pane: "chartPoints" });   // for the point markers
 
 // Depth shading bands, in metres, shallowest first. IENC gives each depth area a range
 // (Depth_Area_Value_1..2); the band is chosen from the deepest edge, so a 0-2.74 m polygon shades
@@ -298,11 +301,108 @@ const DRAW_ORDER = ["area", "water_area", "depth", "facility_area", "structure",
 const LABEL_ONLY = new Set(["place", "place_area", "water_name", "water_name_area"]);
 
 const chartGroup = L.layerGroup().addTo(map);
-const chartLayers = {};        // layer name -> { kind, leafletLayer }
+const chartLayers = {};        // layer name -> { kind, leafletLayer }, for the point markers
+const chartFeatures = {};      // layer name -> { kind, features }: the raw chart, for identify and the cursor
 let chartArea = null;          // the area currently loaded
-let chartDetail = null;        // "detail" or "overview" -- whichever the zoom calls for
 let chartLoading = false;
-const DETAIL_FROM_ZOOM = (z) => (z >= 13 ? "detail" : "overview");
+
+// ---------- The chart as map tiles ----------
+// The chart used to be thousands of Leaflet vector layers, and Leaflet re-projects and re-clips
+// every vertex of every one of them on every zoom -- 170,000 vertices for the whole lake, about
+// 80 ms of solid work per zoom step on a desktop and a visible stall on the iPad, wherever on the
+// lake you were looking. Now the chart is cut into map tiles in the browser (geojson-vt, the
+// technique vector map engines use): each tile holds only its own piece of the chart, simplified
+// for its zoom, is drawn once, and is reused while it stays on screen. A zoom draws a screenful of
+// small tiles instead of redoing the whole lake.
+const TILE_EXTENT = 4096;
+let baseIndex = null, topIndex = null;
+const layerGroupOf = {};   // layer name -> its Map Settings group, cached (asked for every feature of every tile)
+const groupOf = (name) => (name in layerGroupOf ? layerGroupOf[name] : (layerGroupOf[name] = groupForLayer(name)));
+
+// Canvas drawing of one tile's features, styled exactly as the vector layers were (chartStyle).
+function drawChartTile(ctx, tile, z, k) {
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (const f of tile.features) {
+    const kind = f.tags._k;
+    if (f.type === 1 || !kindShownAt(kind, z) || !layerGroupOn(groupOf(f.tags._n))) continue;
+    const st = chartStyle(kind, { properties: f.tags });
+    ctx.beginPath();
+    for (const part of f.geometry) {
+      for (let i = 0; i < part.length; i++) {
+        const x = part[i][0] * k, y = part[i][1] * k;
+        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      }
+      if (f.type === 3) ctx.closePath();
+    }
+    if (f.type === 3 && st.fill !== false) {
+      ctx.globalAlpha = st.fillOpacity ?? 0.2;
+      ctx.fillStyle = st.fillColor || st.color;
+      ctx.fill("evenodd");
+    }
+    if (st.stroke !== false && (st.weight ?? 3) > 0) {
+      ctx.globalAlpha = st.opacity ?? 1;
+      ctx.strokeStyle = st.color;
+      ctx.lineWidth = st.weight ?? 3;
+      ctx.setLineDash(st.dashArray ? String(st.dashArray).split(/[ ,]+/).map(Number) : []);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+}
+
+const ChartTiles = L.GridLayer.extend({
+  initialize(which, options) {
+    this._which = which;
+    L.GridLayer.prototype.initialize.call(this, options);
+  },
+  createTile(coords) {
+    const tile = document.createElement("canvas");
+    const size = this.getTileSize();
+    const ratio = window.devicePixelRatio > 1 ? 2 : 1;
+    tile.width = size.x * ratio;
+    tile.height = size.y * ratio;
+    const index = this._which === "top" ? topIndex : baseIndex;
+    const t = index && index.getTile(coords.z, coords.x, coords.y);
+    if (t) {
+      const ctx = tile.getContext("2d");
+      ctx.scale(ratio, ratio);
+      drawChartTile(ctx, t, coords.z, size.x / TILE_EXTENT);
+    }
+    return tile;
+  },
+});
+const tileOptions = { updateWhenIdle: false, updateWhenZooming: false, keepBuffer: 3, maxZoom: 18 };
+const baseTiles = new ChartTiles("base", { ...tileOptions, pane: "chart" });
+const topTiles = new ChartTiles("top", { ...tileOptions, pane: "chartTop" });
+function redrawChartTiles() {
+  if (map.hasLayer(baseTiles)) baseTiles.redraw();
+  if (map.hasLayer(topTiles)) topTiles.redraw();
+}
+
+// Splits a chart bundle into the two tile indexes, the point markers and the raw features.
+function buildChart(bundle) {
+  const base = [], top = [];
+  const entries = Object.entries(bundle.layers || {});
+  entries.sort((a, b) => DRAW_ORDER.indexOf(a[1].kind) - DRAW_ORDER.indexOf(b[1].kind));
+  Object.keys(chartFeatures).forEach((k) => delete chartFeatures[k]);
+  for (const [name, { kind, geojson }] of entries) {
+    const features = (geojson && geojson.features) || [];
+    chartFeatures[name] = { kind, features };
+    if (LABEL_ONLY.has(kind) || POINT_KINDS.has(kind)) continue;
+    const dest = TOP_LINE_KINDS.has(kind) ? top : base;
+    for (const f of features) {
+      if (!f.geometry || /Point$/.test(f.geometry.type)) continue;
+      dest.push({ type: "Feature", geometry: f.geometry, properties: { ...f.properties, _k: kind, _n: name } });
+    }
+  }
+  // tolerance is in 1/4096ths of a tile: 6 is under half a screen pixel, at every zoom.
+  const opts = { maxZoom: 18, indexMaxZoom: 5, indexMaxPoints: 100000, tolerance: 6, extent: TILE_EXTENT, buffer: 64 };
+  baseIndex = geojsonvt({ type: "FeatureCollection", features: base }, opts);
+  topIndex = geojsonvt({ type: "FeatureCollection", features: top }, opts);
+  if (!map.hasLayer(baseTiles)) { baseTiles.addTo(map); topTiles.addTo(map); } else redrawChartTiles();
+}
 
 // Which chart layers take a tap. Only the point features -- aids to navigation, mile markers,
 // landmarks, hazard points -- the things you would actually want to tap to identify.
@@ -323,7 +423,8 @@ const KIND_MIN_ZOOM = {
   landmark: 14, danger_point: 13, notice: 14, dock: 13, dock_line: 13, structure_line: 12,
 };
 const kindShownAt = (kind, z) => z >= (KIND_MIN_ZOOM[kind] || 0);
-// Adds or removes each chart layer for the current zoom and the Map Settings toggles.
+// Adds or removes each point-marker layer for the current zoom and the Map Settings toggles. (The
+// tiles apply both themselves, as they draw.)
 function applyChartVisibility() {
   const z = map.getZoom();
   Object.entries(chartLayers).forEach(([name, { kind, layer }]) => {
@@ -337,15 +438,16 @@ const isPointGeom = (f) => !!f.geometry && /Point$/.test(f.geometry.type);
 function renderChartBundle(bundle) {
   chartGroup.clearLayers();
   Object.keys(chartLayers).forEach((k) => delete chartLayers[k]);
+  buildChart(bundle);
+  buildChartLabels(bundle.layers || {});
   const entries = Object.entries(bundle.layers || {});
   entries.sort((a, b) => DRAW_ORDER.indexOf(a[1].kind) - DRAW_ORDER.indexOf(b[1].kind));
-  buildChartLabels(bundle.layers || {});
   entries.forEach(([name, { kind, geojson }]) => {
-    if (LABEL_ONLY.has(kind)) return;
-    const tappable = POINT_KINDS.has(kind);
+    if (!POINT_KINDS.has(kind)) return;   // everything else is in the tiles
+    const tappable = true;
     const layer = L.geoJSON(geojson, {
-      renderer: chartRenderer,
-      pane: "chart",
+      renderer: chartRendererPoints,
+      pane: "chartPoints",
       interactive: tappable,
       style: (f) => chartStyle(kind, f),
       pointToLayer: (f, latlng) => chartPoint(kind, f, latlng),
@@ -365,18 +467,15 @@ function renderChartBundle(bundle) {
   applyChartVisibility();
 }
 
-// Both detail levels stay in memory once loaded, so zooming back and forth across the threshold
-// swaps instantly instead of fetching several megabytes again each time.
-const chartBundles = {};
-async function loadChart(area, detail) {
+// The full-detail chart, once: the tiles simplify it for each zoom themselves, so there is no
+// longer a zoomed-out copy to swap to (and no reload each time the zoom crossed over).
+async function loadChart(area) {
   if (chartLoading) return;
   chartLoading = true;
   try {
-    const key = `${area}/${detail}`;
-    const bundle = chartBundles[key] || (chartBundles[key] = await (await fetch(`/api/chart/${key}`)).json());
+    const bundle = await (await fetch(`/api/chart/${area}/detail`)).json();
     if (!bundle || !bundle.layers) return;
     chartArea = area;
-    chartDetail = detail;
     renderChartBundle(bundle);
     setChartNotice(null);
   } catch (e) {
@@ -394,18 +493,11 @@ async function initCharts() {
       setChartNotice("No chart data on this device -- run:  python -m app.fetch_charts old-hickory");
       return;
     }
-    await loadChart(areas[0].name, DETAIL_FROM_ZOOM(map.getZoom()));
+    await loadChart(areas[0].name);
     if (areas[0].survey) loadSurvey(areas[0].name);
   } catch (e) {
     setChartNotice("Chart data could not be read -- check the boat-dashboard service log");
   }
-}
-
-// Swap between the generalised overview and the full-detail chart as the zoom crosses the threshold.
-function refreshChartDetail() {
-  if (!chartArea) return;
-  const wanted = DETAIL_FROM_ZOOM(map.getZoom());
-  if (wanted !== chartDetail) loadChart(chartArea, wanted);
 }
 
 // ---------- Surveyed depths: the Corps' channel surveys, shaded (app/survey_depths.py) ----------
@@ -461,10 +553,27 @@ function drawSurveyTile(ctx, coords, size) {
       }
     }
   }
+  // Where the surveys end: a faint dashed outline round each surveyed stretch, so it is plain where
+  // the chart has real depths and where it only has the Corps' 0-9 ft / 9 ft+.
+  ctx.save();
+  ctx.strokeStyle = p.contour;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  for (const s of g.surveys) {
+    for (const ring of s.outline || []) {
+      ctx.beginPath();
+      ring.forEach(([lon, lat], i) => {
+        const x = mercX(lon, scale) - x0, y = mercY(lat, scale) - y0;
+        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
   // Soundings -- the surveyor's own chosen spot depths -- once zoomed in far enough to read them.
   // Thinned to the shallowest in each ~34 px square, the square taken in global pixels so that a
   // label straddling two tiles is chosen, and drawn, identically by both.
-  if (coords.z < 16 || !g.soundings.length) return;
+  if (coords.z < 15 || !g.soundings.length) return;
   const BIN = 34, MARGIN = 40;
   const mlon = (MARGIN / scale) * 360;
   const best = new Map();
@@ -682,6 +791,7 @@ map.on("moveend zoomend rotate resize", scheduleLabels);
 
 // Night mode is now a real restyle rather than a CSS filter over a picture: same geometry, new colours.
 function restyleChart() {
+  redrawChartTiles();
   Object.entries(chartLayers).forEach(([name, { kind, layer }]) => {
     layer.eachLayer((lyr) => {
       if (lyr.feature && lyr.feature.geometry && lyr.feature.geometry.type.includes("Point")) {
@@ -709,6 +819,7 @@ function setChartLayerGroup(key, on) {
   if (key === "survey") surveyLayer.redraw();
   if (key === "names") placeLabels();
   applyChartVisibility();
+  redrawChartTiles();
 }
 
 // ---------- Identify: tap a charted feature and find out what it is ----------
@@ -981,7 +1092,7 @@ document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("clic
 // snaps/glitches. isZooming skips those calls until the animation settles, then one corrective call on zoomend.
 let isZooming = false;
 map.on("zoomstart", () => { isZooming = true; });
-map.on("zoomend", () => { isZooming = false; lockBoatFrame(); refreshChartDetail(); applyChartVisibility(); });
+map.on("zoomend", () => { isZooming = false; lockBoatFrame(); applyChartVisibility(); });
 
 let nightMode = false;   // true only for the full night palette; the quick Night button and its label stay binary
 let chartColorMode = "day";
@@ -1306,15 +1417,27 @@ function inPolygonGeom(geom, x, y) {
 }
 // The charted areas under a point, from the layers worth naming, in this order.
 const CURSOR_AREAS = ["bridge", "dam", "caution", "depth_area"];
+// A feature's bounding box, worked out once: the quick test before the ray cast.
+function featureBBox(f) {
+  if (f._bbox) return f._bbox;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const walk = (c) => {
+    if (typeof c[0] === "number") { x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]); y0 = Math.min(y0, c[1]); y1 = Math.max(y1, c[1]); }
+    else c.forEach(walk);
+  };
+  if (f.geometry) walk(f.geometry.coordinates);
+  return (f._bbox = [x0, y0, x1, y1]);
+}
 function areasAt(latlng) {
   const found = [];
+  const x = latlng.lng, y = latlng.lat;
   CURSOR_AREAS.forEach((name) => {
-    const entry = chartLayers[name];
+    const entry = chartFeatures[name];
     if (!entry) return;
-    entry.layer.eachLayer((lyr) => {
-      if (lyr.getBounds && lyr.getBounds().contains(latlng) && lyr.feature && inPolygonGeom(lyr.feature.geometry, latlng.lng, latlng.lat)) {
-        found.push({ name, kind: entry.kind, props: lyr.feature.properties || {} });
-      }
+    entry.features.forEach((f) => {
+      const b = featureBBox(f);
+      if (x < b[0] || x > b[2] || y < b[1] || y > b[3]) return;
+      if (f.geometry && inPolygonGeom(f.geometry, x, y)) found.push({ name, kind: entry.kind, props: f.properties || {} });
     });
   });
   return found;
