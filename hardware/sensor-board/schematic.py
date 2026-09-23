@@ -149,7 +149,7 @@ def text(body, x, y, size=1.27, bold=False):
 
 class Sheet:
     def __init__(self):
-        ids = sorted({p.symbol for p in design.PARTS} | {"power:GND", "power:+3V3", "power:PWR_FLAG"})
+        ids = sorted({p.symbol for p in design.PARTS} | {"power:GND", "power:+3V3", "power:+5V", "power:PWR_FLAG"})
         self.syms = {lid: flat_symbol(lid) for lid in ids}
         self.items = []
         self.points = Counter()      # connection points: wire ends and pins, for junction dots
@@ -194,7 +194,7 @@ class Sheet:
     def power(self, net, x, y, direction):
         """A power symbol whose graphic points `direction` (away from what it connects to)."""
         self.npwr += 1
-        lid = "power:GND" if net == "GND" else "power:+3V3"
+        lid = {"GND": "power:GND", "+5V": "power:+5V"}.get(net, "power:+3V3")
         natural = "down" if net == "GND" else "up"
         rot = {("down", "down"): 0, ("down", "right"): 90, ("down", "up"): 180, ("down", "left"): 270,
                ("up", "up"): 0, ("up", "left"): 90, ("up", "down"): 180, ("up", "right"): 270}[(natural, direction)]
@@ -251,7 +251,7 @@ class Sheet:
         dx, dy = STEP[out]
         ex, ey = round(x + dx * STUB, 4), round(y + dy * STUB, 4)
         self.path((x, y), (ex, ey))
-        if net in ("GND", "+3V3"):
+        if net in ("GND", "+3V3", "+5V"):
             self.power(net, ex, ey, out)
         else:
             self.net_label(net, ex, ey, out)
@@ -334,7 +334,8 @@ def build():
     # The NMEA 2000 block, in signal order from the drop cable to the Pi, at the positions design.py gives.
     others.update({ref: parts[ref].sch for ref in
                    ("J5", "D9", "D10", "C16", "U6", "C17", "C18", "D11", "R26", "JP1", "U5", "C15",
-                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28", "J6") if ref in parts})
+                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28", "J6",
+                    "J7", "U7", "Q1", "C19", "C20", "C21", "D12") if ref in parts})
     for ref, (x, y) in others.items():
         if ref == "D8":
             place(ref, x, y, text_side="below")
@@ -354,6 +355,12 @@ def build():
         sh.flag(n, x, 350.52)
         sh.path((x, 350.52), (x, 355.6))
         sh.net_label(net, x, 355.6, "down")
+    # The 5 V from J7 is a supply too, before and after the ideal diode.
+    sh.flag(5, 530.86, 71.12)
+    sh.power("+5V", 530.86, 71.12, "down")
+    sh.flag(6, 543.56, 71.12)
+    sh.path((543.56, 71.12), (543.56, 76.2))
+    sh.net_label("VIN", 543.56, 76.2, "down")
 
     for part in design.PARTS:
         for number in {k for (r, k) in sh.pin_at if r == part.ref}:
@@ -371,6 +378,7 @@ def build():
                        ("CONVERTERS", 342.9, 45.72), ("1-WIRE PROBES", 246.38, 167.64),
                        ("TACH OUTPUT", 167.64, 167.64), ("MOUNTING / POWER FLAGS", 330.2, 167.64),
                        ("LIGHTS: to a separate LED board", 254.0, 228.6),
+                       ("5 V IN: from the 12 V -> 5 V converter, to the Pi's 5 V pins", 414.02, 55.88),
                        ("NMEA 2000: network side (isolated, powered by NET-S)", 20.32, 294.64),
                        ("NMEA 2000: Pi side", 213.36, 294.64)]:
         sh.items.append(text(body, x, y, size=2.0, bold=True))
@@ -397,6 +405,11 @@ def build():
         "Addressable strips: DAT1 = GPIO18 (PWM0), DAT2 = GPIO19 (PWM1), 3.3 V: buffer to 5 V there.\n"
         "AUX = GPIO21, spare. 3V3 for the LED board's logic, under 50 mA.",
         254.0, 269.24, size=1.5))
+    sh.items.append(text(
+        "J7 takes the converter's 5 V (set 5.1-5.2 V) and runs the Pi through header pins 2 and 4; this board's 3V3 comes from the Pi.\n"
+        "U7 + Q1 are an ideal diode (~20 mV): J7 wired backwards is blocked, and the Pi's USB-C can't feed back into the converter.\n"
+        "D12 clamps spikes. A converter failing with 12 V out is not caught here: use one with output overvoltage protection.",
+        414.02, 139.7, size=1.5))
     sh.junctions()
 
     return ["kicad_sch", ["version", "20250114"], ["generator", q("eeschema")], ["generator_version", q("9.0")],

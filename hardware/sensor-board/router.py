@@ -1,6 +1,6 @@
 """A small grid router for a two-layer board.
 
-Enough for this board: a few dozen slow nets on a 65 x 56 mm HAT. For each net it rasterises
+Enough for this board: a few dozen slow nets on a Pi HAT. For each net it rasterises
 every other net's copper -- inflated by the clearance that pair of nets needs, which is 3 mm
 between the ignition side of the tach and everything else -- then finds a path with A* on a
 0.1 mm grid across both layers, preferring the top so the bottom stays a ground plane. Multi-pin
@@ -26,8 +26,10 @@ class Item:
 
 class Router:
     def __init__(self, width, height, clearance_fn, track=0.25, via_d=0.6, res=0.1, edge_clear=0.4,
-                 margin=0.06, layer_cost=(1.0, 3.0), via_cost=12.0, turn_cost=0.6):
+                 margin=0.06, layer_cost=(1.0, 3.0), via_cost=12.0, turn_cost=0.6, origin=(0.0, 0.0)):
+        """The grid covers origin .. origin + (width, height), in board mm."""
         self.res = res
+        self.x0, self.y0 = origin
         self.nx, self.ny = int(math.ceil(width / res)) + 1, int(math.ceil(height / res)) + 1
         self.w, self.h = width, height
         self.clearance = clearance_fn          # (net_a, net_b) -> mm
@@ -37,18 +39,20 @@ class Router:
         self.items = []
         self.keepouts = []                      # (x0, y0, x1, y1, allow_fn(net)) regions
         self.holes = []                         # (x, y, r): nothing within r
-        xs = np.arange(self.nx) * res
-        ys = np.arange(self.ny) * res
+        self.outside = []                       # (x0, y0, x1, y1): notches in the outline, off the board
+        xs = self.x0 + np.arange(self.nx) * res
+        ys = self.y0 + np.arange(self.ny) * res
         self.X, self.Y = np.meshgrid(xs, ys, indexing="ij")
 
     # ---------------------------------------------------------------- geometry
     def cell(self, x, y):
-        return int(round(x / self.res)), int(round(y / self.res))
+        return int(round((x - self.x0) / self.res)), int(round((y - self.y0) / self.res))
 
     def xy(self, i, j):
-        return i * self.res, j * self.res
+        return self.x0 + i * self.res, self.y0 + j * self.res
 
     def _window(self, x0, y0, x1, y1):
+        x0, x1, y0, y1 = x0 - self.x0, x1 - self.x0, y0 - self.y0, y1 - self.y0
         i0, j0 = max(0, int(math.floor(x0 / self.res))), max(0, int(math.floor(y0 / self.res)))
         i1, j1 = min(self.nx, int(math.ceil(x1 / self.res)) + 1), min(self.ny, int(math.ceil(y1 / self.res)) + 1)
         return i0, j0, i1, j1
@@ -89,18 +93,30 @@ class Router:
         return grid
 
     # ---------------------------------------------------------------- obstacle maps
-    def blocked(self, net, radius):
-        """Per-layer maps of cells where copper of `net`, of half-width `radius`, cannot go."""
+    # A via's centre stays this far outside its own net's surface-mount pads: its drill hole (and
+    # the solder mask's opening round it) off the pad, so the joint's solder can't wick down it.
+    # Its copper ring may touch the pad; that's the same net.
+    VIA_OFF_PAD = 0.25
+
+    def blocked(self, net, radius, own_smd=False):
+        """Per-layer maps of cells where copper of `net`, of half-width `radius`, cannot go. With
+        own_smd (placing a via), the net's own surface-mount pads keep it VIA_OFF_PAD away too."""
         maps = [np.zeros((self.nx, self.ny), bool), np.zeros((self.nx, self.ny), bool)]
         for item in self.items:
             if item.net == net:
+                if own_smd and item.kind == "rect" and len(item.layers) == 1:
+                    for layer in (TOP, BOTTOM):
+                        self._paint(maps[layer], item, self.VIA_OFF_PAD)
                 continue
             r = self.clearance(net, item.net) + radius + self.margin
             for layer in item.layers:
                 self._paint(maps[layer], item, r)
         # The board edge, holes and keepouts block both layers.
         e = self.edge_clear + radius + self.margin
-        edge = (self.X < e) | (self.Y < e) | (self.X > self.w - e) | (self.Y > self.h - e)
+        edge = ((self.X < self.x0 + e) | (self.Y < self.y0 + e) |
+                (self.X > self.x0 + self.w - e) | (self.Y > self.y0 + self.h - e))
+        for x0, y0, x1, y1 in self.outside:
+            edge |= (self.X > x0 - e) & (self.X < x1 + e) & (self.Y > y0 - e) & (self.Y < y1 + e)
         for m in maps:
             m |= edge
             for x, y, r in self.holes:
@@ -116,9 +132,9 @@ class Router:
         """A* from any source cell to any goal cell. sources: list of (i, j, layer).
         goal: (i, j, layer) -> bool. Returns the cell path or None."""
         track = self.blocked(net, self.track / 2)
-        via = self.blocked(net, self.via_r) if via_ok else None
+        via = self.blocked(net, self.via_r, own_smd=True) if via_ok else None
         hx, hy = heur_xy
-        hi, hj = hx / self.res, hy / self.res
+        hi, hj = (hx - self.x0) / self.res, (hy - self.y0) / self.res
         cheap = min(self.layer_cost[l] for l in allow_layers)
 
         def h(i, j):

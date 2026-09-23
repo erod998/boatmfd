@@ -31,6 +31,7 @@ CHANNELS = [
 
 # Pi header: physical pin -> net. Everything not listed is left unconnected.
 PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
+           2: "+5V", 4: "+5V",   # the Pi is powered from this board (J7), through the header
            33: "TACH_GPIO",   # GPIO13: tach            (BOAT_TACH_GPIO=13)
            37: "OW",          # GPIO26: 1-Wire probes   (dtoverlay=w1-gpio,gpiopin=26)
            # NMEA 2000: the CAN controller on SPI0, interrupt on GPIO25 -- the pins every Pi CAN HAT
@@ -92,8 +93,9 @@ def resistor(ref, value, a, b, size="0805", **kw):
 
 
 def capacitor(ref, value, a, b, size="0805", **kw):
-    if size == "1206":   # the one that sees the NMEA 2000 network's 12 V: 50 V rated
-        return Part(ref, "Device:C", value, C1206, {"1": a, "2": b}, mpn={"1u": "CL31B105KBHNNNE"}[value], **kw)
+    if size == "1206":   # C16 sees the NMEA 2000 network's 12 V: 50 V; C21 is the 5 V bulk, 25 V (less DC-bias loss)
+        return Part(ref, "Device:C", value, C1206, {"1": a, "2": b},
+                    mpn={"1u": "CL31B105KBHNNNE", "22u": "CL31A226KAHNNNE"}[value], **kw)
     mpn = {"100n": "CL21B104KBCNNNC", "1u": "CL21B105KAFNNNE", "10n": "CL21B103KBANNNC",
            "4.7u": "CL21A475KAQNNNE"}[value]
     return Part(ref, "Device:C", value, C0805, {"1": a, "2": b}, mpn=mpn, **kw)
@@ -207,6 +209,30 @@ def build_parts():
              note="bridge ONLY to test on the bench with no backbone: a device on a real network must not terminate it"),
     ]
 
+    # ---------------- 5 V in: the Pi and this board, from an external 12 V -> 5 V converter ----------------
+    # The converter's output comes in on J7 and runs the Pi through the header's 5 V pins
+    # (back-powering: 5 V +/-5 %, up to 2.5 A, as the HAT design guide allows); this board's 3.3 V
+    # then comes from the Pi as before. In the way sits an ideal diode, U7 driving Q1: about 20 mV
+    # forward drop instead of a Schottky's 0.4 V, which the Pi's 4.63 V undervoltage warning
+    # couldn't spare. J7 wired backwards is blocked (U7 is rated to -65 V), and with the Pi's own
+    # USB-C plugged in as well, that supply can't push current back into the converter. D12 clamps
+    # spikes on the rail. None of it saves the Pi from a converter that fails with 12 V on its
+    # output: use one with output overvoltage protection.
+    parts += [
+        Part("U7", "Power_Management:LM74700", "LM74700-Q1", "Package_TO_SOT_SMD:SOT-23-6",
+             {"1": "VCAP", "2": "GND", "3": "VIN", "4": "+5V", "5": "IDEAL_G", "6": "VIN"},
+             mpn="LM74700QDBVRQ1", sch=(464.82, 78.74),
+             note="ideal diode controller: ANODE/EN to J7, CATHODE to the Pi's 5 V"),
+        Part("Q1", "Transistor_FET:IRLML0030", "IRLML0030", "Package_TO_SOT_SMD:SOT-23",
+             {"1": "IDEAL_G", "2": "VIN", "3": "+5V"}, mpn="IRLML0030TRPBF", sch=(500.38, 78.74),
+             note="the ideal diode's switch: source to J7, drain to the Pi; 27 mOhm, VGS +/-20 V"),
+        capacitor("C19", "100n", "VCAP", "VIN", sch=(452.12, 106.68), note="U7 charge pump (VCAP to ANODE)"),
+        capacitor("C20", "100n", "VIN", "GND", sch=(431.8, 106.68), note="J7 input"),
+        capacitor("C21", "22u", "+5V", "GND", size="1206", sch=(487.68, 106.68), note="bulk at the Pi's 5 V pins"),
+        Part("D12", "Diode:SMAJ5.0A", "SMAJ5.0A", "Diode_SMD:D_SMA", {"1": "+5V", "2": "GND"},
+             mpn="SMAJ5.0A", sch=(510.54, 106.68), note="clamps spikes on the 5 V rail"),
+    ]
+
     # ---------------- connectors ----------------
     helm = {str(pin): f"{name}_IN" for name, pin, _, _, _ in CHANNELS}
     helm.update({"7": "GND", "8": "GND"})
@@ -214,7 +240,7 @@ def build_parts():
         Part("J1", "Connector_Generic:Conn_01x08", "HELM",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange", helm,
              mpn="Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)", sch=(35.56, 157.48),
-             note="FUEL/TRIM/OIL/TEMP: that gauge's S terminal; BAT+: +12V always on (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -"),
+             note="FUEL/TRIM/OIL/TEMP: that gauge's S terminal; BAT+: the dashboard's switched 12 V (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -"),
         Part("J2", "Connector_Generic:Conn_01x02", "TACH",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",
@@ -232,6 +258,10 @@ def build_parts():
              {"2": "N2K_NET_S", "3": "N2K_GND", "4": "N2K_H", "5": "N2K_L"},
              mpn="Phoenix Contact 1827897 (MC 1,5/ 5-GF-3,81); plug 1827732 (MC 1,5/ 5-STF-3,81)", sch=(35.56, 320.04),
              note="NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"),
+        Part("J7", "Connector_Generic:Conn_01x02", "5V IN",
+             "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
+             {"1": "VIN", "2": "GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",
+             sch=(421.64, 78.74), note="from the 12 V -> 5 V converter (set 5.1-5.2 V, 3 A): 1 +5V, 2 GND"),
         # Lights: everything a separate LED board needs from the Pi, and nothing it switches. The
         # strips' 12 V and their current stay on that board; this cable carries logic only. A
         # latching connector, since the board it plugs into is on a boat too.

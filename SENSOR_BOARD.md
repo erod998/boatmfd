@@ -4,8 +4,9 @@ A Raspberry Pi HAT that reads **fuel level, trim, oil pressure, engine temperatu
 voltage and RPM** by
 *listening* to the wires the boat's analog gauges already use -- and, since rev 1.1, puts the Pi on
 the boat's **NMEA 2000** network (the Fusion stereo, the depth transducer) through an isolated
-CAN interface, so no separate CAN HAT is needed -- and, since rev 1.2, has a connector (J6,
-LIGHTS) for a separate LED controller board. Nothing is disconnected: every
+CAN interface, so no separate CAN HAT is needed. Since rev 1.2 it also powers the Pi, from an
+external 12 V to 5 V converter wired to J7, and has a connector (J6, LIGHTS) for a separate LED
+controller board. Nothing is disconnected: every
 analog gauge stays wired exactly as it is and keeps working, so if the Pi is off or broken the
 helm is just a normal helm. It replaces buying an engine-data converter (the CX5003 route).
 
@@ -42,7 +43,7 @@ stock analog gauges.
                G ── ground ────────────────────────────────── J1.7 GND      │     AIN0 fuel   AIN1 trim
   oil gauge    S ── to the oil sender ────[10k]── tap wire ── J1.5 OIL ─────┤     AIN2 batt   AIN3 gauge supply
   temp gauge   S ── to the temp sender ───[10k]── tap wire ── J1.6 TEMP ────┤   ADS1115 U2 (0x49)
-  always-on +12 V (fused 1 A at the source) ───────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 temp
+  dashboard's switched 12 V (fused 1 A) ───────────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 temp
   helm ground (battery -) ─────────────────────────────────── J1.8 GND
 
   gray wire: EST coil TACH terminal ── tach gauge ─────────── J2.1 TACH ──── optocoupler ──── GPIO 13
@@ -53,6 +54,8 @@ stock analog gauges.
   NMEA 2000 drop cable (Fusion stereo, depth transducer) ───── J5 ── isolated CAN ── SPI0 + GPIO 25 (can0)
 
   LED controller board (separate) ─────────────────────────── J6 ── I2C, GPIO 18 / 19 / 21, 3V3, GND
+
+  12 V -> 5 V converter (separate) ── J7 ── ideal diode ── header pins 2, 4: the Pi, and from it this board's 3V3
 ```
 
 - **Taps** read the voltage on each gauge's **S** (sender) terminal, and once on the gauges' shared
@@ -199,6 +202,29 @@ All DS18B20 probes (engine, water) share these three wires.
 No I²C pull-ups on the board: the Pi already has them on GPIO 2/3, and a second board stacked on
 the header would double them up.
 
+### 5 V in (J7): the Pi's power
+
+```
+  J7.1 +5V ──┬──────────── Q1 IRLML0030 (S -> D) ──────────────┬──── header pins 2, 4 (the Pi's 5 V)
+             │                     │ G                         ├── C21 22µ
+         [ C20 100n ]         U7 LM74700 ideal diode:           └── D12 SMAJ5.0A (to GND)
+             │                ANODE/EN to J7.1, CATHODE to the Pi side,
+  J7.2 GND ──┴── GND          GATE to Q1, VCAP: C19 100n to ANODE
+```
+
+- The converter's output (set it to **5.1-5.2 V**, rated 3 A or more) runs the Pi through the
+  header's 5 V pins, as the Raspberry Pi HAT guide allows (5 V ±5 %, up to 2.5 A). This board's
+  3V3 comes from the Pi, as before; the NMEA 2000 side still runs from the network's own 12 V.
+- **U7 + Q1 are an ideal diode**: about 20 mV forward drop, where a Schottky would lose 0.4 V the
+  Pi can't spare (it warns of undervoltage below 4.63 V). **J7 wired backwards** is blocked --
+  nothing conducts, and U7 is rated to -65 V. With the Pi's **USB-C plugged in as well**, that
+  supply can't push current back into the converter. (The Pi 4 has no diode of its own on
+  USB-C, though, so the converter would feed the USB supply: don't plug both in on the boat.)
+- **D12** clamps spikes on the rail. None of this saves the Pi from a converter that fails with
+  12 V on its output, so pick one with output overvoltage protection.
+- J7 and these parts sit on a **tab above the header's left half** (see Ordering): the Pi's 5 V
+  pins are at that corner, and the tab keeps the 5 V run to them short.
+
 ### Lights connector (J6): for a separate LED board
 
 The LED controllers are deliberately **not** on this board: several amps of switched strip
@@ -240,6 +266,7 @@ The rules for the LED board, whatever it ends up carrying:
 
 | Pin | Signal | Use |
 |---|---|---|
+| 2, 4 | 5V | **in**: the Pi's power, from J7 through the ideal diode |
 | 1, 17 | 3V3 | converters, pull-ups, probes (a few mA in total); J6's 3V3 (under 50 mA) |
 | 3 | GPIO 2 / SDA | both ADS1115; J6 |
 | 5 | GPIO 3 / SCL | both ADS1115; J6 |
@@ -269,7 +296,7 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 |---|---|---|---|
 | **J1** helm (8, left edge) | 1 | FUEL | fuel gauge **S** terminal, through its 10k |
 | | 2 | TRIM | trim gauge **S** terminal, through its 10k |
-| | 3 | BAT+ | the helm's always-on +12 V (the feed that powers the Pi), **fused 1 A at the source** |
+| | 3 | BAT+ | the dashboard switch's 12 V (the same feed as the 5 V converter), **fused 1 A at the source** |
 | | 4 | IGN | the **I** terminal on the back of any one gauge, through its 10k. That's the key-switched +12 V that lights the gauges; they all share it, so any gauge will do. The board measures the senders as a share of it, and uses it to tell that the key is on |
 | | 5 | OIL | oil gauge **S** terminal, through its 10k |
 | | 6 | TEMP | engine temperature gauge **S** terminal, through its 10k |
@@ -285,6 +312,8 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 | | 5 | BLU | NET-L: CAN low |
 | **J6** lights (8, right edge, JST GH) | 1 / 2 / 3 / 4 | 3V3 / SDA / SCL / GND | the LED board (see "Lights connector" above) |
 | | 5 / 6 / 7 / 8 | DAT1 / DAT2 / GND / AUX | GPIO 18 / GPIO 19 / ground / GPIO 21 |
+| **J7** 5V IN (2, on the tab, plug faces up) | 1 | +5V | the 12 V -> 5 V converter's **+5 V** output |
+| | 2 | GND | the converter's **0 V** output |
 | **J4** | | | the Pi's 40-pin header, underneath |
 
 ---
@@ -319,11 +348,16 @@ The full list, with manufacturer part numbers, is
 | C12-C18 | 7 | 100 nF / 1 µF 0805, one 1 µF **50 V 1206** (C16) | decoupling |
 | J1 / J2 / J3 / J5 | 1 each | Phoenix MC 1,5/ 8-, 2-, 3-, 5-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
 | J6 | 1 | JST **SM08B-GHS-TB** (GH, 8-way, side entry, SMD) | lights; a GH 8-pin 1:1 cable to the LED board |
+| J7 | 1 | Phoenix MC 1,5/ 2-GF-3,81 (as J2) | 5 V in, plus its **MC 1,5/ 2-STF-3,81** plug |
+| U7 / Q1 | 1 each | **LM74700-Q1** (TI, SOT-23-6) / **IRLML0030** (Infineon, SOT-23) | ideal diode |
+| C19, C20 / C21 | 2 / 1 | 100 nF 0805 / 22 µF 25 V X5R **1206** | charge pump, input / 5 V bulk |
+| D12 | 1 | SMAJ5.0A (SMA), as D8 | 5 V rail clamp |
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
 | — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
 | — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
 | **Rg** | 5 | **10 kΩ ¼ W through-hole** + adhesive-lined heatshrink | at the gauge end of each tap wire (fuel, trim, oil, temp, and one gauge's I) |
 | — | 1 | inline fuse holder + 1 A fuse | J1.3 battery feed, at its source |
+| — | 1 | **12 V -> 5 V converter**, 3 A or more, adjustable or fixed at 5.1-5.2 V, **with output overvoltage protection**, potted or sealed | J7; fed from the dashboard switch through its own fuse |
 | — | 1–2 | DS18B20 waterproof probes | engine (on the thermostat housing), water |
 | — | | 20–22 AWG tinned marine wire, ring terminals | taps; tach pair twisted |
 
@@ -333,11 +367,14 @@ The full list, with manufacturer part numbers, is
 
 For **PCBWay**, everything is ready in [hardware/sensor-board/fab/pcbway/](hardware/sensor-board/fab/pcbway/): the Gerbers, a BOM and centroid in PCBWay's assembly format, and [ORDER.md](hardware/sensor-board/fab/pcbway/ORDER.md) with every option to pick on their quote forms. The notes below are the general version.
 
-The board is a 2-layer, 1.6 mm, **65 × 76 mm** Pi HAT: the standard HAT outline and mounting
-holes, 20 mm longer on the side away from the header to make room for the NMEA 2000 interface.
-Those 20 mm reach past the Pi 4's USB-C / micro-HDMI edge and sit about 5 mm above those plugs
-(on the Pi's usual 11 mm standoffs) -- fine for straight plugs; check first if you use a
-right-angle HDMI adapter there. H5, in the extra corner, takes a standoff to the enclosure.
+The board is a 2-layer, 1.6 mm Pi HAT, **65 × 88 mm overall**: the standard HAT outline and
+mounting holes, 20 mm longer on the side away from the header to make room for the NMEA 2000
+interface, and a **35 × 12 mm tab above the left half of the header** for the 5 V input.
+- The 20 mm reach past the Pi 4's USB-C / micro-HDMI edge and sit about 5 mm above those plugs
+  (on the Pi's usual 11 mm standoffs) -- fine for straight plugs; check first if you use a
+  right-angle HDMI adapter there. H5, in the extra corner, takes a standoff to the enclosure.
+- The tab reaches 12 mm past the Pi's GPIO edge, at the SD-card end, and J7's plug and wires
+  come out of its top edge: leave room for them there in the enclosure.
 0.2 mm tracks and spacing, 0.3 mm vias, all within any online fab's standard service.
 
 - **Bare board:** upload `fab/sensor-board-gerbers.zip`. Any colour and finish (HASL lead-free
@@ -365,6 +402,11 @@ right-angle HDMI adapter there. H5, in the extra corner, takes a standoff to the
 - **Silkscreen** (rev 1.2): every connector pin is labelled with what it connects to, printed
   on the wire side of the connector, and a WIRING block in the middle of the board sums up the
   rules. J5's labels are the drop cable's wire colours.
+- **The 5 V input** is on the tab: J7's +5V pin sits right above the header's 5 V pins, and the
+  converter's current runs J7 -> Q1 -> header pins 2/4 on 0.8 mm tracks, the last stretch on the
+  bottom layer (on top it walled the header's GND pin 6 off from the pour). The ideal diode's
+  sense pins, caps and D12 join on thin tracks. No via sits in a surface-mount pad anywhere on
+  the board, so none can wick solder away from a joint.
 - **J6** sits on the right edge between the probe connector and the mounting hole. Its two
   outer data/spare lines leave the header's far corner on the bottom layer, so they don't wall
   off the header's ground pin there from the top pour.
@@ -405,9 +447,10 @@ check reports anything.
    on top of the gray wire's at the back of the tach gauge, to **J2 TACH**, and a second from the
    tach gauge's **G** terminal to **J2 GND**. Twist the two together. No 10 kΩ on these -- the
    board has its own. The tach gauge stays connected.
-5. **Battery:** from the always-on helm +12 V feed, through a 1 A inline fuse at the feed, to J1.3
-   (BAT+); helm ground to J1.8 (GND). This only *measures* the battery: the board does not power
-   the Pi, which needs its own 12 V to 5 V supply into its USB-C port.
+5. **Power:** the dashboard switch's 12 V output feeds the 12 V -> 5 V converter (through its
+   own fuse) and, through a 1 A inline fuse, J1.3 (BAT+), which measures the battery. Helm ground
+   to J1.8 (GND). The converter's output goes to **J7: +5V and GND** -- that powers the Pi and the
+   whole board; leave the Pi's USB-C unplugged.
 6. **NMEA 2000:** a drop cable from a T on the backbone to J5 (colours in the Connectors table).
    The backbone needs its power tee and two terminators, as always; see README's "The NMEA 2000
    backbone".
@@ -417,26 +460,30 @@ check reports anything.
 
 Do these in order, and don't connect the gauges until the board has passed the bench steps.
 
-1. **Converters.** Board on the Pi, nothing plugged into J1–J3. Enable I²C
+1. **5 V in, before the Pi goes on.** Board on its own, a bench supply at 5.1 V into J7:
+   header pins 2 and 4 read about 5.08 V to GND. Swap the supply's leads: they read 0 V, and the
+   supply sees no load (the ideal diode blocks). Then set the real converter to 5.1-5.2 V the same
+   way before connecting it.
+2. **Converters.** Board on the Pi, powered from J7, nothing plugged into J1–J3. Enable I²C
    (`sudo raspi-config nonint do_i2c 0`, reboot), then `i2cdetect -y 1` must show **48** and **49**.
-2. **One tap, on the bench.** A 12 V supply through a 10 kΩ resistor into J1.4 (the Rg the software
+3. **One tap, on the bench.** A 12 V supply through a 10 kΩ resistor into J1.4 (the Rg the software
    expects) and its negative to J1.7. The calibration page (`http://<pi>:8090/calibrate`, with the
    software settings below) should show **about 12.0 V at the gauges**. Repeat for each tap input by
    moving the wire. A reading 20% high means the 10 kΩ was left out. The battery input (J1.3) takes
    12 V directly, without the 10 kΩ.
-3. **Tach, on the bench.** A 12 V supply switched on and off into J2 (+ to pin 1): `pinctrl get 13`
+4. **Tach, on the bench.** A 12 V supply switched on and off into J2 (+ to pin 1): `pinctrl get 13`
    should follow it -- low while 12 V is applied, high when it is off. Then on the engine: compare
    the page's RPM with the analog tach at idle and at cruise, and use the page's tach calibration
    to correct it.
-4. **Gauges.** Wire the taps (above). Key ON, engine off: the page shows the gauge supply and
+5. **Gauges.** Wire the taps (above). Key ON, engine off: the page shows the gauge supply and
    "gauges on", and each tap shows a voltage between 0 and the supply.
-5. **NMEA 2000.** With the overlay below set and the Pi rebooted, `dmesg | grep -i mcp251xfd`
+6. **NMEA 2000.** With the overlay below set and the Pi rebooted, `dmesg | grep -i mcp251xfd`
    shows the controller and `ip link` lists `can0`. Connect J5 to the backbone, power the network,
    then `sudo ip link set can0 up type can bitrate 250000 restart-ms 100` and `candump can0`: with
    the stereo on you see its frames. The dashboard's Media card finds the stereo by itself. (For a
    bench test with no backbone, bridge JP1 and power NET-S/NET-C from a 12 V supply -- then
    un-bridge it before the board goes on the boat.)
-6. **The ratiometric check** (tells you what kind of gauges you have): once fuel is calibrated,
+7. **The ratiometric check** (tells you what kind of gauges you have): once fuel is calibrated,
    note the fuel % with the key on, then start the engine. It should stay put. If it moves by more
    than a percent or two, your gauges regulate their own supply: switch the page to **Plain volts**
    and capture the points again.

@@ -142,7 +142,8 @@ MANUFACTURERS = [("CL21", "Samsung Electro-Mechanics"), ("CL31", "Samsung Electr
                  ("BAT54S", "Nexperia"), ("1N4148W", "Diodes Incorporated"), ("SMAJ", "Littelfuse"), ("SS14", "onsemi"),
                  ("NUP2105", "onsemi"), ("ADS1115", "Texas Instruments"), ("ISO1044", "Texas Instruments"),
                  ("UA78L", "Texas Instruments"), ("EL817", "Everlight"), ("MCP2518", "Microchip"), ("ASE-", "Abracon"),
-                 ("Phoenix Contact", "Phoenix Contact"), ("2x20", "Adafruit (1979) or equivalent"), ("SM08B", "JST")]
+                 ("Phoenix Contact", "Phoenix Contact"), ("2x20", "Adafruit (1979) or equivalent"), ("SM08B", "JST"),
+                 ("LM74700", "Texas Instruments"), ("IRLML0030", "Infineon")]
 
 
 def manufacturer(mpn):

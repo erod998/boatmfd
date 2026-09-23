@@ -30,6 +30,11 @@ OX, OY = 100.0, 50.0                 # where the board sits on KiCad's page
 # header: rev 1.0 was the plain 65 x 56 HAT and had no room left for the NMEA 2000 interface.
 # The extra 20 mm reaches past the Pi's USB-C / micro-HDMI edge, about 5 mm above those plugs.
 W, H, HAT_H = 65.0, 76.0, 56.0
+# Rev 1.2 powers the Pi through the header's 5 V pins, which are in its top-left corner, with the
+# helm connector and a mounting hole already on either side. So the 5 V input (J7) and its ideal
+# diode sit on a tab above the left half of the header, reaching past the Pi's GPIO edge: TAB_W
+# wide, TAB_T tall, at negative y in board coordinates.
+TAB_W, TAB_T = 35.2, 12.0
 TRACK, HV_TRACK, VIA_D, VIA_DRILL = 0.2, 0.25, 0.7, 0.3
 HV = set(design.TACH_HV_NETS)
 SERIES = {"TACH_IN", "TACH_A", "TACH_B"}   # the nets the ignition spike is divided across
@@ -39,7 +44,14 @@ N2K_CLEAR = 2.0
 # isolator's Pi-side pins are only 3.4 mm away.
 N2K_ROUTE_MARGIN = 1.5
 # The network side's power is carried on wider tracks.
-WIDE = {"N2K_NET_S": 0.4, "N2K_12V": 0.4, "N2K_GND": 0.4, "N2K_5V": 0.4}
+WIDE = {"N2K_NET_S": 0.4, "N2K_12V": 0.4, "N2K_GND": 0.4, "N2K_5V": 0.4, "VIN": 0.8, "+5V": 0.8}
+# The Pi's supply current only flows J7 -> Q1 -> header pins 2/4: those pads get the wide track.
+# The ideal diode's sense pins, its caps and the TVS join on thin ones (U7's pins are 0.95 mm apart).
+MAIN_PATH = {"VIN": {("J7", "1"), ("Q1", "2")}, "+5V": {("Q1", "3"), ("J4", "2"), ("J4", "4")}}
+# ...and the 5 V one goes to the header on the bottom layer: on top it runs along the header's
+# outer row and walls off the GND pin beside the 5 V pins (pin 6) from the top pour.
+MAIN_BOTTOM = {"+5V"}
+THIN = 0.3
 HOLES = [(3.5, 3.5), (61.5, 3.5), (3.5, 52.5), (61.5, 52.5), (61.5, 72.5)]
 
 # ---------------------------------------------------------------- placement (board mm, degrees CCW)
@@ -79,6 +91,12 @@ PLACE = {
     # Lights, on the right edge between the probes and the mounting hole: the cable enters from
     # the edge, pin 1 at the bottom (as J3). Its mounting tabs are kept 0.3 mm inside the edge.
     "J6": (62.0, 41.6, 90, "F"),
+    # 5 V in, on the tab: the plug faces up, pin 1 (+5V) right above the header's 5 V pins; the
+    # ideal diode to its right, then the bulk capacitor and the TVS.
+    "J7": (12.6, -3.3, 180, "F"),
+    "Q1": (22.6, -2.2, 0, "F"), "U7": (22.7, -7.2, 270, "F"),
+    "C19": (26.6, -8.2, 0, "F"), "C20": (26.9, -4.6, 90, "F"),
+    "C21": (29.6, -2.6, 90, "F"), "D12": (32.6, -6.0, 90, "F"),
 }
 for i, y in enumerate(LANE_Y):
     PLACE[f"R{1 + i}"] = (14.8, y, 0, "F")            # top resistor: IN left, DIV right
@@ -94,10 +112,12 @@ PIN_LABELS = {
     "J3": ["3V3", "DATA", "GND"],
     "J5": ["BARE", "RED", "BLK", "WHT", "BLU"],     # the drop cable's wire colours
     "J6": ["3V3", "SDA", "SCL", "GND", "DAT1", "DAT2", "GND", "AUX"],
+    "J7": ["+5V", "GND"],
 }
 
 # Routing order: the constrained nets first.
-ORDER = (["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"] +
+ORDER = (["VIN", "+5V", "IDEAL_G", "VCAP"] +
+         ["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"] +
          ["N2K_NET_S", "N2K_12V", "N2K_GND", "N2K_5V", "N2K_H", "N2K_L", "N2K_TERM"] +
          ["CAN_TXD", "CAN_RXD", "CAN_CLK"] +
          [f"{n}_{s}" for n, *_ in design.CHANNELS for s in ("IN", "DIV", "ADC")] +
@@ -142,7 +162,7 @@ def unquote(atom):
 
 
 def pcb_net_name(name):
-    return name if name in ("GND", "+3V3") else "/" + name
+    return name if name in ("GND", "+3V3", "+5V") else "/" + name
 
 
 def clearance(a, b):
@@ -214,7 +234,8 @@ class Board:
         self.fps = {}
         # A 0.03 mm margin: enough for grid rounding, and small enough that a 0.2 mm track can still
         # reach the middle pins of a 0.5 mm-pitch package (the real gap there is 0.225 mm).
-        self.router = Router(W, H, clearance, track=TRACK, via_d=VIA_D, margin=0.03)
+        self.router = Router(W, H + TAB_T, clearance, track=TRACK, via_d=VIA_D, margin=0.03, origin=(0.0, -TAB_T))
+        self.router.outside.append((TAB_W, -TAB_T, W, 0.0))   # beside the tab: not board
         self.pad_items = {}          # (ref, pad number) -> Item
         self.unused = unused_pins()
         self.tree = {}               # net -> list of (i, j, layer) cells already part of it
@@ -232,23 +253,32 @@ class Board:
         return self.nets[name]
 
     def outline(self):
-        r = 3.0
-        lines = [((r, 0), (W - r, 0)), ((W, r), (W, H - r)), ((W - r, H), (r, H)), ((0, H - r), (0, r))]
-        for (x1, y1), (x2, y2) in lines:
-            s = pcbnew.PCB_SHAPE(self.board)
-            s.SetShape(pcbnew.SHAPE_T_SEGMENT)
-            s.SetStart(V(x1, y1))
-            s.SetEnd(V(x2, y2))
-            s.SetLayer(pcbnew.Edge_Cuts)
-            s.SetWidth(mm(0.1))
-            self.board.Add(s)
-        k = r * (1 - 0.5 ** 0.5)      # the arc's midpoint, inset from the corner
-        corners = [((0, r), (k, k), (r, 0)), ((W - r, 0), (W - k, k), (W, r)),
-                   ((W, H - r), (W - k, H - k), (W - r, H)), ((r, H), (k, H - k), (0, H - r))]
-        for a, m, b in corners:
+        """The HAT with the tab on top, every corner rounded: 3 mm, except 1 mm at the tab's
+        top-left, where J7's body reaches almost to the corner, and in the inside corner beside the
+        tab (no router bit cuts a sharp one)."""
+        corners = [((0.0, -TAB_T), 1.0), ((TAB_W, -TAB_T), 3.0), ((TAB_W, 0.0), 1.0),
+                   ((W, 0.0), 3.0), ((W, H), 3.0), ((0.0, H), 3.0)]
+        ends = []
+        for k, ((px, py), r) in enumerate(corners):
+            (ax, ay), (bx, by) = corners[k - 1][0], corners[(k + 1) % len(corners)][0]
+            d1 = ((px - ax) / abs(px - ax + py - ay), (py - ay) / abs(px - ax + py - ay))   # edges are axis-aligned
+            d2 = ((bx - px) / abs(bx - px + by - py), (by - py) / abs(bx - px + by - py))
+            a = (px - d1[0] * r, py - d1[1] * r)
+            b = (px + d2[0] * r, py + d2[1] * r)
+            cx, cy = a[0] + d2[0] * r, a[1] + d2[1] * r                  # the fillet's centre
+            m = (cx + (px - cx) / 2 ** 0.5, cy + (py - cy) / 2 ** 0.5)   # its midpoint, toward the corner
             s = pcbnew.PCB_SHAPE(self.board)
             s.SetShape(pcbnew.SHAPE_T_ARC)
             s.SetArcGeometry(V(*a), V(*m), V(*b))
+            s.SetLayer(pcbnew.Edge_Cuts)
+            s.SetWidth(mm(0.1))
+            self.board.Add(s)
+            ends.append((a, b))
+        for k in range(len(ends)):
+            s = pcbnew.PCB_SHAPE(self.board)
+            s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+            s.SetStart(V(*ends[k][1]))
+            s.SetEnd(V(*ends[(k + 1) % len(ends)][0]))
             s.SetLayer(pcbnew.Edge_Cuts)
             s.SetWidth(mm(0.1))
             self.board.Add(s)
@@ -297,7 +327,7 @@ class Board:
         # them is at least 2 mm from the Pi's ground pour outside it.
         rx0, ry0, rx1, _ = self.n2k_route()
         not_n2k = lambda n: n not in N2K
-        self.router.keepouts += [(0.0, 0.0, W, ry0, not_n2k), (0.0, ry0, rx0, H, not_n2k), (rx1, ry0, W, H, not_n2k)]
+        self.router.keepouts += [(0.0, -TAB_T, W, ry0, not_n2k), (0.0, ry0, rx0, H, not_n2k), (rx1, ry0, W, H, not_n2k)]
 
     def zone_of(self, nets, grow):
         """The rectangle around every pad on these nets, grown by `grow`, down to the bottom edge."""
@@ -367,31 +397,39 @@ class Board:
     def route_net(self, net):
         members = [(r, p) for r, p in design.nets()[net] if (r, p) in self.pad_items]
         width = HV_TRACK if net in HV else WIDE.get(net, TRACK)
-        self.router.track = width
         self.router.layer_cost = (3, 1) if net in PREFER_BOTTOM else (1, 3)
         if len(members) < 2:
             return
+        # A net with a current path (MAIN_PATH) routes that first at full width, then the rest thin.
+        main = MAIN_PATH.get(net)
+        stages = [(members, width)] if main is None else [
+            ([m for m in members if m in main], width), ([m for m in members if m not in main], THIN)]
         # Grow a tree: start at the first pad, then join the nearest remaining pad each time.
-        first = self.pad_items[members[0]]
-        tree_cells = list(self.cells_of(first))
-        todo = [self.pad_items[m] for m in members[1:]]
-        while todo:
-            def centre(it):
-                return it.geo["x"], it.geo["y"]
-            tx = sum(c[0] for c in tree_cells) / len(tree_cells) * self.router.res
-            ty = sum(c[1] for c in tree_cells) / len(tree_cells) * self.router.res
-            todo.sort(key=lambda it: (centre(it)[0] - tx) ** 2 + (centre(it)[1] - ty) ** 2)
-            target = todo.pop(0)
-            goal_cells = set(self.cells_of(target))
-            if set(tree_cells) & goal_cells:        # already touching (a shared pad)
-                tree_cells += list(goal_cells)
-                continue
-            path = self.router.search(net, tree_cells, lambda i, j, l: (i, j, l) in goal_cells, centre(target))
-            if path is None:
-                self.failed.append((net, target.geo.get("x"), target.geo.get("y")))
-                continue
-            self.commit(net, path, width)
-            tree_cells += path + list(goal_cells)
+        tree_cells = list(self.cells_of(self.pad_items[stages[0][0][0]]))
+        for k, (group, w) in enumerate(stages):
+            self.router.track = w
+            if k == 0 and net in MAIN_BOTTOM:
+                self.router.layer_cost = (3, 1)
+            elif k == 1:
+                self.router.layer_cost = (3, 1) if net in PREFER_BOTTOM else (1, 3)
+            todo = [self.pad_items[m] for m in (group[1:] if k == 0 else group)]
+            while todo:
+                def centre(it):
+                    return it.geo["x"], it.geo["y"]
+                tx, ty = self.router.xy(sum(c[0] for c in tree_cells) / len(tree_cells),
+                                        sum(c[1] for c in tree_cells) / len(tree_cells))
+                todo.sort(key=lambda it: (centre(it)[0] - tx) ** 2 + (centre(it)[1] - ty) ** 2)
+                target = todo.pop(0)
+                goal_cells = set(self.cells_of(target))
+                if set(tree_cells) & goal_cells:        # already touching (a shared pad)
+                    tree_cells += list(goal_cells)
+                    continue
+                path = self.router.search(net, tree_cells, lambda i, j, l: (i, j, l) in goal_cells, centre(target))
+                if path is None:
+                    self.failed.append((net, target.geo.get("x"), target.geo.get("y")))
+                    continue
+                self.commit(net, path, w)
+                tree_cells += path + list(goal_cells)
 
     def stitch_gnd(self, refs=None):
         """A via beside every surface-mount GND pad (of these parts, or all), into the bottom plane."""
@@ -405,12 +443,11 @@ class Board:
             g = item.geo
             hw, hh = (g["hw"], g["hh"]) if item.kind == "rect" else (g["r"], g["r"])
             via_maps = self.router.blocked("GND", VIA_D / 2)
-            res = self.router.res
 
             def ok(i, j, layer):
                 if layer != TOP or via_maps[TOP][i, j] or via_maps[BOTTOM][i, j]:
                     return False
-                x, y = i * res, j * res
+                x, y = self.router.xy(i, j)
                 dx, dy = max(abs(x - g["x"]) - hw, 0), max(abs(y - g["y"]) - hh, 0)
                 return (dx * dx + dy * dy) ** 0.5 >= VIA_D / 2 + 0.1   # clear of the pad itself
             path = self.router.search("GND", self.cells_of(item), ok, (g["x"], g["y"]), via_ok=False,
@@ -421,7 +458,7 @@ class Board:
             end = path[-1]
             if len(path) > 1:
                 self.commit("GND", path, TRACK)
-            self.add_via("GND", end[0] * res, end[1] * res)
+            self.add_via("GND", *self.router.xy(end[0], end[1]))
 
     # ---------------------------------------------------------------- copper pours, text
     def pours(self):
@@ -434,7 +471,8 @@ class Board:
         nx0, ny0, nx1, _ = self.n2k_zone()
         rx0, ry0, rx1, _ = self.n2k_route()
         hole_y = max(hy for hx, hy in HOLES if hx < nx1 and hy < ny0 + 6) + 4.0
-        pts = [(inset, inset), (W - inset, inset), (W - inset, H - inset), (nx1, H - inset), (nx1, ny0), (inset, ny0)]
+        pts = [(inset, -TAB_T + inset), (TAB_W - inset, -TAB_T + inset), (TAB_W - inset, inset),
+               (W - inset, inset), (W - inset, H - inset), (nx1, H - inset), (nx1, ny0), (inset, ny0)]
         n2k_pts = [(max(inset, rx0), max(ry0, hole_y)), (rx1, max(ry0, hole_y)),
                    (rx1, H - inset), (max(inset, rx0), H - inset)]
         for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
@@ -523,22 +561,25 @@ class Board:
                 x = pts[0][0] + (INSET if pts[0][0] < W / 2 else -INSET)
                 for (px, py), name in zip(pts, names):
                     text(name, x, py, 0.8, rot=90)
-            else:                                            # a row of pins along the bottom edge
+            else:                                            # a row along the bottom edge, or J7's on the tab
+                side = -1 if pts[0][1] > H / 2 else 1
                 for (px, py), name in zip(pts, names):
-                    text(name, px, py - INSET, 0.8)
+                    text(name, px, py + side * INSET, 0.8)
         # Which connector is which, beside its labels.
         text("J1", 12.15, 11.6, 0.9, rot=90)
         text("J3", 52.85, 29.4, 0.9, rot=90)
         text("J2", 40.2, 63.85, 0.9, just="right")
         text("J5 NMEA 2000", 15.6, 62.6, 0.9)
         text("J6", 58.7, 35.9, 0.9, just="right")
+        text("J7 5V IN", 15.0, 0.15, 0.9, just="left")
         # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
         # here instead, which said less than the labels now do.)
         # Lines beside J6 stop short of its pin labels; the long one goes below them.
         lines = ["WIRING", "FUEL TRIM OIL TEMP: S terminal", "IGN: any gauge's I terminal",
-                 "Taps: 10k at the gauge end", "BAT+: +12V always on, 1A fuse",
+                 "Taps: 10k at the gauge end", "BAT+: dashboard 12V, 1A fuse",
                  "GND: gauge G / battery -", "TACH: gray wire, coil TACH",
-                 "NMEA: drop cable, shield unused", "LIGHTS: J6 to the LED board", "",
+                 "NMEA: drop cable, shield unused", "LIGHTS: J6 to the LED board",
+                 "5V IN: J7, converter at 5.1V", "",
                  "PROBES: red 3V3, yellow DATA, black GND",
                  "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
         below_j6 = pcbnew.ToMM(self.fps["J6"].GetCourtyard(pcbnew.F_CrtYd).BBox().GetBottom()) - OY + 1.0

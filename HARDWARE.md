@@ -23,7 +23,7 @@ starting point, not gospel, and check current price/stock before ordering.
 | 8 | ADS1115 board (I2C 16-bit ADC) + a 47 kΩ / 10 kΩ resistor pair | Battery voltage (`BOAT_BATTERY_ADC=true`) | $10 |
 | 9 | PCA9685 PWM board + 3 logic-level N-channel MOSFETs (e.g. IRLZ44N) + gate resistors/pulldowns | Drives the 12 V RGB strips | $15-25 |
 | 10 | GPS receiver (u-blox NEO-6M/NEO-M8N or similar, UART or USB) | Position and heading | $15-30 |
-| 11 | Fuses, tinned marine wire, connectors, a project box, a 12 V-to-5 V supply for the Pi if not using a HAT with one built in | Wiring and enclosure | $40-80 |
+| 11 | Fuses, tinned marine wire, connectors, a project box, a 12 V-to-5 V converter for the Pi (3 A+, with output overvoltage protection; with the sensor board it plugs into the board's J7 and powers the Pi through the header) | Wiring and enclosure | $40-80 |
 
 That's roughly **$950-1200** all-in, dominated by the transducer. If that's too much for a first
 pass, skip #6 and #7 for now — everything else (engine data, lights, GPS, media) works and is
