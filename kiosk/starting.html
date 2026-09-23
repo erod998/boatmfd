@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Starting up</title>
+<!--
+  The kiosk's first page, opened from disk by start-kiosk.sh: it says "Starting up" until the
+  dashboard's server answers, then switches to the dashboard. It matches the boot splash
+  (plymouth/splash.png) so the hand-over from boot to dashboard is one continuous screen.
+  The dashboard's address comes after the # (start-kiosk.sh passes it).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #d6d8dc; cursor: default; }
+  body { display: flex; align-items: center; justify-content: center; flex-direction: column;
+         font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  #msg { font-size: 48px; font-weight: 300; letter-spacing: 0.02em; }
+  #dots::after { content: ""; animation: dots 1.5s steps(4, end) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  #hint { margin-top: 28px; font-size: 18px; color: #7d8189; visibility: hidden; text-align: center; }
+</style>
+</head>
+<body>
+<div id="msg">Starting up<span id="dots"></span></div>
+<div id="hint">Still waiting for the dashboard's server.<br>On the Pi: <code>sudo systemctl status boat-dashboard</code></div>
+<script>
+  const target = decodeURIComponent(location.hash.slice(1)) || "http://127.0.0.1:8090/";
+  const started = Date.now();
+
+  // A page opened from disk can't read another origin's reply, but it can tell whether the server
+  // answered at all: a no-cors fetch succeeds (opaquely) once it's up and fails while it isn't.
+  async function poll() {
+    try {
+      await fetch(target, { mode: "no-cors", cache: "no-store" });
+      location.replace(target);
+      return;
+    } catch (e) {
+      if (Date.now() - started > 90000) document.getElementById("hint").style.visibility = "visible";
+      setTimeout(poll, 1000);
+    }
+  }
+  poll();
+</script>
+</body>
+</html>

@@ -945,13 +945,17 @@ Then `sudo systemctl enable --now boat-dashboard`. To pick up new code later,
 from an SSH session on the Pi itself: `./update.sh` (pulls, then restarts the
 service -- one-time `chmod +x update.sh` first, or just `bash update.sh`).
 
-Show it full-screen by
-starting Chromium in kiosk mode from your desktop's autostart (the file depends
-on your Pi OS version; on Bookworm it is `~/.config/labwc/autostart`):
+**Full screen on the Pi's own display** ([kiosk/](kiosk/)), from an SSH session on the Pi:
 
-```bash
-chromium-browser --kiosk --noerrdialogs --disable-infobars --autoplay-policy=no-user-gesture-required http://localhost:8090 &
-```
+- `kiosk/start-kiosk.sh` opens the dashboard in Chromium's kiosk mode on the display, now
+  (`--stop` closes it; so does Alt+F4). It finds the desktop session itself, so it works over
+  SSH, and first shows a "Starting up..." page that switches to the dashboard as soon as the
+  server answers.
+- `kiosk/install-autostart.sh`, once: the Pi boots straight into its desktop, logged in, and opens
+  the kiosk at every login (`--undo` to stop that).
+- `kiosk/quiet-boot.sh`, once, then `sudo reboot`: no rainbow square, logos or boot text -- a
+  black screen that says "Starting up...", the same as the kiosk's first page, until the
+  dashboard appears. Every boot file it touches is backed up first; `--undo` puts them back.
 
 ## Architecture
 

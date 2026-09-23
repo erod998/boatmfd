@@ -1,0 +1,9 @@
+# The boot splash: black, with "Starting up..." in the middle (splash.png), the same as the
+# kiosk's first page (kiosk/starting.html), so boot runs straight into the dashboard.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+message = Image("splash.png");
+sprite = Sprite(message);
+sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - message.GetWidth() / 2);
+sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - message.GetHeight() / 2);
