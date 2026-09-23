@@ -6,6 +6,9 @@ for the *why* and the wiring detail; this file is the *what to buy* and *what or
 it in*. Nothing here is final until you've soldered it — treat part numbers as a strong
 starting point, not gospel, and check current price/stock before ordering.
 
+
+> **Engine data without a converter:** instead of the CX5003, the [passive-tap sensor board](SENSOR_BOARD.md) reads fuel, trim, oil, battery and RPM straight off the existing gauges' wires while they keep working. It is a design to build, not yet a proven board.
+
 ## Parts list
 
 | # | Part | Why | Rough price |

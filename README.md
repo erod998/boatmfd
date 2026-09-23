@@ -465,8 +465,17 @@ panel on the dashboard says whether the bus is being heard.
 
 ### Alternative: the Pi reads the senders itself (`BOAT_SENSORS=real`)
 
-Skip this section if you use an NMEA 2000 converter. Everything on a boat like
-this is analog, so a small interface board sits between the senders and the Pi.
+Skip this section if you use an NMEA 2000 converter.
+
+**Recommended: the passive-tap sensor board** ([SENSOR_BOARD.md](SENSOR_BOARD.md),
+`BOAT_SENDER_WIRING=tap`). It only *listens* to the wires the analog gauges already drive, so every
+analog gauge stays connected and working -- if the Pi is off, the helm is a normal helm. It reads
+fuel, trim, oil, battery and RPM (through an optocoupler), and calibrates from the gauges
+themselves: "just filled up", then one mark read off the analog fuel gauge, calibrates the whole
+fuel scale. The rest of this section is the older **reference** wiring (`BOAT_SENDER_WIRING=reference`,
+the default), which takes each sender over and means disconnecting its analog gauge.
+
+Everything on a boat like this is analog, so a small interface board sits between the senders and the Pi.
 This was designed for a MerCruiser 3.0 (4-cylinder, distributor ignition,
 Alpha One drive) with US-standard resistive senders, but every value is
 configurable.

@@ -79,6 +79,44 @@
     <div class="saved" id="oilSavedN2k"></div>
   </div>
 
+  <!-- BOAT_SENDER_WIRING=tap: the sensor board listens to the wires the analog gauges already drive -->
+  <div class="card" data-mode="tap"><h2>Gauge power</h2>
+    <div class="reading"><span id="tapGaugeV">--</span><small>V at the gauges</small> <span id="tapGaugesOn" style="margin-left:14px;font-size:16px"></span></div>
+    <p>The analog gauges stay connected and keep working; the board only reads the wires they already drive. Every reading is taken relative to the gauges' own supply, so it doesn't shift when the engine starts charging. The key must be ON (engine can be off) to save anything, because the gauges are dark otherwise.</p>
+    <p>Check once: with the key on, note the fuel % shown, then start the engine. It should not move. If it moves by more than a percent or two, your gauges regulate their own supply: switch to plain volts (this clears saved points).</p>
+    <div class="row"><button data-act="tap_ratiometric" data-value="1" id="tapRatioOn">Relative to supply</button><button data-act="tap_ratiometric" data-value="0" id="tapRatioOff">Plain volts</button></div>
+  </div>
+
+  <div class="card" id="tapFuelCard" data-mode="tap"><h2>Fuel level</h2>
+    <div class="reading"><span id="tapFuelPct">--</span><small>% shown</small> <span id="tapFuelV" style="margin-left:14px;font-size:18px">--</span><small>V on the sender wire</small></div>
+    <p>Two points calibrate the whole gauge, empty included. The best first one is real: <b>right after filling up</b>. Then, any time later, tap the mark the analog gauge is pointing at. Points far apart work best; a new point at the same level replaces the old one.</p>
+    <div class="row"><button class="primary" data-act="fuel_full">Just filled up: save FULL</button></div>
+    <div class="row"><span style="color:var(--dim)">Analog gauge reads:</span>
+      <button data-act="fuel_point" data-value="75">&frac34;</button><button data-act="fuel_point" data-value="50">&frac12;</button>
+      <button data-act="fuel_point" data-value="25">&frac14;</button></div>
+    <div class="row"><input id="tapFuelInput" inputmode="decimal" placeholder="other %" /><button data-act="fuel_point" data-input="tapFuelInput">Save point</button>
+      <button data-act="tap_clear" data-device="fuel">Clear points</button></div>
+    <div class="saved" id="tapFuelSaved"></div>
+  </div>
+
+  <div class="card" data-mode="tap"><h2>Trim</h2>
+    <div class="reading"><span id="tapTrimPct">--</span><small>%</small> <span id="tapTrimV" style="margin-left:14px;font-size:18px">--</span><small>V on the sender wire</small></div>
+    <p>Run the drive fully DOWN and save, then fully UP and save. If the dashboard and the analog gauge disagree in the middle, set the drive so the analog gauge is at its middle mark and save that too.</p>
+    <div class="row"><button data-act="trim_down">Fully DOWN: save</button><button data-act="trim_up">Fully UP: save</button>
+      <button data-act="trim_point" data-value="50">Gauge at middle: save</button></div>
+    <div class="row"><button data-act="tap_clear" data-device="trim">Clear points</button></div>
+    <div class="saved" id="tapTrimSaved"></div>
+  </div>
+
+  <div class="card" id="tapOilCard" data-mode="tap"><h2>Oil pressure</h2>
+    <div class="reading"><span id="tapOilPsi">--</span><small>psi</small> <span id="tapOilV" style="margin-left:14px;font-size:18px">--</span><small>V on the sender wire</small></div>
+    <p>Key ON with the engine off is 0 psi: save that. Then with the engine running, save what the analog gauge reads -- at idle and again at cruise gives the best in-between.</p>
+    <div class="row"><button data-act="oil_zero">Key on, engine off: save 0 psi</button></div>
+    <div class="row"><input id="tapOilInput" inputmode="decimal" placeholder="gauge psi" /><button data-act="oil_point" data-input="tapOilInput">Save point</button>
+      <button data-act="tap_clear" data-device="oil">Clear points</button></div>
+    <div class="saved" id="tapOilSaved"></div>
+  </div>
+
   <!-- BOAT_SENSORS=real: the Pi reads the senders itself, in ohms -->
   <div class="card" id="fuelCard" data-mode="real"><h2>Fuel level (analog sender)</h2>
     <div class="reading"><span id="fuelOhms">--</span><small>ohms</small> <span id="fuelPct" style="margin-left:14px">--</span><small>% shown</small></div>
@@ -188,6 +226,33 @@ function renderProbes(s, c) {
   });
 }
 
+// The passive-tap board: what each tap reads, what it shows, and what its points say.
+function tapSaved(t, unit) {
+  if (!t) return "";
+  const pts = (t.points || []).slice().sort((a, b) => b[1] - a[1]).map((p) => `${p[1]}${unit}`).join(", ");
+  const how = t.method === "divider" ? `Divider model, within ${t.residual_pct}% of every point.`
+    : t.method === "table" ? "Straight lines between your points." : "";
+  return [pts ? `Points: ${pts}.` : "No points yet.", how, t.note ? t.note.charAt(0).toUpperCase() + t.note.slice(1) + "." : ""]
+    .filter(Boolean).join(" ");
+}
+
+function renderTap(t) {
+  $("tapGaugeV").textContent = num(t.gauge_v, 2);
+  $("tapGaugesOn").textContent = t.gauges_on ? "gauges on" : "gauges OFF: turn the key to ON";
+  $("tapGaugesOn").style.color = t.gauges_on ? "var(--green)" : "var(--red)";
+  $("tapRatioOn").classList.toggle("on", !!t.ratiometric);
+  $("tapRatioOff").classList.toggle("on", !t.ratiometric);
+  $("tapFuelCard").style.display = t.fuel ? "block" : "none";
+  $("tapOilCard").style.display = t.oil ? "block" : "none";
+  const f = t.fuel || {}, tr = t.trim || {}, o = t.oil || {};
+  $("tapFuelPct").textContent = num(f.value, 0); $("tapFuelV").textContent = num(f.tap_v, 2);
+  $("tapTrimPct").textContent = num(tr.value, 0); $("tapTrimV").textContent = num(tr.tap_v, 2);
+  $("tapOilPsi").textContent = num(o.value, 0); $("tapOilV").textContent = num(o.tap_v, 2);
+  $("tapFuelSaved").textContent = tapSaved(t.fuel, "%");
+  $("tapTrimSaved").textContent = tapSaved(t.trim, "%");
+  $("tapOilSaved").textContent = tapSaved(t.oil, " psi");
+}
+
 function render(s) {
   lastStatus = s;
   $("simNote").style.display = s.real ? "none" : "block";
@@ -213,6 +278,7 @@ function render(s) {
     $("oilCard").style.display = s.oil_enabled ? "block" : "none";
   }
 
+  if (mode === "tap") renderTap(s.tap || {});
   renderN2k(s.n2k, e, s.env);
   $("depthFt").textContent = num(s.depth_ft, 1);
   $("depthSaved").textContent = `Saved offset: ${c.depth.offset_ft >= 0 ? "+" : ""}${c.depth.offset_ft} ft`;
@@ -245,9 +311,15 @@ async function send(action, value, device) {
 
 document.querySelectorAll("button[data-act]").forEach((b) => {
   b.addEventListener("click", () => {
-    const input = b.dataset.input ? parseFloat($(b.dataset.input).value) : null;
-    if (b.dataset.input && Number.isNaN(input)) return show("Type a number first", false);
-    send(b.dataset.act, input, null);
+    if (b.dataset.act === "tap_clear" && !confirm(`Clear every ${b.dataset.device} point?`)) return;
+    if (b.dataset.act === "tap_ratiometric" && !b.classList.contains("on")
+        && !confirm("Switching this clears every saved fuel, trim and oil point. Continue?")) return;
+    let value = b.dataset.value != null ? parseFloat(b.dataset.value) : null;
+    if (b.dataset.input) {
+      value = parseFloat($(b.dataset.input).value);
+      if (Number.isNaN(value)) return show("Type a number first", false);
+    }
+    send(b.dataset.act, value, b.dataset.device || null);
   });
 });
 

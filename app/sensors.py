@@ -33,6 +33,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from . import sender_tap
 from .n2k_engine import N2kEngineData
 from .n2k_env import N2kEnvData
 from .state import BoatInfo, EngineInfo, estimate_gph
@@ -72,6 +73,20 @@ def ohms_from_divider(v_node, v_rail, r_ref):
     if v_node >= v_rail * 0.98:
         return None  # sender open or disconnected
     return r_ref * max(v_node, 0.0) / (v_rail - v_node)
+
+
+class ADS1115Pair:
+    """The sensor board's two converters as one eight-input device: 0-3 on the first, 4-7 on the second."""
+
+    def __init__(self, first, second=None):
+        self.first, self.second = first, second
+
+    def read_volts(self, channel):
+        if channel >= 4:
+            if self.second is None:
+                raise OSError("no second ADS1115 on this board")
+            return self.second.read_volts(channel - 4)
+        return self.first.read_volts(channel)
 
 
 def linear_percent(value, at_0, at_100):
@@ -127,12 +142,13 @@ class TachCounter:
 class LgpioEdgeInput:
     """Rising-edge timestamps from a GPIO via lgpio (works on every Pi, including the Pi 5)."""
 
-    def __init__(self, gpio, on_edge, chip=0):
+    def __init__(self, gpio, on_edge, chip=0, pull="down"):
         import lgpio
 
         self._lgpio = lgpio
         self._handle = lgpio.gpiochip_open(chip)
-        lgpio.gpio_claim_alert(self._handle, gpio, lgpio.RISING_EDGE, lgpio.SET_PULL_DOWN)
+        flags = {"down": lgpio.SET_PULL_DOWN, "up": lgpio.SET_PULL_UP, "none": lgpio.SET_PULL_NONE}[pull]
+        lgpio.gpio_claim_alert(self._handle, gpio, lgpio.RISING_EDGE, flags)
         self._callback = lgpio.callback(self._handle, gpio, lgpio.RISING_EDGE, lambda chip, g, level, ts: on_edge(ts))
 
 
@@ -174,6 +190,9 @@ class Calibration:
         "probes": {"engine": "", "water": "", "engine_offset_f": 0.0, "water_offset_f": 0.0},
         "fuel_burn": {"scale": 1.0, "used_gal": 0.0},
         "depth": {"offset_ft": 0.0},  # added to the transducer's own reading; positive raises the displayed depth
+        # BOAT_SENDER_WIRING=tap: captured (reading, value) points, see sender_tap.py. The fuel
+        # sender's empty/full ohms above are what make two fuel points enough for the whole scale.
+        "tap": {"fuel_points": [], "trim_points": [], "oil_points": [], "ratiometric": True},
     }
 
     def __init__(self, path):
@@ -217,8 +236,15 @@ class SensorHub:
         self.n2k = n2k  # N2kEngineData or None
         self.env = env  # N2kEnvData (depth, sea temperature) or None
         self._clock = clock
+        self.tap = settings.sensors == "real" and settings.sender_wiring == "tap"
         if settings.sensors == "n2k":  # the senders belong to the engine converter; the Pi only measures the battery
             self.channels = {"battery": 2} if settings.battery_adc else {}
+        elif self.tap:  # the sensor board: see SENSOR_BOARD.md for which input is which
+            self.channels = {"trim": 1, "battery": 2, "gauge": 3}
+            if settings.fuel_sender:
+                self.channels["fuel"] = 0
+            if settings.oil_sender:
+                self.channels["oil"] = 4
         else:
             self.channels = {"trim": 1, "battery": 2}
             if settings.fuel_sender:
@@ -226,6 +252,7 @@ class SensorHub:
             if settings.oil_sender:
                 self.channels["oil"] = 3
         self._smoothed = {}
+        self._ratio_history = {}   # tap name -> deque of (time, smoothed ratio), for the settle check
         self._readings = {}
         self._probe_temps = {}
         self._used_gal = float(calibration.get("fuel_burn", "used_gal"))
@@ -299,10 +326,30 @@ class SensorHub:
                 volts[name] = None
 
         readings = {}
-        for name in ("fuel", "trim", "oil"):
-            v = volts.get(name)
-            ohms = None if v is None else ohms_from_divider(v, s.rail_volts, s.sender_ref_ohms)
-            readings[name + "_ohms"] = self._smooth(name, ohms)
+        if self.tap:
+            # The ratio is formed per sample and smoothed afterwards: smoothing the sender and supply
+            # voltages separately would make the level jump every time the engine starts charging.
+            scale = (s.tap_r_top + s.tap_r_bottom) / s.tap_r_bottom
+            gauge_v = None if volts.get("gauge") is None else volts["gauge"] * scale
+            readings["gauge_v"] = gauge_v
+            ratiometric = bool(self.cal.get("tap", "ratiometric"))
+            for name in ("fuel", "trim", "oil"):
+                if name not in self.channels:
+                    continue
+                tap_v = None if volts.get(name) is None else volts[name] * scale
+                readings[name + "_tap_v"] = tap_v
+                ratio = self._smooth(name, sender_tap.tap_ratio(tap_v, gauge_v, ratiometric))
+                readings[name + "_ratio"] = ratio
+                history = self._ratio_history.setdefault(name, deque(maxlen=64))
+                if ratio is None:
+                    history.clear()
+                else:
+                    history.append((self._clock(), ratio))
+        else:
+            for name in ("fuel", "trim", "oil"):
+                v = volts.get(name)
+                ohms = None if v is None else ohms_from_divider(v, s.rail_volts, s.sender_ref_ohms)
+                readings[name + "_ohms"] = self._smooth(name, ohms)
         v = volts.get("battery")
         raw_battery = None if v is None else v * (s.batt_r_top + s.batt_r_bottom) / s.batt_r_bottom
         readings["battery_v_raw"] = self._smooth("battery", raw_battery)
@@ -381,6 +428,8 @@ class SensorHub:
         if level is not None:  # a NMEA 2000 source (the converter's fuel input, or a tank-level adapter) beats the analog sender
             lo, hi = self.cal.get("fuel", "empty_pct"), self.cal.get("fuel", "full_pct")
             fuel = level if (lo, hi) == (0.0, 100.0) else linear_percent(level, lo, hi)
+        elif self.tap:
+            fuel = self._tap_fuel(r)[0]
         elif r.get("fuel_ohms") is not None:
             fuel = linear_percent(r["fuel_ohms"], self.cal.get("fuel", "empty_ohm"), self.cal.get("fuel", "full_ohm"))
 
@@ -389,6 +438,8 @@ class SensorHub:
             down, up = self.cal.get("trim", "down_pct"), self.cal.get("trim", "up_pct")
             if down is not None and up is not None:
                 trim = linear_percent(heard_trim, down, up)
+        elif self.tap:
+            trim = sender_tap.trim_level(r.get("trim_ratio"), self.cal.get("tap", "trim_points"))[0]
         else:
             down, up = self.cal.get("trim", "down_ohm"), self.cal.get("trim", "up_ohm")
             if r.get("trim_ohms") is not None and down is not None and up is not None:
@@ -397,6 +448,9 @@ class SensorHub:
         heard_oil = n2k.oil_pressure_psi() if n2k else None
         if heard_oil is not None:
             oil = heard_oil * self.cal.get("oil", "n2k_full_psi") / N2K_OIL_FULL_PSI
+        elif self.tap:
+            oil = sender_tap.oil_pressure(r.get("oil_ratio"), self.cal.get("tap", "oil_points"),
+                                          bool(self.cal.get("tap", "ratiometric")))[0]
         elif r.get("oil_ohms") is not None:
             pct = linear_percent(r["oil_ohms"], self.cal.get("oil", "zero_ohm"), self.cal.get("oil", "full_ohm"))
             oil = None if pct is None else pct / 100.0 * self.cal.get("oil", "full_psi")
@@ -416,6 +470,73 @@ class SensorHub:
             "coolant_f": None if coolant is None else round(coolant),
         }
 
+    def _tap_fuel(self, r=None):
+        r = self.readings() if r is None else r
+        return sender_tap.fuel_level(r.get("fuel_ratio"), self.cal.get("tap", "fuel_points"),
+                                     self.cal.get("fuel", "empty_ohm"), self.cal.get("fuel", "full_ohm"))
+
+    def _tap_status(self):
+        r = self.readings()
+        ratiometric = bool(self.cal.get("tap", "ratiometric"))
+        out = {"gauge_v": r.get("gauge_v"), "ratiometric": ratiometric,
+               "gauges_on": r.get("gauge_v") is not None and r["gauge_v"] >= sender_tap.MIN_GAUGE_SUPPLY_V}
+        how = {
+            "fuel": lambda: self._tap_fuel(r),
+            "trim": lambda: sender_tap.trim_level(r.get("trim_ratio"), self.cal.get("tap", "trim_points")),
+            "oil": lambda: sender_tap.oil_pressure(r.get("oil_ratio"), self.cal.get("tap", "oil_points"), ratiometric),
+        }
+        for name, compute in how.items():
+            if name not in self.channels:
+                continue
+            value, detail = compute()
+            # The conversion's own "points" is a count; the page wants the list, so it goes last.
+            out[name] = {**detail, "tap_v": r.get(name + "_tap_v"), "ratio": r.get(name + "_ratio"), "value": value,
+                         "points": sender_tap.clean_points(self.cal.get("tap", name + "_points"))}
+        return out
+
+    # How close a new point's value must be to an old one to replace it rather than join it.
+    TAP_SAME = {"fuel": 3.0, "trim": 3.0, "oil": 2.0}
+    TAP_RANGE = {"fuel": (0.0, 100.0), "trim": (0.0, 100.0), "oil": (0.0, 150.0)}
+
+    SETTLE_S = 3.0          # a captured reading must not have moved more than this much...
+    SETTLE_FRACTION = 0.015  # ...(as a share of itself) over this long
+
+    def _settled(self, name):
+        """Has this tap's smoothed reading stopped moving? A point saved while it is still gliding
+        toward a new level is simply wrong, and one wrong point bends the whole fitted curve -- in a
+        test, a half-tank point saved a few seconds early put a 12% tank outside the plausible range.
+        Right after the key comes on there is no history yet, and none is needed: the smoothing
+        restarts at the exact current value."""
+        history = self._ratio_history.get(name)
+        if not history:
+            return True
+        now_t, now_r = history[-1]
+        earlier = [r for t, r in history if now_t - t >= self.SETTLE_S]
+        if not earlier:
+            return True
+        return abs(now_r - earlier[-1]) <= max(0.002, self.SETTLE_FRACTION * now_r)
+
+    def _capture_tap(self, name, value):
+        if name not in self.channels:
+            raise ValueError(f"the {name} tap is not enabled")
+        lo, hi = self.TAP_RANGE[name]
+        if value is None or not lo <= value <= hi:
+            raise ValueError(f"enter a value from {lo:g} to {hi:g}")
+        r = self.readings()
+        ratio = r.get(name + "_ratio")
+        if ratio is None:
+            if self.cal.get("tap", "ratiometric") and (r.get("gauge_v") or 0) < sender_tap.MIN_GAUGE_SUPPLY_V:
+                raise ValueError("the gauges have no power: turn the key to ON (the engine can stay off)")
+            raise ValueError(f"no reading from the {name} tap: is its wire connected at the gauge?")
+        if not self._settled(name):
+            raise ValueError(f"the {name} reading is still settling: wait a few seconds, then save again")
+        points = sender_tap.add_point(self.cal.get("tap", name + "_points"), ratio, value, self.TAP_SAME[name])
+        self.cal.set("tap", name + "_points", points)
+        unit = "psi" if name == "oil" else "%"
+        message = f"Saved {name} {value:g}{unit} ({len(points)} point{'s' if len(points) != 1 else ''})"
+        note = self._tap_status().get(name, {}).get("note")
+        return f"{message}. {note[0].upper()}{note[1:]}." if note else message
+
     def battery_volts(self):
         raw = self.readings().get("battery_v_raw")
         if raw is not None:
@@ -432,7 +553,8 @@ class SensorHub:
             probes = dict(self._probe_temps)
         return {
             "real": True,
-            "mode": self.settings.sensors,
+            "mode": "tap" if self.tap else self.settings.sensors,
+            "tap": self._tap_status() if self.tap else None,
             "readings": self.readings(),
             "engine": self.engine(),
             "battery_volts": self.battery_volts(),
@@ -462,6 +584,28 @@ class SensorHub:
                     raise ValueError("nothing heard on NMEA 2000 for that reading (is the converter powered, and is its instance number the one in the settings?)")
                 self.cal.set(section, key, round(heard, 1))
                 return "Saved %.1f%%" % heard
+        if self.tap:
+            shortcuts = {"fuel_full": ("fuel", 100.0), "fuel_empty": ("fuel", 0.0), "trim_down": ("trim", 0.0),
+                         "trim_up": ("trim", 100.0), "oil_zero": ("oil", 0.0)}
+            if action in shortcuts:
+                return self._capture_tap(*shortcuts[action])
+            if action in ("fuel_point", "trim_point", "oil_point"):
+                return self._capture_tap(action.split("_")[0], value)
+            if action == "tap_clear":
+                if device not in ("fuel", "trim", "oil"):
+                    raise ValueError("clear which tap: fuel, trim or oil?")
+                self.cal.set("tap", device + "_points", [])
+                return f"Cleared the {device} points"
+            if action == "tap_ratiometric":
+                # A point is a share of the supply in one mode and plain volts in the other; kept
+                # across the switch they would be read in the wrong units, so they go with it.
+                on = bool(value)
+                if on != bool(self.cal.get("tap", "ratiometric")):
+                    for name in ("fuel", "trim", "oil"):
+                        self.cal.set("tap", name + "_points", [])
+                self.cal.set("tap", "ratiometric", on)
+                return ("Readings are relative to the gauge supply" if on else "Readings are plain volts") + \
+                    "; saved points were cleared, so capture them again"
         if action == "oil_full_scale":
             if not value or value <= 0:
                 raise ValueError("enter your oil sender's full-scale pressure in psi (US-standard senders are 80)")
@@ -557,13 +701,16 @@ def make_sensor_sources(settings, data_dir, node=None):
         try:
             from smbus2 import SMBus
 
-            adc = ADS1115(SMBus(settings.i2c_bus), settings.ads1115_address)
+            bus = SMBus(settings.i2c_bus)
+            adc = ADS1115(bus, settings.ads1115_address)
+            if settings.sensors == "real" and settings.sender_wiring == "tap" and settings.oil_sender:
+                adc = ADS1115Pair(adc, ADS1115(bus, settings.ads1115_address2))
         except Exception as exc:  # pragma: no cover - hardware-dependent
             print(f"[sensors] could not open the ADS1115 on I2C bus {settings.i2c_bus} ({exc}); analog inputs will show no data")
     if settings.sensors == "real":
         try:
             tach = TachCounter(settings.tach_ppr)
-            tach.input = LgpioEdgeInput(settings.tach_gpio, tach.edge)
+            tach.input = LgpioEdgeInput(settings.tach_gpio, tach.edge, pull=settings.tach_pull)
         except Exception as exc:  # pragma: no cover - hardware-dependent
             print(f"[sensors] could not watch GPIO {settings.tach_gpio} for the tach ({exc}); RPM will show no data")
             tach = None

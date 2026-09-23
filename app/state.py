@@ -29,6 +29,19 @@ class Settings:
     tach_ppr: int = int(os.environ.get("BOAT_TACH_PPR", "2"))  # pulses per revolution: 2 for a 4-cyl distributor engine
     redline_rpm: int = int(os.environ.get("BOAT_REDLINE_RPM", "4800"))
     oil_sender: bool = os.environ.get("BOAT_OIL_SENDER", "false").lower() == "true"
+    # How the Pi reads the senders when BOAT_SENSORS=real:
+    #   reference -- it takes each sender over through its own 240 ohm reference resistor, and the
+    #                analog gauge on that sender must be disconnected
+    #   tap       -- it only listens to the wire each analog gauge already drives, so the gauges stay
+    #                connected and keep working (the sensor board in SENSOR_BOARD.md)
+    sender_wiring: str = os.environ.get("BOAT_SENDER_WIRING", "reference")
+    ads1115_address2: int = int(os.environ.get("BOAT_ADS1115_ADDR2", "0x49"), 0)  # the board's second ADC (oil, spare)
+    # Each tap's divider: 10k in heatshrink at the gauge end of the tap wire + 39k on the board, over 10k.
+    tap_r_top: float = float(os.environ.get("BOAT_TAP_R_TOP", "49000"))
+    tap_r_bottom: float = float(os.environ.get("BOAT_TAP_R_BOTTOM", "10000"))
+    # The tach GPIO's internal pull: down for the resistor+zener input, none for the sensor board's
+    # optocoupler input (which has its own pull-up), up if a board needs it.
+    tach_pull: str = os.environ.get("BOAT_TACH_PULL", "down")
     # Is the analog fuel-level sender wired to the ADC? Set false if fuel level comes from NMEA 2000 instead.
     fuel_sender: bool = os.environ.get("BOAT_FUEL_SENDER", "true").lower() == "true"
     n2k_engine_instance: int = int(os.environ.get("BOAT_N2K_ENGINE_INSTANCE", "0"))  # for the engine converter and fuel-flow sensor
