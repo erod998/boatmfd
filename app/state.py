@@ -19,6 +19,10 @@ class Settings:
     led_gpio_pin: int = int(os.environ.get("BOAT_LED_GPIO", "18"))
     led_driver: str = os.environ.get("BOAT_LED_DRIVER", "mock")  # mock | ws281x (addressable) | pwm (12 V RGB strip)
     pca9685_address: int = int(os.environ.get("BOAT_PCA9685_ADDR", "0x40"), 0)
+    # The I2C bus the LED board's PCA9685s are on. The sensor board gives them one of their own on
+    # GPIO5/6, apart from its converters: dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6 and
+    # BOAT_LED_I2C_BUS=7. Without the board they share the main bus, BOAT_I2C_BUS.
+    led_i2c_bus: int = int(os.environ.get("BOAT_LED_I2C_BUS", os.environ.get("BOAT_I2C_BUS", "1")))
     led_pwm_channels: str = os.environ.get("BOAT_LED_PWM_CHANNELS", "0,1,2")  # PCA9685 outputs for R,G,B
     # sim | n2k (engine data from a NMEA 2000 converter such as the CX5003) | real (the Pi reads senders, tach and probes itself)
     sensors: str = os.environ.get("BOAT_SENSORS", "sim")

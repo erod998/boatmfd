@@ -324,24 +324,21 @@ def build():
     sh.items.append(text("TACH: Delco EST gray wire -> optocoupler", tx - 7.62, 167.64, size=1.6, bold=True))
 
     # ---- everything else: placed, and connected by stubs
-    others = {"J4": (35.56, 83.82), "J1": (35.56, 157.48), "J2": (35.56, 200.66), "J3": (35.56, 228.6),
+    others = {"J4": (35.56, 83.82), "J1": (35.56, 157.48), "J2": (35.56, 200.66),
               "U1": (355.6, 71.12), "U2": (355.6, 127.0),
               "C7": (386.08, 58.42), "C8": (398.78, 58.42), "C9": (386.08, 114.3), "C10": (398.78, 114.3),
               "R22": (175.26, 190.5), "R23": (190.5, 190.5),
-              "D8": (254.0, 210.82), "R25": (269.24, 190.5), "R24": (284.48, 190.5),
               "H1": (340.36, 190.5), "H2": (350.52, 190.5), "H3": (360.68, 190.5), "H4": (370.84, 190.5),
               "H5": (381.0, 190.5)}
     # The NMEA 2000 block, in signal order from the drop cable to the Pi, at the positions design.py gives.
     others.update({ref: parts[ref].sch for ref in
                    ("J5", "D9", "D10", "C16", "U6", "C17", "C18", "D11", "R26", "JP1", "U5", "C15",
-                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28", "J6",
+                    "U4", "Y1", "C12", "C13", "C14", "R27", "R28", "J6", "R24", "R25",
                     "J7", "U7", "Q1", "C19", "C20", "C21", "D12") if ref in parts})
     for ref, (x, y) in others.items():
-        if ref == "D8":
-            place(ref, x, y, text_side="below")
-        elif ref.startswith("H"):
+        if ref.startswith("H"):
             place(ref, x, y, hide_value=True)
-        elif ref in ("R22", "R24", "R27", "R28"):
+        elif ref in ("R22", "R24", "R25", "R27", "R28"):
             place(ref, x, y, rot=180)       # pull-ups: turned so +3V3 is at the top
         else:
             place(ref, x, y)
@@ -374,8 +371,8 @@ def build():
                 sh.stub(part.ref, number, net)
 
     for body, x, y in [("RASPBERRY PI HEADER", 20.32, 50.8), ("HELM: gauge taps and battery", 20.32, 142.24),
-                       ("TACH: Delco EST (ignition side)", 20.32, 190.5), ("TEMPERATURE PROBES", 20.32, 218.44),
-                       ("CONVERTERS", 342.9, 45.72), ("1-WIRE PROBES", 246.38, 167.64),
+                       ("TACH: Delco EST (ignition side)", 20.32, 190.5),
+                       ("CONVERTERS", 342.9, 45.72),
                        ("TACH OUTPUT", 167.64, 167.64), ("MOUNTING / POWER FLAGS", 330.2, 167.64),
                        ("LIGHTS: to a separate LED board", 254.0, 228.6),
                        ("5 V IN: from the 12 V -> 5 V converter, to the Pi's 5 V pins", 414.02, 55.88),
@@ -390,7 +387,7 @@ def build():
         "1N4148W and 10n across the LED. One rising edge per ignition cycle on GPIO13; 2 per revolution on the 3.0 4-cylinder (BOAT_TACH_PPR=2).\n"
         "Keep every TACH_* net (the ignition side) 3 mm from all other copper: see sensor-board.kicad_dru.\n"
         "Software: BOAT_SENSORS=real BOAT_SENDER_WIRING=tap BOAT_TACH_PULL=none BOAT_TACH_GPIO=13 BOAT_OIL_SENDER=true BOAT_TEMP_SENDER=true;\n"
-        "dtoverlay=w1-gpio,gpiopin=26. Channel map: fuel 0, trim 1, battery 2, gauge supply 3, oil 4, temp 5 -- see SENSOR_BOARD.md.",
+        "Channel map: fuel 0, trim 1, battery 2, gauge supply 3, oil 4, temp 5 -- see SENSOR_BOARD.md.",
         20.32, 256.54, size=1.5))
     sh.items.append(text(
         "NMEA 2000 (Fusion stereo, depth transducer): J5 takes a drop cable -- 1 shield (not connected), 2 NET-S, 3 NET-C, 4 NET-H, 5 NET-L.\n"
@@ -401,7 +398,7 @@ def build():
         20.32, 381.0, size=1.5))
     sh.items.append(text(
         "J6 carries logic only: the strips' 12 V and current stay on the LED board.\n"
-        "PWM strips: PCA9685s on SDA/SCL (not 0x48/0x49, the converters, or 0x70).\n"
+        "PWM strips: PCA9685s on the LED board's own I2C bus, GPIO5/6 (dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6).\n"
         "Addressable strips: DAT1 = GPIO18 (PWM0), DAT2 = GPIO19 (PWM1), 3.3 V: buffer to 5 V there.\n"
         "AUX = GPIO21, spare. 3V3 for the LED board's logic, under 50 mA.",
         254.0, 269.24, size=1.5))

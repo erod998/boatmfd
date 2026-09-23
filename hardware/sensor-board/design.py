@@ -33,7 +33,6 @@ CHANNELS = [
 PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
            2: "+5V", 4: "+5V",   # the Pi is powered from this board (J7), through the header
            33: "TACH_GPIO",   # GPIO13: tach            (BOAT_TACH_GPIO=13)
-           37: "OW",          # GPIO26: 1-Wire probes   (dtoverlay=w1-gpio,gpiopin=26)
            # NMEA 2000: the CAN controller on SPI0, interrupt on GPIO25 -- the pins every Pi CAN HAT
            # uses, so the stock overlay drives it:
            #   dtparam=spi=on   dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25
@@ -42,8 +41,15 @@ PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
            23: "SPI_SCLK",    # GPIO11
            24: "SPI_CE0",     # GPIO8
            22: "CAN_INT",     # GPIO25
-           # LIGHTS (J6): out to a separate LED board. The PWM channels are I2C (a PCA9685 there,
-           # as many as needed); these are the addressable strips' data lines and one spare.
+           # LIGHTS (J6): out to a separate LED board. Its PWM channels (PCA9685s, as many as needed)
+           # are on an I2C bus of their own, so a fault out there can't stall the converters' bus and
+           # with it the engine data. A kernel-driven one (i2c-gpio) on two inner-row pins beside J6's
+           # corner of the header -- no hardware I2C pair is free there -- which also honours clock
+           # stretching, as the Pi's hardware I2C does not:
+           #   dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6   (BOAT_LED_I2C_BUS=7)
+           29: "LIGHT_SDA",   # GPIO5
+           31: "LIGHT_SCL",   # GPIO6
+           # ...and the addressable strips' data lines, and one spare.
            12: "LIGHT_DAT1",  # GPIO18: PWM0, rpi_ws281x's usual pin  (BOAT_LED_GPIO=18)
            35: "LIGHT_DAT2",  # GPIO19: PWM1, a second addressable strip
            40: "LIGHT_AUX",   # GPIO21: spare (PCM out, an enable, a button...)
@@ -155,12 +161,14 @@ def build_parts():
         resistor("R23", "1k", "TACH_OUT", "TACH_GPIO", sch=(228.6, 203.2), note="protects the GPIO"),
     ]
 
-    # ---------------- 1-Wire temperature probes ----------------
+    # (Rev 1.0-1.1 had a 1-Wire input for DS18B20 probes here, J3, D8, R24, R25. This boat reads
+    # every temperature from its own senders -- the engine's through the temp gauge (TEMP), the
+    # water's from the depth transducer on NMEA 2000 -- so it went in rev 1.2.)
+
+    # ---------------- the LED board's I2C bus: pull-ups, so it idles high with nothing plugged in ----------------
     parts += [
-        Part("D8", "Diode:SMAJ5.0A", "SMAJ5.0A", "Diode_SMD:D_SMA", {"1": "OW_EXT", "2": "GND"},
-             mpn="SMAJ5.0A", sch=(292.1, 205.74), note="the probe wire runs to the engine bay"),
-        resistor("R25", "100", "OW_EXT", "OW", sch=(307.34, 195.58), note="1-Wire series resistor"),
-        resistor("R24", "4.7k", "OW", "+3V3", sch=(322.58, 187.96), note="1-Wire pull-up"),
+        resistor("R24", "4.7k", "LIGHT_SDA", "+3V3", sch=(299.72, 243.84), note="J6 I2C pull-up (SDA, GPIO5)"),
+        resistor("R25", "4.7k", "LIGHT_SCL", "+3V3", sch=(312.42, 243.84), note="J6 I2C pull-up (SCL, GPIO6)"),
     ]
 
     # ---------------- NMEA 2000: an isolated CAN interface ----------------
@@ -245,10 +253,6 @@ def build_parts():
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",
              sch=(35.56, 200.66), note="TACH: the gray wire (EST coil TACH terminal); GND: the tach gauge's G terminal"),
-        Part("J3", "Connector_Generic:Conn_01x03", "PROBES",
-             "Connector_Phoenix_MC:PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange",
-             {"1": "+3V3", "2": "OW_EXT", "3": "GND"}, mpn="Phoenix Contact 1827871 (MC 1,5/ 3-GF-3,81); plug 1827716 (MC 1,5/ 3-STF-3,81)",
-             sch=(35.56, 228.6), note="DS18B20 probes: 1 red, 2 yellow, 3 black"),
         Part("J4", "Connector_Generic:Conn_02x20_Odd_Even", "RPi GPIO",
              "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical", {str(k): v for k, v in PI_PINS.items()},
              mpn="2x20 female stacking header, 2.54 mm, extra-tall (e.g. Adafruit 1979)", sch=(35.56, 83.82),
@@ -267,10 +271,10 @@ def build_parts():
         # latching connector, since the board it plugs into is on a boat too.
         Part("J6", "Connector_Generic:Conn_01x08", "LIGHTS",
              "Connector_JST:JST_GH_SM08B-GHS-TB_1x08-1MP_P1.25mm_Horizontal",
-             {"1": "+3V3", "2": "SDA", "3": "SCL", "4": "GND", "5": "LIGHT_DAT1", "6": "LIGHT_DAT2",
+             {"1": "+3V3", "2": "LIGHT_SDA", "3": "LIGHT_SCL", "4": "GND", "5": "LIGHT_DAT1", "6": "LIGHT_DAT2",
               "7": "GND", "8": "LIGHT_AUX"},
              mpn="SM08B-GHS-TB(LF)(SN); plug GHR-08V-S (JST GH, 1.25 mm, latching)", sch=(271.78, 243.84),
-             note="to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA, 3 SCL, 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"),
+             note="to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA GPIO5, 3 SCL GPIO6 (own bus), 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"),
     ]
     # H5 carries the part of the board that reaches past the Pi's edge.
     for i, ref in enumerate(("H1", "H2", "H3", "H4", "H5")):

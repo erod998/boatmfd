@@ -85,12 +85,10 @@ PLACE = {
     "U4": (20.5, 44.3, 90, "F"), "Y1": (28.5, 45.5, 0, "F"), "C14": (28.5, 42.0, 0, "F"),
     "C12": (13.8, 42.2, 90, "F"), "C13": (13.8, 45.6, 90, "F"),
     "R27": (32.2, 42.0, 90, "F"), "R28": (32.2, 46.0, 90, "F"),
-    # Probes on the right edge, and their protection.
-    "J3": (56.3, 26.0, 90, "F"),
-    "D8": (48.3, 22.2, 180, "F"), "R25": (50.8, 18.8, 180, "F"), "R24": (50.8, 15.6, 180, "F"),
-    # Lights, on the right edge between the probes and the mounting hole: the cable enters from
-    # the edge, pin 1 at the bottom (as J3). Its mounting tabs are kept 0.3 mm inside the edge.
-    "J6": (62.0, 41.6, 90, "F"),
+    # Lights, on the right edge (where rev 1.1's probe connector was): the cable enters from the
+    # edge, pin 1 at the bottom. Its mounting tabs are kept 0.3 mm inside the edge.
+    "J6": (62.0, 22.2, 90, "F"),
+    "R24": (50.8, 15.6, 180, "F"), "R25": (50.8, 18.8, 180, "F"),   # its I2C bus's pull-ups
     # 5 V in, on the tab: the plug faces up, pin 1 (+5V) right above the header's 5 V pins; the
     # ideal diode to its right, then the bulk capacitor and the TVS.
     "J7": (12.6, -3.3, 180, "F"),
@@ -109,7 +107,6 @@ for i, y in enumerate(LANE_Y):
 PIN_LABELS = {
     "J1": ["FUEL", "TRIM", "BAT+", "IGN", "OIL", "TEMP", "GND", "GND"],
     "J2": ["TACH", "GND"],
-    "J3": ["3V3", "DATA", "GND"],
     "J5": ["BARE", "RED", "BLK", "WHT", "BLU"],     # the drop cable's wire colours
     "J6": ["3V3", "SDA", "SCL", "GND", "DAT1", "DAT2", "GND", "AUX"],
     "J7": ["+5V", "GND"],
@@ -123,7 +120,7 @@ ORDER = (["VIN", "+5V", "IDEAL_G", "VCAP"] +
          [f"{n}_{s}" for n, *_ in design.CHANNELS for s in ("IN", "DIV", "ADC")] +
          ["SDA", "SCL",
           "CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK",
-          "TACH_OUT", "TACH_GPIO", "OW_EXT", "OW", "LIGHT_DAT1", "LIGHT_DAT2", "LIGHT_AUX", "+3V3"])
+          "TACH_OUT", "TACH_GPIO", "LIGHT_SDA", "LIGHT_SCL", "LIGHT_DAT1", "LIGHT_DAT2", "LIGHT_AUX", "+3V3"])
 # The SPI bus runs the length of the board, from the header down to the CAN controller, across
 # every input lane and past the converters: it prefers the bottom layer, leaving the top to the
 # parts it passes.
@@ -318,6 +315,16 @@ class Board:
             self.fps[part.ref] = fp
         for hx, hy in HOLES:
             self.router.holes.append((hx, hy, 2.75 / 2 + 0.5))
+        # The header's GND pins reach the pours through thermal spokes aimed at the gaps between
+        # the pins around them. A track squeezed past one -- between the rows, between two pins, or
+        # along the board edge above the outer row -- cuts those off, and KiCad's DRC rightly calls
+        # the pin starved. So other nets stay out of the half-pitch square round each one, up to the
+        # board edge for the outer row, on both layers.
+        for (ref, num), item in self.pad_items.items():
+            if ref == "J4" and item.net == "GND":
+                x, y = item.geo["x"], item.geo["y"]
+                top = -1.0 if y < 3.5 else y - 1.3
+                self.router.keepouts.append((x - 1.3, top, x + 1.3, y + 1.3, lambda n: n == "GND"))
         # Nothing but the ignition side inside the tach's isolation zone, and nothing but the
         # NMEA 2000 network's side inside its zone (both set after placement, from the parts that
         # are actually there).
@@ -567,26 +574,20 @@ class Board:
                     text(name, px, py + side * INSET, 0.8)
         # Which connector is which, beside its labels.
         text("J1", 12.15, 11.6, 0.9, rot=90)
-        text("J3", 52.85, 29.4, 0.9, rot=90)
         text("J2", 40.2, 63.85, 0.9, just="right")
         text("J5 NMEA 2000", 15.6, 62.6, 0.9)
-        text("J6", 58.7, 35.9, 0.9, just="right")
+        text("J6", 58.7, 16.5, 0.9, just="right")
         text("J7 5V IN", 15.0, 0.15, 0.9, just="left")
         # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
         # here instead, which said less than the labels now do.)
-        # Lines beside J6 stop short of its pin labels; the long one goes below them.
-        lines = ["WIRING", "FUEL TRIM OIL TEMP: S terminal", "IGN: any gauge's I terminal",
-                 "Taps: 10k at the gauge end", "BAT+: dashboard 12V, 1A fuse",
-                 "GND: gauge G / battery -", "TACH: gray wire, coil TACH",
-                 "NMEA: drop cable, shield unused", "LIGHTS: J6 to the LED board",
-                 "5V IN: J7, converter at 5.1V", "",
-                 "PROBES: red 3V3, yellow DATA, black GND",
+        lines = ["WIRING", "FUEL TRIM OIL TEMP: that gauge's S terminal", "IGN: any gauge's I terminal",
+                 "Taps: 10k resistor at the gauge end", "BAT+: dashboard 12V, 1A fuse",
+                 "GND: gauge G terminal / battery -", "TACH: gray wire, coil TACH terminal",
+                 "NMEA: drop cable, bare shield unused", "LIGHTS: J6, cable to the LED board",
+                 "5V IN: J7, from the converter at 5.1V",
                  "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
-        below_j6 = pcbnew.ToMM(self.fps["J6"].GetCourtyard(pcbnew.F_CrtYd).BBox().GetBottom()) - OY + 1.0
         y = 35.0
         for body in lines:
-            if body.startswith("PROBES"):   # the one line too long to pass J6's labels
-                y = max(y, below_j6)
             if body:
                 text(body, 34.6, y, 1.0 if body == "WIRING" else 0.8, just="left")
             y += 1.5 if body == "WIRING" else 1.35 if body else 0.6

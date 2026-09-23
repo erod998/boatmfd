@@ -82,7 +82,7 @@ def make_led_driver(settings):
             return WS281xDriver(pixels, settings.led_gpio_pin), pixels
         if settings.led_driver == "pwm":
             channels = tuple(int(c) for c in settings.led_pwm_channels.split(","))
-            return Pca9685RgbDriver(address=settings.pca9685_address, channels=channels, bus_number=settings.i2c_bus), pixels
+            return Pca9685RgbDriver(address=settings.pca9685_address, channels=channels, bus_number=settings.led_i2c_bus), pixels
     except Exception as exc:  # pragma: no cover - hardware-dependent
         print(f"[lighting] could not start the '{settings.led_driver}' LED driver ({exc}); the strip preview will work but no lights will")
     return None, pixels

@@ -391,6 +391,18 @@ class TestPwmRgbDriver(unittest.TestCase):
         self.assertEqual(dict(bus.writes)[0x0A], [0, 0, 0, 0x10])     # everything off
 
 
+class TestLedBoardBus(unittest.TestCase):
+    def test_the_pwm_driver_opens_the_led_boards_own_i2c_bus(self):
+        # The sensor board puts the LED board on a bus of its own (i2c-gpio on GPIO5/6), apart
+        # from the converters on bus 1.
+        from unittest import mock
+
+        from app import main
+        with mock.patch.object(main, "Pca9685RgbDriver") as driver:
+            main.make_led_driver(Settings(led_driver="pwm", i2c_bus=1, led_i2c_bus=7))
+        self.assertEqual(driver.call_args.kwargs["bus_number"], 7)
+
+
 class TestNoFakeDataWhenHardwareIsConfigured(unittest.TestCase):
     def test_no_fix_gps_and_offline_media(self):
         self.assertFalse(NoFixGPS().read().has_fix)

@@ -160,10 +160,9 @@
     <div class="row"><input id="rpmInput" inputmode="decimal" placeholder="e.g. 3000" /><button class="primary" data-act="tach" data-input="rpmInput">Apply</button></div>
   </div>
 
-  <div class="card"><h2>Temperature probes</h2>
+  <div class="card" id="probesCard"><h2>Temperature probes</h2>
     <div id="probes"></div>
     <p data-mode="n2k">Engine (coolant) temperature comes from the converter's temperature input, so a probe here is optional: use one on the raw-water intake hose for the water temperature (assign it to Water). A probe you assign to Engine is used only when the converter sends no temperature.</p>
-    <p data-mode="tap">With the temperature gauge tapped (Engine temperature, above), its sender gives the engine temperature and a probe assigned to Engine only fills in when the gauges are off. Use a probe on the raw-water intake hose for the water temperature (assign it to Water).</p>
     <p data-mode="real">Warm one probe in your hand to see which is which, then assign it. If you have one probe it is used as the engine (coolant) probe automatically. A probe clamped to the thermostat housing reads a little below true coolant temperature; to correct that, type a true temperature (for example from an infrared thermometer aimed at the housing).</p>
     <div class="row"><input id="tempInput" inputmode="decimal" placeholder="true engine temp, F" /><button class="primary" data-act="engine_temp_offset" data-input="tempInput">Set engine offset</button></div>
     <div class="saved" id="tempSaved"></div>
@@ -292,6 +291,8 @@ function render(s) {
   }
 
   if (mode === "tap") renderTap(s.tap || {});
+  // The sensor board has no probe input: the card only shows if a probe turns up anyway.
+  $("probesCard").style.display = mode === "tap" && !Object.keys(s.probes || {}).length ? "none" : "block";
   renderN2k(s.n2k, e, s.env);
   $("depthFt").textContent = num(s.depth_ft, 1);
   $("depthSaved").textContent = `Saved offset: ${c.depth.offset_ft >= 0 ? "+" : ""}${c.depth.offset_ft} ft`;

@@ -57,17 +57,17 @@ parts far easier.
 | Service | Turnkey (PCBWay buys the parts) |
 | Quantity | 1-5 |
 | Assembly sides | Top side (every SMD part is on top; J4 goes on the bottom but is through-hole, soldered from the top) |
-| Unique parts | 35 lines in the BOM |
-| SMD pads | 201 |
-| Through-hole pins | 60 (J1-J5, J7) |
+| Unique parts | 33 lines in the BOM |
+| SMD pads | 199 |
+| Through-hole pins | 57 (J1, J2, J4, J5, J7) |
 | Board | the same settings as above, ENIG finish |
 
 J6 (the JST GH lights connector) is surface-mount: PCBWay places it with the rest.
 
-In the notes: *"Assemble all SMD parts. Through-hole J1, J2, J3, J5, J7 and J4: [assemble / do not
+In the notes: *"Assemble all SMD parts. Through-hole J1, J2, J5, J7 and J4: [assemble / do not
 fit -- customer will solder]. JP1 is a solder jumper: leave it OPEN."*
 
-Soldering the six through-hole connectors yourself is easy and saves the through-hole charge;
+Soldering the five through-hole connectors yourself is easy and saves the through-hole charge;
 J4 in particular (the 2×20 stacking header, Adafruit 1979) may be easier to buy yourself.
 
 PCBWay's engineers review every order and may email about substitutions -- the likely ones are
@@ -79,7 +79,7 @@ if it's out of stock, say so and wait rather than accept another part.
 
 | Qty | Part |
 | --- | --- |
-| 1 each | Phoenix Contact plugs: 1827761 (8-pos, J1), 1827716 (3-pos, J3), 1827732 (5-pos, J5) |
+| 1 each | Phoenix Contact plugs: 1827761 (8-pos, J1), 1827732 (5-pos, J5) |
 | 2 | Phoenix Contact plug 1827703 (2-pos: J2 and J7) |
 | 1 | 12 V -> 5 V converter, 3 A or more, set to 5.1-5.2 V, with output overvoltage protection |
 | 5 | 10 kΩ ¼ W through-hole resistors + adhesive-lined heatshrink (the gauge-end tap resistors) |

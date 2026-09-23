@@ -49,8 +49,6 @@ stock analog gauges.
   gray wire: EST coil TACH terminal ── tach gauge ─────────── J2.1 TACH ──── optocoupler ──── GPIO 13
   the tach gauge's G terminal ─────────────────────────────── J2.2 GND (the tach's own, isolated)
 
-  DS18B20 probes (engine, water) ──────────────────────────── J3   3V3 / DATA / GND ──────── GPIO 26
-
   NMEA 2000 drop cable (Fusion stereo, depth transducer) ───── J5 ── isolated CAN ── SPI0 + GPIO 25 (can0)
 
   LED controller board (separate) ─────────────────────────── J6 ── I2C, GPIO 18 / 19 / 21, 3V3, GND
@@ -174,17 +172,11 @@ software default `BOAT_BATT_R_TOP=47000`, `BOAT_BATT_R_BOTTOM=10000` matches.
   other copper (a rule KiCad's DRC checks, in `sensor-board.kicad_dru`), with its own ground pour,
   kept 4 mm clear of the Pi mounting hole beside it so a metal standoff can't bridge the two.
 
-### 1-Wire temperature probes
+### No temperature probes
 
-```
-  J3.1 ── 3V3
-  J3.2 ──┬──[ R25 100 ]──┬── GPIO 26 (header pin 37)
-         │               └──[ R24 4.7k ]── 3V3
-         └──[ D8 SMAJ5.0A ]── GND          the probe cable runs to the engine bay
-  J3.3 ── GND
-```
-
-All DS18B20 probes (engine, water) share these three wires.
+Every temperature comes from the boat's own senders: the engine's through its temperature gauge
+(J1 TEMP, above), the water's from the depth transducer on NMEA 2000, if it reports one. Rev 1.0
+and 1.1 had a 1-Wire input (J3) for DS18B20 probes clamped to the engine; rev 1.2 has none.
 
 ### Converters and header
 
@@ -234,14 +226,33 @@ Pi, and nothing it switches:
 
 ```
   J6.1 3V3  ── the Pi's 3.3 V, for the LED board's logic only (keep it under 50 mA)
-  J6.2 SDA  ── GPIO 2  ┐ the same I2C bus as the converters: PWM channels are PCA9685s on the LED
-  J6.3 SCL  ── GPIO 3  ┘ board, 16 each, as many as needed
+  J6.2 SDA  ── GPIO 5  ┐ the LED board's own I2C bus (R24/R25 pull it up to 3V3 here): PWM
+  J6.3 SCL  ── GPIO 6  ┘ channels are PCA9685s on the LED board, 16 each, as many as needed
   J6.4 GND
   J6.5 DAT1 ── GPIO 18 (PWM0)  addressable strip data (WS2812B / WS2815...), 3.3 V
   J6.6 DAT2 ── GPIO 19 (PWM1)  a second addressable strip, driven independently
   J6.7 GND
   J6.8 AUX  ── GPIO 21         spare: an output enable, a third data line (PCM), a button...
 ```
+
+**What that is enough for** -- the future LED board can grow without this board changing:
+
+- **12 V PWM strips, 4 channels each (RGBW), as many as you like.** A PCA9685 has 16 PWM
+  outputs, so each one runs four RGBW strips (or five RGB), each output switching a logic-level
+  MOSFET sized for its channel's current. PCA9685s chain on the same two wires, up to 62 of them
+  by address. They make the PWM themselves (12-bit, flicker-free), so the Pi only sends a new
+  colour when one changes.
+- **12 V addressable strips** (WS2815, WS2811 12 V, ...): their power is 12 V but their data is
+  still logic-level. DAT1 and DAT2 are two independent data lines, each on its own PWM channel of
+  the Pi, and each can run several strips chained end to end (one strip's DOUT into the next
+  one's DIN), which the software treats as segments.
+- **More independent addressable outputs than two:** put a small microcontroller on the LED
+  board (an RP2040 drives eight at once) and talk to it over the same I2C bus, with AUX as its
+  interrupt or reset. Nothing here changes for that either.
+- **Its own I2C bus** keeps all of that apart from the engine data: a stuck or shorted LED board
+  can't stall the converters. It's a kernel-driven bus on GPIO 5/6 (no hardware I2C pair is free
+  at J6's corner of the header), which also handles a microcontroller that stretches the clock,
+  something the Pi's hardware I2C gets wrong.
 
 The rules for the LED board, whatever it ends up carrying:
 
@@ -251,9 +262,10 @@ The rules for the LED board, whatever it ends up carrying:
 - **Buffer the data lines to 5 V** on the LED board (a 74AHCT125 or similar, powered from the
   LED board's own 5 V), with a ~330 Ω series resistor at each strip's data input. WS28xx strips
   want 5 V logic; the Pi's pins are 3.3 V and must never see more.
-- **PCA9685 addresses:** anything except 0x48 and 0x49 (the converters) and 0x70 (the PCA9685's
-  all-call address). The software's default is 0x40 (`BOAT_PCA9685_ADDR`). Run the PCA9685 from
-  J6's 3V3, so its I2C levels match the Pi's.
+- **PCA9685 addresses:** any of 0x40-0x7F except 0x70 (the PCA9685's all-call address); the
+  converters are on the other bus. The software's default is 0x40 (`BOAT_PCA9685_ADDR`). Run the
+  PCA9685s from J6's 3V3, so their I2C levels match the Pi's.
+- **Pull-ups** are on this board (4.7 kΩ); a PCA9685 breakout's own are fine alongside them.
 - **Addressable strips on the Pi's PWM** (`BOAT_LED_DRIVER=ws281x`, `BOAT_LED_GPIO=18`) need the
   Pi's analog audio off: `dtparam=audio=off` in `/boot/firmware/config.txt`. The stereo is on NMEA
   2000, so nothing is lost.
@@ -267,14 +279,14 @@ The rules for the LED board, whatever it ends up carrying:
 | Pin | Signal | Use |
 |---|---|---|
 | 2, 4 | 5V | **in**: the Pi's power, from J7 through the ideal diode |
-| 1, 17 | 3V3 | converters, pull-ups, probes (a few mA in total); J6's 3V3 (under 50 mA) |
+| 1, 17 | 3V3 | converters, pull-ups (a few mA in total); J6's 3V3 (under 50 mA) |
 | 3 | GPIO 2 / SDA | both ADS1115; J6 |
 | 5 | GPIO 3 / SCL | both ADS1115; J6 |
 | 6, 9, 14, 20, 25, 30, 34, 39 | GND | |
 | 33 | GPIO 13 | tach |
-| 37 | GPIO 26 | 1-Wire |
 | 19, 21, 23, 24 | GPIO 10, 9, 11, 8 (SPI0 MOSI, MISO, SCLK, CE0) | NMEA 2000 CAN controller |
 | 22 | GPIO 25 | CAN controller interrupt |
+| 29, 31 | GPIO 5, 6 | J6 SDA, SCL: the LED board's own I2C bus (i2c-gpio) |
 | 12 | GPIO 18 (PWM0) | J6 DAT1: addressable LED data |
 | 35 | GPIO 19 (PWM1) | J6 DAT2: second addressable LED data |
 | 40 | GPIO 21 | J6 AUX: spare |
@@ -285,7 +297,7 @@ first -- in particular, a CAN HAT on SPI0 CE0 would clash with the one built in 
 
 ## Connectors
 
-J1, J2, J3 and J5 are Phoenix Contact **MC 1,5 / 3.81 mm pluggable terminal blocks with
+J1, J2, J5 and J7 are Phoenix Contact **MC 1,5 / 3.81 mm pluggable terminal blocks with
 screw-locking flanges**: the plug screws to the header, so it can't walk out on a boat. Each
 connector's plug overhangs the board edge. J6, board to board, is a latching **JST GH**.
 
@@ -304,7 +316,6 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 | | 8 | GND | helm ground / battery - (the BAT+ feed's return) |
 | **J2** tach (2, bottom edge) | 1 | TACH | the **gray wire** from the EST coil's **TACH** terminal -- easiest where it lands on the tach gauge's signal terminal at the helm. No resistor on this one |
 | | 2 | GND | the tach gauge's **G** terminal -- twist these two wires together |
-| **J3** probes (3, right edge) | 1 / 2 / 3 | 3V3 / DATA / GND | DS18B20 red / yellow / black |
 | **J5** NMEA 2000 (5, bottom edge) | 1 | BARE | the drop cable's bare drain wire (shield) -- **not connected** here (the backbone grounds its shield at the power tee) |
 | | 2 | RED | NET-S: the network's +12 V |
 | | 3 | BLK | NET-C: the network's 0 V |
@@ -332,13 +343,12 @@ The full list, with manufacturer part numbers, is
 | R7–R12, R22 | 7 | 10 kΩ 1% 0805 | divider bottoms; tach pull-up |
 | R13–R18, R23 | 7 | 1 kΩ 0805 | ADC pin series resistors; GPIO protection |
 | R19–R21 | 3 | 3.3 kΩ **1206** | tach input, in series |
-| R24 / R25 | 1 / 1 | 4.7 kΩ / 100 Ω 0805 | 1-Wire pull-up / series |
+| R24, R25 | 2 | 4.7 kΩ 0805 | J6's I2C pull-ups |
 | C1–C7, C9 | 8 | 100 nF X7R 0805 | ADC pin filters; decoupling |
 | C8, C10 | 2 | 1 µF X7R 0805 | decoupling |
 | C11 | 1 | 10 nF X7R 0805 | tach ring-down filter |
 | D1–D6 | 6 | BAT54S (SOT-23) | clamps |
 | D7 | 1 | 1N4148W (SOD-123) | across the opto LED |
-| D8 | 1 | SMAJ5.0A (SMA) | 1-Wire line |
 | U4 | 1 | **MCP2518FD** (Microchip, SOIC-14) | CAN controller |
 | U5 | 1 | **ISO1044BD** (TI, SOIC-8) | isolated CAN transceiver |
 | U6 | 1 | L78L05 (SOT-89) | 5 V for the network side |
@@ -346,19 +356,18 @@ The full list, with manufacturer part numbers, is
 | D9 / D10 / D11 | 1 each | SS14 / SMAJ18A (SMA) / NUP2105L (SOT-23) | reverse polarity / surge / CAN ESD |
 | R26, JP1 | 1 | 120 Ω 0805 + solder jumper (open) | bench-only terminator |
 | C12-C18 | 7 | 100 nF / 1 µF 0805, one 1 µF **50 V 1206** (C16) | decoupling |
-| J1 / J2 / J3 / J5 | 1 each | Phoenix MC 1,5/ 8-, 2-, 3-, 5-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
+| J1 / J2 / J5 | 1 each | Phoenix MC 1,5/ 8-, 2-, 5-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
 | J6 | 1 | JST **SM08B-GHS-TB** (GH, 8-way, side entry, SMD) | lights; a GH 8-pin 1:1 cable to the LED board |
 | J7 | 1 | Phoenix MC 1,5/ 2-GF-3,81 (as J2) | 5 V in, plus its **MC 1,5/ 2-STF-3,81** plug |
 | U7 / Q1 | 1 each | **LM74700-Q1** (TI, SOT-23-6) / **IRLML0030** (Infineon, SOT-23) | ideal diode |
 | C19, C20 / C21 | 2 / 1 | 100 nF 0805 / 22 µF 25 V X5R **1206** | charge pump, input / 5 V bulk |
-| D12 | 1 | SMAJ5.0A (SMA), as D8 | 5 V rail clamp |
+| D12 | 1 | SMAJ5.0A (SMA) | 5 V rail clamp |
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
 | — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
 | — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
 | **Rg** | 5 | **10 kΩ ¼ W through-hole** + adhesive-lined heatshrink | at the gauge end of each tap wire (fuel, trim, oil, temp, and one gauge's I) |
 | — | 1 | inline fuse holder + 1 A fuse | J1.3 battery feed, at its source |
 | — | 1 | **12 V -> 5 V converter**, 3 A or more, adjustable or fixed at 5.1-5.2 V, **with output overvoltage protection**, potted or sealed | J7; fed from the dashboard switch through its own fuse |
-| — | 1–2 | DS18B20 waterproof probes | engine (on the thermostat housing), water |
 | — | | 20–22 AWG tinned marine wire, ring terminals | taps; tach pair twisted |
 
 ---
@@ -407,9 +416,10 @@ interface, and a **35 × 12 mm tab above the left half of the header** for the 5
   bottom layer (on top it walled the header's GND pin 6 off from the pour). The ideal diode's
   sense pins, caps and D12 join on thin tracks. No via sits in a surface-mount pad anywhere on
   the board, so none can wick solder away from a joint.
-- **J6** sits on the right edge between the probe connector and the mounting hole. Its two
-  outer data/spare lines leave the header's far corner on the bottom layer, so they don't wall
-  off the header's ground pin there from the top pour.
+- **J6** sits on the right edge, where rev 1.1's probe connector was, next to the header pins
+  it uses. Its two outer data/spare lines leave the header's far corner on the bottom layer.
+- **The header's GND pins keep their thermal spokes:** no other net's track passes within half a
+  pin pitch of one, on either layer, so none is ever walled off from the ground pours.
 - **Conformal coat** everything except the connectors and the header after the board passes bring-up.
 
 ## Changing the design
@@ -464,7 +474,7 @@ Do these in order, and don't connect the gauges until the board has passed the b
    header pins 2 and 4 read about 5.08 V to GND. Swap the supply's leads: they read 0 V, and the
    supply sees no load (the ideal diode blocks). Then set the real converter to 5.1-5.2 V the same
    way before connecting it.
-2. **Converters.** Board on the Pi, powered from J7, nothing plugged into J1–J3. Enable I²C
+2. **Converters.** Board on the Pi, powered from J7, nothing plugged into J1 or J2. Enable I²C
    (`sudo raspi-config nonint do_i2c 0`, reboot), then `i2cdetect -y 1` must show **48** and **49**.
 3. **One tap, on the bench.** A 12 V supply through a 10 kΩ resistor into J1.4 (the Rg the software
    expects) and its negative to J1.7. The calibration page (`http://<pi>:8090/calibrate`, with the
@@ -508,11 +518,16 @@ And once on the Pi:
 
 ```bash
 sudo raspi-config nonint do_i2c 0
-echo "dtoverlay=w1-gpio,gpiopin=26" | sudo tee -a /boot/firmware/config.txt
 echo "dtparam=spi=on" | sudo tee -a /boot/firmware/config.txt
 echo "dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25" | sudo tee -a /boot/firmware/config.txt
 sudo apt install can-utils && venv/bin/pip install python-can
 sudo apt install python3-lgpio && venv/bin/pip install smbus2
+```
+
+Once there is an LED board on J6, its I2C bus too (and `BOAT_LED_I2C_BUS=7` in `boat.env`):
+
+```bash
+echo "dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6" | sudo tee -a /boot/firmware/config.txt
 ```
 
 The fuel sender is assumed to be the US standard (240 Ω empty, 33 Ω full). For anything else,
@@ -537,8 +552,8 @@ Fuel shows "--" until it has two points at least 25% apart; after that the whole
 empty included, and more points refine it (the page says how well they agree). Engine temperature
 works the same way, with two points at least 40 F apart: the software knows the shape of a
 temperature sender's curve (app/sender_tap.py), so the cold and warm points also set the overheat
-end, which straight lines through them would read 15-45 F low. With the gauges off (key off) the
-engine temperature falls back to a DS18B20 probe on J3, if one is assigned to Engine. A capture is
+end, which straight lines through them would read 15-45 F low. With the key off the gauges are
+dark, and the engine temperature shows "--", like fuel, trim and oil. A capture is
 refused while the reading is still settling (fuel is smoothed against slosh), and a new point at
 the same level replaces the old one.
 

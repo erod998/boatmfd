@@ -8,16 +8,15 @@ Comment,Designator,Footprint,MPN,Qty,Mount,Note
 BAT54S,"D1,D2,D3,D4,D5,D6",SOT-23,"BAT54S,215",6,SMD,clamps the divider node between GND and 3V3
 SMAJ18A,D10,SMA,SMAJ18A,1,SMD,clamps surges on the network's power
 NUP2105L,D11,SOT-23,NUP2105LT1G,1,SMD,ESD and surge protection for NET-H / NET-L
+SMAJ5.0A,D12,SMA,SMAJ5.0A,1,SMD,clamps spikes on the 5 V rail
 1N4148W,D7,SOD-123,1N4148W-7-F,1,SMD,keeps the ring-down's negative swing off the LED
-SMAJ5.0A,"D8,D12",SMA,SMAJ5.0A,2,SMD,the probe wire runs to the engine bay; clamps spikes on the 5 V rail
 SS14,D9,SMA,SS14,1,SMD,reverse-polarity protection on NET-S
-LIGHTS,J6,JST_GH_SM08B-GHS-TB_1x08-1MP_P1.25mm_Horizontal,"SM08B-GHS-TB(LF)(SN); plug GHR-08V-S (JST GH, 1.25 mm, latching)",1,SMD,"to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA, 3 SCL, 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"
+LIGHTS,J6,JST_GH_SM08B-GHS-TB_1x08-1MP_P1.25mm_Horizontal,"SM08B-GHS-TB(LF)(SN); plug GHR-08V-S (JST GH, 1.25 mm, latching)",1,SMD,"to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA GPIO5, 3 SCL GPIO6 (own bus), 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"
 IRLML0030,Q1,SOT-23,IRLML0030TRPBF,1,SMD,"the ideal diode's switch: source to J7, drain to the Pi; 27 mOhm, VGS +/-20 V"
 39k,"R1,R2,R4,R5,R6",1206,RC1206FR-0739KL,5,SMD,tap top resistor (1206 for voltage rating)
 1k,"R13,R14,R15,R16,R17,R18,R23",0805,RC0805FR-071KL,7,SMD,ADC pin series resistor; protects the GPIO
 3.3k,"R19,R20,R21",1206,RC1206FR-073K3L,3,SMD,tach input: 3 in series share the ignition spike
-4.7k,R24,0805,RC0805FR-074K7L,1,SMD,1-Wire pull-up
-100,R25,0805,RC0805FR-07100RL,1,SMD,1-Wire series resistor
+4.7k,"R24,R25",0805,RC0805FR-074K7L,2,SMD,"J6 I2C pull-up (SDA, GPIO5); J6 I2C pull-up (SCL, GPIO6)"
 120,R26,0805,RC0805FR-07120RL,1,SMD,"bench terminator, only with JP1 bridged"
 47k,R3,1206,RC1206FR-0747KL,1,SMD,tap top resistor (1206 for voltage rating)
 10k,"R7,R8,R9,R10,R11,R12,R22,R27,R28",0805,RC0805FR-0710KL,9,SMD,divider bottom; opto pull-up; keeps U4 deselected while the Pi boots; interrupt pull-up
@@ -30,7 +29,6 @@ LM74700-Q1,U7,SOT-23-6,LM74700QDBVRQ1,1,SMD,"ideal diode controller: ANODE/EN to
 40MHz,Y1,3.2x2.5mm,ASE-40.000MHZ-L-C-T,1,SMD,U4's clock (oscillator=40000000 in the overlay)
 HELM,J1,"PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)",1,THT (hand solder),FUEL/TRIM/OIL/TEMP: that gauge's S terminal; BAT+: the dashboard's switched 12 V (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -
 TACH,J2,"PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",1,THT (hand solder),TACH: the gray wire (EST coil TACH terminal); GND: the tach gauge's G terminal
-PROBES,J3,"PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827871 (MC 1,5/ 3-GF-3,81); plug 1827716 (MC 1,5/ 3-STF-3,81)",1,THT (hand solder),"DS18B20 probes: 1 red, 2 yellow, 3 black"
 RPi GPIO,J4,PinSocket_2x20_P2.54mm_Vertical,"2x20 female stacking header, 2.54 mm, extra-tall (e.g. Adafruit 1979)",1,THT (hand solder),to the Raspberry Pi
 NMEA 2000,J5,"PhoenixContact_MC_1,5_5-GF-3.81_1x05_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827897 (MC 1,5/ 5-GF-3,81); plug 1827732 (MC 1,5/ 5-STF-3,81)",1,THT (hand solder),"NMEA 2000 drop cable, Micro-C order: 1 shield (bare, not connected), 2 NET-S red, 3 NET-C black, 4 NET-H white, 5 NET-L blue"
 5V IN,J7,"PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange","Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",1,THT (hand solder),"from the 12 V -> 5 V converter (set 5.1-5.2 V, 3 A): 1 +5V, 2 GND"
