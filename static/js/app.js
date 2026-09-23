@@ -217,21 +217,41 @@ let chartDetail = null;        // "detail" or "overview" -- whichever the zoom c
 let chartLoading = false;
 const DETAIL_FROM_ZOOM = (z) => (z >= 13 ? "detail" : "overview");
 
+// Which chart layers take a tap. Only the point features -- aids to navigation, mile markers,
+// landmarks, hazard points -- the things you would actually want to tap to identify.
+//
+// Every layer used to be tappable, and land, shoreline and depth-area polygons between them cover
+// the entire chart, so every tap anywhere opened "Land" or "Depth area" and never reached the map:
+// tap-to-navigate and the ruler were both dead wherever there was chart data, which on Old Hickory
+// is everywhere. Areas are still identifiable -- the chart cursor names what it is sitting in.
+// Non-interactive layers are also skipped by the canvas renderer's hit-testing, which otherwise
+// ran a containment check against every polygon on every mouse move.
+const POINT_KINDS = new Set(["buoy", "beacon", "light", "distance_mark", "landmark", "danger_point"]);
+const isPointGeom = (f) => !!f.geometry && /Point$/.test(f.geometry.type);
+
 function renderChartBundle(bundle) {
   chartGroup.clearLayers();
   Object.keys(chartLayers).forEach((k) => delete chartLayers[k]);
   const entries = Object.entries(bundle.layers || {});
   entries.sort((a, b) => DRAW_ORDER.indexOf(a[1].kind) - DRAW_ORDER.indexOf(b[1].kind));
   entries.forEach(([name, { kind, geojson }]) => {
+    const tappable = POINT_KINDS.has(kind);
     const layer = L.geoJSON(geojson, {
       renderer: chartRenderer,
       pane: "chart",
+      interactive: tappable,
       style: (f) => chartStyle(kind, f),
       pointToLayer: (f, latlng) => chartPoint(kind, f, latlng),
-      onEachFeature: (f, lyr) => lyr.on("click", (e) => {
-        L.DomEvent.stopPropagation(e);
-        showChartFeature(name, kind, f.properties || {});
-      }),
+      // Checked per feature as well as per layer, so a future chart area that encodes one of these
+      // kinds as a polygon still cannot start swallowing taps across whatever it covers.
+      onEachFeature: (f, lyr) => {
+        if (!tappable || !isPointGeom(f)) return;
+        lyr.on("click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          clearCursor();
+          showChartFeature(name, kind, f.properties || {}, lyr.getLatLng ? lyr.getLatLng() : e.latlng);
+        });
+      },
     });
     chartLayers[name] = { kind, layer };
     if (layerGroupOn(groupForLayer(name))) layer.addTo(chartGroup);
@@ -352,41 +372,78 @@ function chartFeatureSummary(kind, props) {
   }
   if (props.Category_of_Recommended_Track) rows.push(["Track", props.Category_of_Recommended_Track]);
   if (props.Traffic_Flow) rows.push(["Traffic", props.Traffic_Flow]);
-  if (props.Vertical_Clearance_Value) rows.push(["Clearance", `${props.Vertical_Clearance_Value} m`]);
+  // The USACE service's field is Vertical_Clearance (this used to read Vertical_Clearance_Value,
+  // which does not exist, so no clearance was ever shown). Neither the records nor the service's
+  // layer metadata say what unit it is in, and 16.5 ft and 16.5 m are very different answers under
+  // a power line, so the number is shown with that said plainly rather than with a guessed unit.
+  [["Clearance", props.Vertical_Clearance ?? props.Vertical_Clearance_Value],
+   ["Clearance (closed)", props.Vertical_Clearance_Closed], ["Clearance (open)", props.Vertical_Clearance_Open]]
+    .forEach(([label, v]) => {
+      const n = parseFloat(v);
+      if (isFinite(n)) rows.push([label, `${n} (unit not charted)`]);
+    });
   if (props.Source_Dataset) rows.push(["Chart", props.Source_Dataset.replace(/\.000$/, "")]);
   return { title: name || CHART_KIND_LABELS[kind] || "Charted feature",
            subtitle: name ? CHART_KIND_LABELS[kind] || "" : "", rows };
 }
 
-// A chart-less install used to render as a flat empty panel -- the #map background colour and
-// nothing else -- which looks identical to a crash and tells you nothing. `data/` was gitignored
-// as a whole, so the Pi pulled the vector-chart code with none of the vector charts. Says what is
-// wrong and how to fix it instead. Lives inside mapEl for the same reason #chartFeature does.
-function setChartNotice(msg) {
-  let el = document.getElementById("chartNotice");
-  if (!msg) { if (el) el.hidden = true; return; }
+// Panels that live *inside* the Leaflet container, so they travel with the chart between the Helm
+// and the full Nav. Chart screen (attachMap moves #map between them) instead of covering the
+// widgets around it: the feature readout, the no-chart notice, the measure readout.
+//
+// Being inside the container has a cost: Leaflet treats a tap on any child as a tap on the chart.
+// Before this, closing the feature panel with its X also dropped a Go To waypoint underneath the
+// button -- and since a Go To and a route are mutually exclusive, identifying a buoy mid-route and
+// then closing the panel silently cancelled the route. disableClickPropagation stops the tap (and
+// the mousedown/touchstart that would start a drag) at the panel's edge.
+function mapPanel(id) {
+  let el = document.getElementById(id);
   if (!el) {
     el = document.createElement("div");
-    el.id = "chartNotice";
-    mapEl.appendChild(el);
+    el.id = id;
+    el.hidden = true;
   }
   if (el.parentElement !== mapEl) mapEl.appendChild(el);
+  if (!el.dataset.mapPanel) {
+    L.DomEvent.disableClickPropagation(el);
+    L.DomEvent.disableScrollPropagation(el);
+    // disableClickPropagation alone is not enough for a click. Leaflet decides whether a click
+    // belongs to the map by walking up from the clicked element looking for this panel's flag --
+    // and a button whose handler rebuilds the panel (Set Ref does) has been detached by then, so
+    // the walk finds nothing and the chart takes the tap too. Stopping the click here works
+    // regardless: an event's route is fixed when it is dispatched, so it still passes through
+    // this element even after the button has gone.
+    L.DomEvent.on(el, "click", L.DomEvent.stopPropagation);
+    el.dataset.mapPanel = "1";
+  }
+  return el;
+}
+
+// A chart-less install used to render as a flat empty panel -- the #map background colour and
+// nothing else -- which looks identical to a crash and tells you nothing. Says what is wrong and
+// how to fix it instead.
+function setChartNotice(msg) {
+  if (!msg) { const el = document.getElementById("chartNotice"); if (el) el.hidden = true; return; }
+  const el = mapPanel("chartNotice");
   el.textContent = msg;
   el.hidden = false;
 }
 
-function showChartFeature(layerName, kind, props) {
-  // Live inside the map container so the panel travels with the chart between the Helm and the
-  // full Nav. Chart screen (attachMap moves #map between them) instead of covering the Trip widget.
-  const el = $("chartFeature");
-  if (el.parentElement !== mapEl) mapEl.appendChild(el);
+function showChartFeature(layerName, kind, props, latlng) {
+  const el = mapPanel("chartFeature");
   const { title, subtitle, rows } = chartFeatureSummary(kind, props);
   const body = rows.map(([k, v]) => `<div class="cf-row"><span>${k}</span><b>${v}</b></div>`).join("");
   el.innerHTML = `<div class="cf-head"><div><div class="cf-title">${title}</div>` +
     `${subtitle ? `<div class="cf-sub">${subtitle}</div>` : ""}</div>` +
-    `<button class="cf-close" aria-label="Close">&times;</button></div>${body}`;
+    `<button class="cf-close" aria-label="Close">&times;</button></div>${body}` +
+    (latlng ? '<div class="cf-actions"><button class="btn primary cf-goto">Go To</button></div>' : "");
   el.hidden = false;
   el.querySelector(".cf-close").addEventListener("click", () => (el.hidden = true));
+  const go = el.querySelector(".cf-goto");
+  if (go) go.addEventListener("click", async () => {
+    el.hidden = true;
+    await setWaypoint(latlng.lat, latlng.lng, title.slice(0, 60));
+  });
 }
 
 // ---------- My Vessel: heading line and compass rose (Options -> Map layers & colors -> My Vessel) ----------
@@ -429,10 +486,16 @@ const compassRoseIcon = L.divIcon({
   iconSize: [90, 90],
   iconAnchor: [45, 45],
 });
-// Not rotated in CSS on purpose: leaflet-rotate spins the whole marker pane along with the chart (the same
-// reason the boat icon has to counter-rotate to stay pointing up in Heading Up), so a compass rose left alone
-// naturally keeps its N/E/S/W points aimed at true directions on screen, exactly like a real one would.
+// Marker icons do NOT turn with the chart -- leaflet-rotate puts the marker pane in its non-rotating
+// pane (see screenUpAngle below) -- so a rose left alone would read N at the top of the screen in
+// Heading and Course Up whichever way north actually was. It is turned to match the chart instead.
+// (An earlier comment here claimed the opposite, and the rose was wrong in both rotated modes.)
 const compassRoseMarker = L.marker([0, 0], { icon: compassRoseIcon, interactive: false, zIndexOffset: -1000 });
+
+function orientCompassRose() {
+  const svg = compassRoseMarker.getElement() && compassRoseMarker.getElement().querySelector("svg");
+  if (svg) svg.style.transform = `rotate(${onScreen(0)}deg)`;
+}
 
 // Range rings: concentric circles at a fixed real-world spacing around the boat, so distance to
 // anything on screen can be eyeballed without measuring it. Drawn in metres (L.circle, not
@@ -473,7 +536,7 @@ function updateHeadingLine() {
 }
 
 function applyVesselSettings() {
-  if (vesselSettings.compassRoseOn) compassRoseMarker.addTo(map);
+  if (vesselSettings.compassRoseOn) { compassRoseMarker.addTo(map); orientCompassRose(); }
   else map.removeLayer(compassRoseMarker);
   if (vesselSettings.rangeRingsOn) { rangeRingGroup.addTo(map); updateRangeRings(); }
   else map.removeLayer(rangeRingGroup);
@@ -575,6 +638,24 @@ try { if (ORIENTS.includes(localStorage.getItem("chartOrient"))) chartOrient = l
 // stop counter-rotating the boat icon -- and differ only in which angle goes to the top.
 const rotatedUp = () => chartOrient !== "north";
 
+// The compass direction currently pointing up the screen: 0 in North Up, the (eased) heading in
+// Heading Up, the (eased) leg course in Course Up.
+//
+// Every icon that stands for a real-world direction -- the boat, the AIS targets, the compass
+// rose -- has to be rotated by (its true direction - this). leaflet-rotate keeps the marker pane
+// in its *non-rotating* pane (see _initPanes in static/vendor/leaflet-rotate.js: markerPane is
+// created under norotatePane, and rotateWithView defaults to false), so marker icons stay upright
+// on screen while the chart turns underneath them. Rotating an icon by its bare compass angle is
+// therefore only right in North Up; in the other two modes it is off by exactly the chart's
+// rotation. The compass rose showed N at the top of the screen in Heading Up, and AIS targets
+// pointed the wrong way, for that reason.
+function screenUpAngle() {
+  if (chartOrient === "heading") return shownHeading;
+  if (chartOrient === "course") return shownCourse;
+  return 0;
+}
+const onScreen = (trueDeg) => (((trueDeg - screenUpAngle()) % 360) + 360) % 360;
+
 // Course Up points the *intended leg* at the top of the screen, not the bow. That is the whole
 // difference: Heading Up re-aims the chart with every wiggle of the boat, which on a lake at
 // idle is a slow constant swim, while Course Up holds the leg still and lets the boat icon swing
@@ -647,18 +728,17 @@ function boatTick(now) {
   shownCourse = Math.abs(courseDiff) < 0.02 ? courseUpAngle()
     : (((shownCourse + courseDiff * Math.min(1, HEADING_OMEGA * dt)) % 360) + 360) % 360;
 
-  const svg = boatMarker.getElement() && boatMarker.getElement().querySelector("svg");
   if (rotatedUp()) {
-    const up = chartOrient === "course" ? shownCourse : shownHeading;
-    map.setBearing((360 - up) % 360);   // that direction points up the screen
-    // In Heading Up the boat is always pointing straight up so its icon needs no rotation; in
-    // Course Up the chart holds the leg still, so the icon has to show the boat's own angle
-    // relative to it -- that offset is exactly what tells you you're crabbing off the track.
-    if (svg) svg.style.transform = `rotate(${chartOrient === "course" ? angleDiff(shownHeading, up) * -1 : 0}deg)`;
+    map.setBearing((360 - screenUpAngle()) % 360);   // that direction points up the screen
     lockBoatFrame();
-  } else if (svg) {
-    svg.style.transform = `rotate(${shownHeading}deg)`;
   }
+  // Heading Up: always straight up. Course Up: the boat's angle to the leg, which is exactly what
+  // shows you crabbing off track. North Up: the plain heading. All three are this one expression.
+  const svg = boatMarker.getElement() && boatMarker.getElement().querySelector("svg");
+  if (svg) svg.style.transform = `rotate(${onScreen(shownHeading)}deg)`;
+  // The chart turns continuously in the rotated modes, so the other direction-bearing icons have
+  // to follow every frame, not only when a new AIS frame or setting arrives.
+  if (rotatedUp()) { orientCompassRose(); orientAisIcons(); }
 
   boatAnimId = requestAnimationFrame(boatTick);
 }
@@ -720,6 +800,9 @@ function setChartOrient(mode) {
     map.setBearing(0);
     if (shownLat != null) map.panTo([shownLat, shownLon]);  // north-up expects the boat back at plain center
   }
+  // North Up gets no per-frame orienting (nothing is turning), so set these once on the way in.
+  orientCompassRose();
+  orientAisIcons();
   syncOrientUI();
   try { localStorage.setItem("chartOrient", chartOrient); } catch (e) { /* storage unavailable */ }
 }
@@ -756,24 +839,133 @@ async function setWaypoint(lat, lon, name = "WP") {
   await postJson("/api/waypoint", { lat, lon, name });
 }
 const clearWaypoint = () => fetch("/api/waypoint", { method: "DELETE" });
-map.on("click", async (e) => {
-  if (measureClick(e.latlng)) return;   // measuring takes the tap instead of dropping a waypoint
-  $("chartFeature").hidden = true;   // a tap on open water dismisses a stale feature readout
-  await setWaypoint(e.latlng.lat, e.latlng.lng);
-  if (typeof openPanel === "function") openPanel("waypoint");
+map.on("click", (e) => {
+  if (measureClick(e.latlng)) return;   // the ruler takes the tap while it is out
+  const fe = document.getElementById("chartFeature");
+  if (fe) fe.hidden = true;   // a tap elsewhere dismisses a stale feature readout
+  setCursor(e.latlng);
 });
 
+// ---------- The chart cursor ----------
+// A GPSMAP does not navigate the moment the chart is touched: a tap drops a cursor, the info bar
+// shows how far and in which direction it is and what is charted there, and nothing changes until
+// "Go To" is pressed. This used to go straight to a Go To -- and since a Go To and a route are
+// mutually exclusive, one stray tap in a chop replaced the destination and cancelled the route.
+let cursorLatLng = null;
+const cursorMarker = L.marker([0, 0], {
+  icon: L.divIcon({ className: "", iconSize: [34, 34], iconAnchor: [17, 17],
+    html: '<svg class="chart-cursor" viewBox="-17 -17 34 34"><circle r="9" fill="none" stroke="#fff" stroke-width="2.5"/>' +
+          '<circle r="9" fill="none" stroke="#e0202b" stroke-width="1.2"/><path d="M0 -16v8M0 8v8M-16 0h8M8 0h8" stroke="#fff" stroke-width="2"/></svg>' }),
+  interactive: false, zIndexOffset: 1000,
+});
+const cursorBar = mapPanel("cursorBar");
+
+// Ray-cast point-in-polygon on GeoJSON [lng, lat] rings; holes after the outer ring.
+function inRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function inPolygonGeom(geom, x, y) {
+  const polys = geom.type === "Polygon" ? [geom.coordinates] : geom.type === "MultiPolygon" ? geom.coordinates : [];
+  return polys.some((rings) => rings.length && inRing(x, y, rings[0]) && !rings.slice(1).some((h) => inRing(x, y, h)));
+}
+// The charted areas under a point, from the layers worth naming, in this order.
+const CURSOR_AREAS = ["bridge", "dam", "caution", "depth_area"];
+function areasAt(latlng) {
+  const found = [];
+  CURSOR_AREAS.forEach((name) => {
+    const entry = chartLayers[name];
+    if (!entry) return;
+    entry.layer.eachLayer((lyr) => {
+      if (lyr.getBounds && lyr.getBounds().contains(latlng) && lyr.feature && inPolygonGeom(lyr.feature.geometry, latlng.lng, latlng.lat)) {
+        found.push({ name, kind: entry.kind, props: lyr.feature.properties || {} });
+      }
+    });
+  });
+  return found;
+}
+
+function setCursor(latlng) {
+  cursorLatLng = latlng;
+  cursorMarker.setLatLng(latlng).addTo(map);
+  renderCursor();
+}
+
+function clearCursor() {
+  cursorLatLng = null;
+  map.removeLayer(cursorMarker);
+  cursorBar.hidden = true;
+}
+
+function cursorRangeHtml() {
+  const fix = lastData && lastData.gps && lastData.gps.has_fix ? lastData.gps : null;
+  if (!fix) return '<span class="cb-brg">No GPS fix</span>';
+  const from = L.latLng(fix.lat, fix.lon);
+  return `<b>${toDist(map.distance(from, cursorLatLng) / 1852).toFixed(2)}</b> ${UNITS[unit].dist}` +
+    `<span class="cb-brg">${Math.round(bearingBetween(from, cursorLatLng)) % 360}°</span>`;
+}
+
+// Built once per cursor position. Only the range text is refreshed after that (below): rebuilding
+// the buttons every second would swap a button out from under a finger that is mid-press, and a
+// Go To that silently does nothing is exactly the kind of failure nobody notices until it matters.
+function renderCursor() {
+  if (!cursorLatLng) return;
+  const areas = areasAt(cursorLatLng);
+  const lines = areas.map((a, i) => {
+    const { title, rows } = chartFeatureSummary(a.kind, a.props);
+    const depth = rows.find(([k]) => k === "Depth");
+    return `<button class="cb-area" data-i="${i}">${depth ? `Depth ${depth[1]}` : title}<span>›</span></button>`;
+  }).join("");
+  cursorBar.innerHTML =
+    `<div class="cb-top"><div class="cb-range">${cursorRangeHtml()}</div>` +
+    '<button class="cf-close cb-close" aria-label="Close">&times;</button></div>' +
+    `<div class="cb-pos">${fmtCoord(cursorLatLng.lat, true)}&nbsp;&nbsp;${fmtCoord(cursorLatLng.lng, false)}</div>` +
+    lines +
+    '<div class="cf-actions"><button class="btn primary cb-goto">Go To</button><button class="btn cb-save">Save Waypoint</button></div>';
+  cursorBar.hidden = false;
+  cursorBar.querySelector(".cb-close").addEventListener("click", clearCursor);
+  cursorBar.querySelectorAll(".cb-area").forEach((b) => b.addEventListener("click", () => {
+    const a = areas[Number(b.dataset.i)];
+    clearCursor();   // the detail panel takes the cursor bar's place rather than stacking on it
+    showChartFeature(a.name, a.kind, a.props);
+  }));
+  cursorBar.querySelector(".cb-goto").addEventListener("click", async () => {
+    const at = cursorLatLng;
+    clearCursor();
+    await setWaypoint(at.lat, at.lng);
+    if (typeof openPanel === "function") openPanel("waypoint");
+  });
+  cursorBar.querySelector(".cb-save").addEventListener("click", async () => {
+    const at = cursorLatLng;
+    clearCursor();
+    await postJson("/api/waypoints", { lat: at.lat, lon: at.lng });
+  });
+}
+// Range and bearing from the boat keep up as the boat moves; once a second is plenty for reading.
+setInterval(() => {
+  const el = cursorLatLng && cursorBar.querySelector(".cb-range");
+  if (el) el.innerHTML = cursorRangeHtml();
+}, 1000);
+
 // ---------- Measure distance (the chart's ruler button) ----------
-// A GPSMAP's "Measure Distance": tap once to anchor, and the range and bearing from that point
-// to wherever you tap or drag next read out continuously. Starts anchored at the boat, which is
-// the question actually being asked most of the time -- "how far is that from me?"
-let measureFrom = null;                 // null = tool is off entirely
-const measureReadout = document.createElement("div");
-measureReadout.id = "measureReadout";
-measureReadout.hidden = true;
-mapEl.appendChild(measureReadout);
+// A GPSMAP's "Measure Distance". The reference starts at the boat and follows it; each tap on the
+// chart moves the far end, and the range and bearing from reference to end read out at the top.
+// "Set Ref" pins the reference to the current end instead, for measuring between two arbitrary
+// points, and "From Boat" puts it back.
+//
+// Built for a finger. An earlier version re-anchored on every tap and relied on mouse hover to
+// show the live reading, so on a touchscreen -- which has no hover -- every tap set both ends to
+// the same point and it read 0.00 forever. A desktop mouse hid that completely.
+let measureOn = false;
+let measureRef = null;   // null = the reference is the boat itself, following it
+let measureEnd = null;   // null = nothing tapped yet
 const measureLine = L.polyline([], { color: "#39d0d8", weight: 2, dashArray: "6 4", interactive: false });
 const measureEnds = L.layerGroup();
+const measureReadout = mapPanel("measureReadout");
 
 function bearingBetween(a, b) {
   const rad = Math.PI / 180;
@@ -783,51 +975,78 @@ function bearingBetween(a, b) {
   return (Math.atan2(y, x) / rad + 360) % 360;
 }
 
-function measureActive() { return measureFrom !== null; }
+const measureActive = () => measureOn;
+const measureFrom = () => measureRef || (shownLat == null ? null : L.latLng(shownLat, shownLon));
 
 function setMeasure(on) {
-  if (on && shownLat == null) return;   // nothing sensible to anchor to before the first fix
-  measureFrom = on ? L.latLng(shownLat, shownLon) : null;
-  if (on) {
-    measureLine.addTo(map);
-    measureEnds.addTo(map);
-    measureTo(measureFrom);
-  } else {
-    map.removeLayer(measureLine);
-    map.removeLayer(measureEnds);
-    measureReadout.hidden = true;
-  }
+  measureOn = on;
+  measureRef = null;
+  measureEnd = null;
+  if (on) { measureLine.addTo(map); measureEnds.addTo(map); }
+  else { map.removeLayer(measureLine); map.removeLayer(measureEnds); }
   document.querySelectorAll('[data-act="measure"]').forEach((b) => b.classList.toggle("active", on));
+  renderMeasure();
 }
 
-function measureTo(latlng) {
-  if (!measureActive()) return;
-  measureLine.setLatLngs([measureFrom, latlng]);
+function measureText(from) {
+  // Leaflet's own great-circle distance, in metres: the ruler agrees with the nav fields because
+  // both are great-circle rather than one being a flat-earth shortcut.
+  const nm = map.distance(from, measureEnd) / 1852;
+  return `<b>${toDist(nm).toFixed(2)}</b> ${UNITS[unit].dist}` +
+    `<span>${Math.round(bearingBetween(from, measureEnd)) % 360}°</span>`;
+}
+
+// Rebuilt only when the state changes (a tap, Set Ref, From Boat). The once-a-second refresh
+// below touches the numbers alone, never the button, for the same reason as the cursor bar.
+function renderMeasure() {
+  if (!measureOn) { measureReadout.hidden = true; return; }
+  const from = measureFrom();
+  measureReadout.hidden = false;
+  if (!from || !measureEnd) {
+    measureLine.setLatLngs([]);
+    measureEnds.clearLayers();
+    measureReadout.innerHTML = `<span>${measureRef ? "Tap the chart to measure from the reference" : "Tap the chart to measure from the boat"}</span>`;
+    return;
+  }
+  measureLine.setLatLngs([from, measureEnd]);
   measureEnds.clearLayers();
-  [measureFrom, latlng].forEach((p, i) => L.circleMarker(p, {
+  [from, measureEnd].forEach((p, i) => L.circleMarker(p, {
     radius: 5, color: "#39d0d8", weight: 2, fillColor: i ? "#39d0d8" : "#0b0c0e", fillOpacity: 1, interactive: false,
   }).addTo(measureEnds));
-  // Leaflet's own great-circle distance, in metres; the ruler agrees with the nav fields because
-  // both are great-circle rather than one being a flat-earth shortcut.
-  const nm = map.distance(measureFrom, latlng) / 1852;
-  const el = measureReadout;
-  if (el.parentElement !== mapEl) mapEl.appendChild(el);
-  el.hidden = false;
-  el.innerHTML = `<b>${toDist(nm).toFixed(2)}</b> ${UNITS[unit].dist}` +
-    `<span>${bearingBetween(measureFrom, latlng).toFixed(0)}°</span>`;
+  measureReadout.innerHTML = `<span class="mr-text">${measureText(from)}</span>` +
+    `<button class="btn mr-ref">${measureRef ? "From Boat" : "Set Ref"}</button>`;
+  measureReadout.querySelector(".mr-ref").addEventListener("click", () => {
+    if (measureRef) measureRef = null;                          // back to measuring from the boat
+    else { measureRef = measureEnd; measureEnd = null; }        // this point becomes the reference
+    renderMeasure();
+  });
 }
 
-// First tap re-anchors, so you can measure between two arbitrary points and not only from the
-// boat; the move handler keeps the readout live as the finger travels.
+// The chart's tap goes here instead of dropping a waypoint while the ruler is out.
 function measureClick(latlng) {
-  if (!measureActive()) return false;
-  measureFrom = latlng;
-  measureTo(latlng);
+  if (!measureOn) return false;
+  measureEnd = latlng;
+  renderMeasure();
   return true;
 }
-map.on("mousemove", (e) => { if (measureActive()) measureTo(e.latlng); });
+
+// With the boat as the reference the line has to leave from where the boat is drawn, which moves
+// every frame; boatTick calls this. Nothing to do once the reference is a fixed point.
+function followMeasureRef() {
+  if (measureOn && !measureRef && measureEnd && shownLat != null) {
+    measureLine.setLatLngs([[shownLat, shownLon], measureEnd]);
+    const first = measureEnds.getLayers()[0];
+    if (first) first.setLatLng([shownLat, shownLon]);
+  }
+}
+
 document.querySelectorAll('[data-act="measure"]').forEach((b) =>
   b.addEventListener("click", () => setMeasure(!measureActive())));
+// The distance text is refreshed once a second rather than every frame -- it is read, not watched.
+setInterval(() => {
+  const el = measureOn && !measureRef && measureEnd && measureFrom() && measureReadout.querySelector(".mr-text");
+  if (el) el.innerHTML = measureText(measureFrom());
+}, 1000);
 
 function fmtCoord(v, isLat) {
   const dir = isLat ? (v >= 0 ? "N" : "S") : v >= 0 ? "E" : "W";
@@ -1799,6 +2018,16 @@ const AIS_ICON = L.divIcon({
   iconSize: [20, 20], iconAnchor: [10, 10],
 });
 const aisMarkers = {};  // mmsi -> L.Marker
+
+// Rotate the inner <svg>, not the marker's own root element -- that root's transform is how
+// Leaflet positions the marker. Through onScreen(), because the marker pane does not turn with
+// the chart (see screenUpAngle).
+function orientAisIcons() {
+  Object.values(aisMarkers).forEach((m) => {
+    const svg = m.getElement() && m.getElement().querySelector("svg");
+    if (svg) svg.style.transform = `rotate(${onScreen(m.cogDeg || 0)}deg)`;
+  });
+}
 function renderAis(targets) {
   if (!targets) return;
   const seen = new Set();
@@ -1810,11 +2039,9 @@ function renderAis(targets) {
       aisMarkers[t.mmsi] = marker;
     }
     marker.setLatLng([t.lat, t.lon]);
-    // Rotate the inner <svg>, not the marker's own root element -- that root's transform is how
-    // Leaflet positions the marker, the same reason the boat icon's own rotation works this way.
-    const svg = marker.getElement() && marker.getElement().querySelector("svg");
-    if (svg) svg.style.transform = `rotate(${t.cog_deg}deg)`;
+    marker.cogDeg = t.cog_deg || 0;
   });
+  orientAisIcons();
   Object.keys(aisMarkers).forEach((mmsi) => {
     if (!seen.has(Number(mmsi))) { map.removeLayer(aisMarkers[mmsi]); delete aisMarkers[mmsi]; }
   });

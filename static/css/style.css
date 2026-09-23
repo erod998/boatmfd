@@ -357,6 +357,23 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 #linkBanner { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 #soundHint { position: absolute; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 80; background: rgba(0, 0, 0, 0.88); border: 1px solid #66696e; padding: 0.4rem 1rem; font-size: 0.9rem; }
 
+/* The chart cursor: a tap drops it, and this bar says what and where it is. Bottom-left, the same
+   spot as the feature readout -- the two never show together (see renderCursor). */
+#cursorBar { position: absolute; left: 0.6rem; bottom: 0.6rem; z-index: 1000; min-width: 15rem; max-width: 22rem;
+  background: rgba(10, 11, 13, 0.94); border: 1px solid #4a4d52; border-radius: 0.4rem; padding: 0.5rem 0.7rem; }
+#cursorBar[hidden] { display: none; }
+.cb-top { display: flex; align-items: center; gap: 0.6rem; }
+.cb-range { font-size: 1rem; }
+.cb-range b { font-size: 1.35rem; font-weight: 600; }
+.cb-brg { margin-left: 0.5rem; color: var(--dim); }
+.cb-pos { font-size: 0.85rem; color: var(--dim); margin: 0.15rem 0 0.35rem; }
+.cb-area { display: flex; justify-content: space-between; width: 100%; background: none; border: 0;
+  border-top: 1px solid #2c2f34; color: #e8eaec; font-size: 0.95rem; padding: 0.45rem 0.1rem; text-align: left; }
+.cb-area span { color: var(--dim); }
+.cf-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.cf-actions .btn { flex: 1; min-height: 2.6rem; }
+.chart-cursor { width: 34px; height: 34px; display: block; overflow: visible; }
+
 /* Measure Distance: the live range/bearing readout, and the ruler button beside the zoom controls. */
 #measureReadout { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 1000;
   display: flex; align-items: baseline; gap: 0.5rem; background: rgba(10, 11, 13, 0.94);
@@ -364,6 +381,7 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 #measureReadout[hidden] { display: none; }
 #measureReadout b { font-size: 1.3rem; font-weight: 600; }
 #measureReadout span { color: var(--dim); }
+#measureReadout .mr-ref { margin-left: 0.4rem; padding: 0.25rem 0.7rem; font-size: 0.85rem; min-height: 2.2rem; }
 .zoom button.measure.active { background: #0e6a70; border-color: #39d0d8; }
 
 /* The distance printed on the outermost range ring. */
