@@ -36,6 +36,7 @@ from pathlib import Path
 from .n2k_engine import N2kEngineData
 from .n2k_env import N2kEnvData
 from .state import BoatInfo, EngineInfo, estimate_gph
+from .storage import read_dict, write_json
 
 N2K_OIL_FULL_PSI = 145.04  # engine converters such as the CX5003 read oil senders as 0-10 bar (10-184 ohm)
 
@@ -179,14 +180,12 @@ class Calibration:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._data = json.loads(json.dumps(self.DEFAULTS))
-        if self.path.exists():
-            try:
-                saved = json.loads(self.path.read_text())
-                for section, values in saved.items():
-                    if section in self._data and isinstance(values, dict):
-                        self._data[section].update({k: v for k, v in values.items() if k in self._data[section]})
-            except (json.JSONDecodeError, OSError):
-                pass
+        # Anything unreadable is set aside and logged rather than silently replaced by defaults on
+        # the next write -- this file is flushed every minute, so "next write" is never far off, and
+        # it holds the sender calibration that took an afternoon with a multimeter to get right.
+        for section, values in read_dict(self.path).items():
+            if section in self._data and isinstance(values, dict):
+                self._data[section].update({k: v for k, v in values.items() if k in self._data[section]})
 
     def get(self, section, key):
         with self._lock:
@@ -195,8 +194,7 @@ class Calibration:
     def set(self, section, key, value):
         with self._lock:
             self._data[section][key] = value
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self._data, indent=2))
+            write_json(self.path, self._data, indent=2)
 
     def snapshot(self):
         with self._lock:
@@ -244,14 +242,38 @@ class SensorHub:
 
     def stop(self):
         self._stop.set()
+        # Fuel used is otherwise only written once a minute; don't lose the last one on a restart.
+        self.cal.set("fuel_burn", "used_gal", round(self._used_gal, 3))
 
+    # Both loops have to outlive a bad read. Unguarded, one exception (a GPIO or I2C fault, a
+    # driver bug) ended the thread for good -- and _readings kept its last values, so the gauges
+    # went on showing the last RPM, fuel and oil pressure as if they were live. On an error the
+    # readings are dropped instead, which the gauges show as "--", and the next pass tries again.
     def _run(self):
+        failing = None
         while not self._stop.wait(self.SAMPLE_S):
-            self.sample_once()
+            try:
+                self.sample_once()
+                failing = None
+            except Exception as exc:
+                with self._lock:
+                    self._readings = {}
+                if str(exc) != failing:
+                    print(f"[sensors] sampling failed ({exc}); showing no data and retrying")
+                    failing = str(exc)
 
     def _run_probes(self):
+        failing = None
         while not self._stop.wait(self.PROBE_S):  # each DS18B20 read takes ~0.75 s, so keep it off the fast loop
-            self.sample_probes()
+            try:
+                self.sample_probes()
+                failing = None
+            except Exception as exc:
+                with self._lock:
+                    self._probe_temps = {}
+                if str(exc) != failing:
+                    print(f"[sensors] temperature probes failed ({exc}); showing no data and retrying")
+                    failing = str(exc)
 
     def _smooth(self, key, value):
         if value is None:

@@ -96,13 +96,51 @@ class TestThresholds(unittest.TestCase):
         run(self.m, self.clock, {}, {"depth_ft": 5.8}, seconds=1)
         self.assertEqual(ids(self.m, "alarm"), [])
 
-    def test_no_data_never_alarms_and_clears_an_active_alarm(self):
+    def test_no_data_never_alarms(self):
         run(self.m, self.clock, {"coolant_f": None, "oil_pressure_psi": None, "fuel_pct": None}, {"battery_voltage": None, "depth_ft": None}, seconds=10)
         self.assertEqual(self.m.active(), [])
+
+    def test_losing_the_sensor_does_not_clear_an_alarm_that_is_sounding(self):
+        # An overheating engine can burn through its sender wire. That is not the engine cooling
+        # down, and the alarm used to vanish right then.
         run(self.m, self.clock, {"coolant_f": 220}, seconds=3.4)
         self.assertEqual(ids(self.m, "alarm"), ["coolant"])
-        run(self.m, self.clock, {"coolant_f": None}, seconds=0.4)              # the sender was unplugged: that is not a reading
+        run(self.m, self.clock, {"coolant_f": None}, seconds=30)
+        [alarm] = self.m.active()
+        self.assertEqual(alarm["id"], "coolant")
+        self.assertTrue(alarm["sensor_lost"])
+        self.assertIn("no reading", alarm["message"])
+        self.assertIn("220", alarm["message"])                                 # the last thing it knew
+
+    def test_a_lost_shallow_water_alarm_stays_up_until_the_bottom_is_back_and_deeper(self):
+        self.m.update("depth", enabled=True, level=5)
+        run(self.m, self.clock, {}, {"depth_ft": 3.8}, seconds=3)
+        self.assertEqual(ids(self.m, "alarm"), ["depth"])
+        run(self.m, self.clock, {}, {"depth_ft": None}, seconds=5)             # sounder lost the bottom
+        self.assertEqual(ids(self.m, "alarm"), ["depth"])
+        run(self.m, self.clock, {}, {"depth_ft": 4.0}, seconds=1)              # back, still shallow
+        self.assertEqual(ids(self.m, "alarm"), ["depth"])
+        self.assertFalse(self.m.active()[0]["sensor_lost"])
+        run(self.m, self.clock, {}, {"depth_ft": 9.0}, seconds=1)              # back, and deep
         self.assertEqual(self.m.active(), [])
+
+    def test_acknowledging_a_lost_alarm_silences_it(self):
+        run(self.m, self.clock, {"coolant_f": 220}, seconds=3.4)
+        run(self.m, self.clock, {"coolant_f": None}, seconds=1)
+        self.assertEqual(self.m.acknowledge(), 1)
+        self.assertTrue(self.m.active()[0]["acked"])
+
+    def test_disabling_a_lost_alarm_clears_it(self):
+        run(self.m, self.clock, {"coolant_f": 220}, seconds=3.4)
+        run(self.m, self.clock, {"coolant_f": None}, seconds=1)
+        self.m.update("coolant", enabled=False)
+        run(self.m, self.clock, {"coolant_f": None}, seconds=0.4)
+        self.assertEqual(self.m.active(), [])
+
+    def test_a_dropout_during_the_delay_does_not_fire_the_alarm(self):
+        run(self.m, self.clock, {"coolant_f": 220}, seconds=2.0)
+        run(self.m, self.clock, {"coolant_f": None}, seconds=5)
+        self.assertEqual(ids(self.m, "alarm"), [])
 
     def test_a_disabled_alarm_is_silent(self):
         self.m.update("coolant", enabled=False)

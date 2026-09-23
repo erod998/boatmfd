@@ -8,18 +8,20 @@ How an alarm behaves:
 - It must stay past its level for a few seconds before it fires, so a starter-motor voltage dip
   or a depth-sounder dropout doesn't set it off.
 - An alarm also has an amber warning a set margin before its level.
-- No data never triggers an alarm (a sensor that isn't there is not a reading).
+- No data never triggers an alarm (a sensor that isn't there is not a reading) -- but it doesn't
+  clear one either. An alarm already sounding stays up through a dropout, marked as having lost
+  its sensor, until real data shows recovery. A depth sounder loses the bottom in very shallow
+  water and prop wash, and an overheating engine can burn through its sender wire; those are
+  exactly the moments the alarm must not quietly disappear. (It used to: missing data reset it.)
 - Oil pressure is only watched once the engine has been running for a few seconds, because it
   takes a moment to build.
 - Acknowledging silences the banner and sound; the alarm stays listed until the reading recovers
   (by a small hysteresis, so it doesn't flicker), and a new alarm needs its own acknowledgement.
 """
-import json
-import os
-import tempfile
 import threading
 import time
 from pathlib import Path
+from .storage import read_dict, write_json
 
 RUNNING_RPM = 500          # above this the engine counts as running
 RUNNING_GRACE_S = 5.0      # ...for this long before oil pressure is trusted
@@ -55,10 +57,11 @@ def _fmt(value, decimals, unit):
 
 
 class _State:
-    __slots__ = ("pending_since", "alarm", "warning", "acked", "value")
+    __slots__ = ("pending_since", "alarm", "warning", "acked", "value", "last", "lost")
 
     def __init__(self):
-        self.value = None
+        self.value = None   # the latest reading, None when there is none
+        self.last = None    # the latest reading that was not None, for the banner of a lost alarm
         self.reset()
 
     def reset(self):
@@ -66,6 +69,7 @@ class _State:
         self.alarm = False
         self.warning = False
         self.acked = False
+        self.lost = False           # alarming, and the sensor has since stopped reporting
 
 
 class AlarmManager:
@@ -82,10 +86,10 @@ class AlarmManager:
 
     # ---------------- settings ----------------
     def _load(self):
-        if not self.path or not self.path.exists():
+        if not self.path:
             return
+        saved = read_dict(self.path)   # a damaged file means defaults (and is kept), never a crash
         try:
-            saved = json.loads(self.path.read_text())
             if isinstance(saved.get("sound"), bool):
                 self._sound = saved["sound"]
             for alarm_id, values in (saved.get("alarms") or {}).items():
@@ -97,24 +101,12 @@ class AlarmManager:
                 level = values.get("level")
                 if isinstance(level, (int, float)) and not isinstance(level, bool) and d["min"] <= level <= d["max"]:
                     self._cfg[alarm_id]["level"] = level
-        except (OSError, ValueError, AttributeError):
-            pass  # a damaged file means defaults, never a crash at startup
+        except (ValueError, AttributeError):
+            pass  # an entry in the wrong shape keeps its default
 
     def _save(self):
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"sound": self._sound, "alarms": self._cfg}, indent=2)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".alarms-", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as handle:
-                handle.write(payload)
-            os.replace(tmp, self.path)   # never leave a half-written settings file
-        except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+        if self.path:
+            write_json(self.path, {"sound": self._sound, "alarms": self._cfg}, indent=2)
 
     def update(self, alarm_id, enabled=None, level=None):
         d = DEFS.get(alarm_id)
@@ -171,9 +163,17 @@ class AlarmManager:
                 cfg = self._cfg[d["id"]]
                 value = readings[d["source"][0]].get(d["source"][1])
                 st.value = value
-                if not cfg["enabled"] or value is None or (d["needs_running"] and not running):
+                if not cfg["enabled"] or (d["needs_running"] and not running):
                     st.reset()
                     continue
+                if value is None:
+                    # Never a reason to raise an alarm, and never evidence that one has recovered.
+                    st.pending_since = None
+                    st.warning = False
+                    st.lost = st.alarm
+                    continue
+                st.last = value
+                st.lost = False
 
                 level = cfg["level"]
                 high = d["side"] == "high"
@@ -215,12 +215,15 @@ class AlarmManager:
         level = self._cfg[d["id"]]["level"]
         value = st.value
         word = "high" if d["side"] == "high" else "low"
-        if severity == "alarm":
+        if severity == "alarm" and st.lost:
+            last = f" (last {_fmt(st.last, d['decimals'], d['unit'])})" if st.last is not None else ""
+            message = f"{d['what']} {word}: no reading from the sensor{last}"
+        elif severity == "alarm":
             message = f"{d['what']} {word}: {_fmt(value, d['decimals'], d['unit'])} (alarm at {_fmt(level, d['decimals'], d['unit'])})"
         else:
             message = f"{d['what']} nearing {word} alarm: {_fmt(value, d['decimals'], d['unit'])}"
         return {"id": d["id"], "group": d["group"], "severity": severity, "acked": st.acked if severity == "alarm" else False,
-                "value": value, "level": level, "unit": d["unit"], "message": message}
+                "value": value, "level": level, "unit": d["unit"], "message": message, "sensor_lost": st.lost}
 
     def active(self):
         """Alarms first, then warnings: everything the dashboard should be showing right now."""

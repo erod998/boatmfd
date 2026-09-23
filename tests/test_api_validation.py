@@ -140,10 +140,13 @@ class TestMedia(unittest.TestCase):
             with self.subTest(zone=bad), self.assertRaises(ValidationError):
                 MediaIn(action="volume", zone=bad)
 
-    def test_volume_is_a_percentage(self):
-        MediaIn(action="volume", value=100)
-        with self.assertRaises(ValidationError):
-            MediaIn(action="volume", value=101)
+    def test_values_are_bounded_to_a_byte(self):
+        # Volume's real limit (0..24 on this head unit) is enforced by the stereo layer; this bound
+        # only has to admit every action's legitimate range, including the unit's own source ids.
+        MediaIn(action="source", value=255)
+        for bad in (-1, 256):
+            with self.subTest(value=bad), self.assertRaises(ValidationError):
+                MediaIn(action="volume", value=bad)
 
 
 class TestAlarmsAndBoost(unittest.TestCase):

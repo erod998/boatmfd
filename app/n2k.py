@@ -190,17 +190,46 @@ class N2kNode:
         self._send_address_claim()
 
     def _run(self):
-        self._send_address_claim()
-        while not self._stop.is_set():
-            if not self._ready.is_set() and self.address != NULL_ADDRESS and time.monotonic() - self._claimed_at > 0.25:
-                self._ready.set()
-            if self._ready.is_set() and not self._discovery_sent:
-                self._discovery_sent = True
-                self._send_frame(6, PGN_ISO_REQUEST, GLOBAL_ADDRESS, PGN_ADDRESS_CLAIM.to_bytes(3, "little"))
+        """The receive loop. It has to outlive the bus.
 
-            msg = self.bus.recv(timeout=0.1)
+        Nothing in here used to be guarded, so the first error from the interface -- the backbone
+        not powered yet when the Pi boots, a bus-off after a wiring fault or noise while cranking,
+        `ip link set can0 down` -- killed this thread silently and for good: engine data went to
+        "--" (correctly, it goes stale) and never came back until the service was restarted. Now an
+        error is logged once, the loop waits a moment and carries on, and when the bus answers
+        again the address is claimed afresh, since the other devices may have forgotten us.
+        (Recovering from bus-off itself is the kernel's job: see `restart-ms` in the CAN bring-up.)
+        """
+        claim_needed = True
+        failing = None
+        while not self._stop.is_set():
+            try:
+                if claim_needed:
+                    self._send_address_claim()
+                    claim_needed = False
+                if not self._ready.is_set() and self.address != NULL_ADDRESS and time.monotonic() - self._claimed_at > 0.25:
+                    self._ready.set()
+                if self._ready.is_set() and not self._discovery_sent:
+                    self._discovery_sent = True
+                    self._send_frame(6, PGN_ISO_REQUEST, GLOBAL_ADDRESS, PGN_ADDRESS_CLAIM.to_bytes(3, "little"))
+                msg = self.bus.recv(timeout=0.1)
+            except Exception as exc:
+                if str(exc) != failing:
+                    print(f"[n2k] CAN interface error ({exc}); retrying")
+                    failing = str(exc)
+                self._ready.clear()
+                claim_needed = True
+                self._discovery_sent = False
+                self._stop.wait(1.0)
+                continue
+            if failing is not None:
+                print("[n2k] CAN interface is back")
+                failing = None
             if msg is not None and msg.is_extended_id:
-                self._handle(msg)
+                try:
+                    self._handle(msg)
+                except Exception as exc:   # one malformed frame from any device must not stop the rest
+                    print(f"[n2k] ignored a frame from {msg.arbitration_id:#x} ({exc})")
 
     def _handle(self, msg):
         _, pgn, source, dest = parse_can_id(msg.arbitration_id)

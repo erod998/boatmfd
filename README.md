@@ -46,10 +46,21 @@ To or route running it falls back to course over ground, then heading, so it is 
 pointing somewhere stale. Cycle them with the compass button next to the zoom buttons, or
 **Options → Chart orientation**; both stay in sync.
 
-**Measure Distance** (the ruler button beside the zoom controls): tap once to anchor — it starts
-at the boat, which is the question usually being asked — and the range and bearing to wherever
-you tap or drag next read out continuously at the top of the chart. Tapping again re-anchors, so
-it measures between two arbitrary points as well as from the boat.
+**The chart cursor** — what a tap on the chart does, the way a GPSMAP does it: it drops a cursor
+and does nothing else yet. The bar that appears says how far away it is and in which direction,
+its position, and what is charted there (the depth band, or a bridge, dam or caution area — tap
+that line for the full details); **Go To** navigates there, **Save Waypoint** keeps it. A tap used
+to start a Go To immediately, and since a Go To and a route are mutually exclusive, one stray tap
+in a chop cancelled an active route. Tapping an aid to navigation, mile marker, landmark or
+hazard point identifies it instead, with its own Go To. Only those point features take a tap;
+land, depth areas and shorelines used to as well, which between them cover the whole chart, so
+every tap opened "Land" and the chart could not be tapped for anything else at all.
+
+**Measure Distance** (the ruler button beside the zoom controls): the reference starts at the
+boat and follows it; each tap on the chart moves the far end, and the range and bearing read out
+at the top of the chart. **Set Ref** pins the reference to that point instead, to measure between
+two arbitrary points; **From Boat** puts it back. (Built for a finger: an earlier version relied on
+mouse hover and read 0.00 on a touchscreen.)
 
 **Range Rings** (**Options → Map layers & colors → My Vessel**): four concentric circles around
 the boat at a spacing you pick, the outermost labelled with its radius, so distance to anything
@@ -134,8 +145,8 @@ move to match the level. Coolant and engine temperature are the same reading
 here (one engine-temperature gauge). Details are in "Alarms" below.
 
 **Waypoints, Routes & Boundaries** (**Options → Waypoints, Routes & Boundaries**): mark the
-boat's current position as a named, saved waypoint (separate from the single "Go To" target a
-tap on the chart sets); go to one, rename it in place, or delete it. Build a **route** by
+boat's current position as a named, saved waypoint (separate from the single "Go To" target the
+chart cursor sets); go to one, rename it in place, or delete it. Build a **route** by
 checking two or more saved waypoints in the order you want to visit them — following one steers
 leg to leg and auto-advances to the next point on arrival (within ~300 ft), the same way a single
 Go To does, and the two are mutually exclusive (starting a route stops a Go To and vice versa).
@@ -235,7 +246,7 @@ venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8090
 Open `http://localhost:8090` (the layout scales with screen height, so it
 works from 1024x600 up to 1080p). The simulated boat cruises up and down
 the Old Hickory Lake channel near Hendersonville (edit `ROUTE` in
-[`app/gps.py`](app/gps.py) to move it). Tap the chart to drop a waypoint and
+[`app/gps.py`](app/gps.py) to move it). Tap the chart to drop the cursor, press **Go To**, and
 watch bearing/distance/ETA/cross-track-error update live (**Options →
 Waypoint / go to…** shows them). Use **Night** on the menu bar, tap a color
 swatch to light the (virtual) LED strip, and try the Media screen (a simulated
@@ -687,7 +698,7 @@ does not power the bus, so:
 
 ```bash
 sudo apt install can-utils
-sudo ip link set can0 up type can bitrate 250000
+sudo ip link set can0 up type can bitrate 250000 restart-ms 100
 candump can0                          # power the stereo and the CX5003 on: you should see frames
 pip install python-can
 export BOAT_CAN=can0                  # shared by the engine converter, the Fusion stereo and the fuel sensor
@@ -786,6 +797,12 @@ so the Helm screen and a phone always agree):
 - **No data never alarms:** a sensor that isn't there, or a converter that has
   gone quiet, is not a reading. Oil pressure is only watched once the engine
   has been running for 5 seconds, because it takes a moment to build.
+- **...and never clears one either.** An alarm already sounding stays up when
+  its sensor stops reporting, with the banner saying so ("no reading from the
+  sensor", and the last value it had), until real data shows recovery. A depth
+  sounder loses the bottom in very shallow water, and an overheating engine can
+  burn through its sender wire -- the moments an alarm must not quietly vanish,
+  which it used to. Silence still silences it; switching that alarm off clears it.
 - When an alarm fires, a red **banner** appears above the menu bar with the
   message and a **Silence** button, the gauge flashes red, and a double beep
   sounds once a second. Silence stops the banner and the beep for everything
@@ -823,7 +840,7 @@ After=network.target
 User=pi
 WorkingDirectory=/home/pi/boat-dashboard
 EnvironmentFile=/home/pi/boat-dashboard/boat.env
-ExecStartPre=+/bin/sh -c 'ip link set can0 down; ip link set can0 up type can bitrate 250000'
+ExecStartPre=+/bin/sh -c 'ip link set can0 down; ip link set can0 up type can bitrate 250000 restart-ms 100'
 ExecStart=/home/pi/boat-dashboard/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8090
 Restart=always
 

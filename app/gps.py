@@ -11,7 +11,7 @@ Two implementations:
 import math
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .nav import haversine_distance_nm, initial_bearing_deg
 
@@ -90,49 +90,137 @@ class SimulatedGPS:
         )
 
 
+# No valid position for this long and the fix is reported lost, whatever was heard last. A GPS
+# that goes silent -- antenna cable, dead module, unplugged USB -- must not leave the last position
+# on screen presented as current; for a chartplotter that is the worst failure there is.
+FIX_STALE_S = 3.0
+# Below this a GPS course is noise: it cannot measure heading at all, only the direction the
+# position is moving, and a boat sitting at the dock "moves" in a random direction every second.
+# Course and heading hold their last good value instead of spinning the boat icon and the chart.
+COURSE_MIN_SOG_KN = 1.0
+REOPEN_S = 5.0   # how often to try the port again after it goes away
+
+
 class SerialGPS:
-    """Reads NMEA sentences from a real serial GPS module."""
+    """Reads NMEA 0183 sentences from a real GPS module on a serial port.
 
-    def __init__(self, port="/dev/serial0", baudrate=9600, timeout=1.0):
+    Rebuilt after a review found it had never run against a real module (the simulator does not
+    touch it) and would have failed badly on one:
+
+    * It stamped every read as current whether or not anything arrived, so a dead GPS kept the
+      last position on screen as live -- indefinitely. Now a fix needs a valid position within
+      FIX_STALE_S, and an explicit loss (RMC status V, GGA quality 0) ends it at once.
+    * An RMC with status V (no fix) parses with latitude and longitude 0.0, and those were applied
+      -- putting the boat off the coast of Africa, dragging the track across the world and adding
+      thousands of miles to the trip. Void sentences are now ignored for position entirely.
+    * Line noise makes pynmea2 raise ValueError, not ParseError, which escaped and failed the whole
+      telemetry frame. Any sentence that fails to parse is now just dropped, and checksums are
+      required, so noise that clips one off cannot slip corrupted numbers through.
+    * An unplugged USB GPS raised out of every read, freezing the chart, nav, trip, stereo and
+      alarm banner until a restart, and the port was never reopened. Now it reports no fix, keeps
+      trying the port every REOPEN_S, and carries on when the GPS comes back.
+    * Heading was set straight from course over ground at any speed (see COURSE_MIN_SOG_KN).
+    """
+
+    def __init__(self, port="/dev/serial0", baudrate=9600, timeout=1.0, opener=None, clock=time.time):
+        self.port, self.baudrate, self.timeout = port, baudrate, timeout
+        self._opener = opener or self._open_port
+        self._clock = clock
+        self._serial = None
+        self._reopen_at = 0.0
+        self._last_error = None
+        self._state = Fix(lat=0.0, lon=0.0)   # the last good values of each field
+        self._valid_until = 0.0               # a fix is current until this time
+        self._gga_seen = False
+        self._connect()
+
+    def _open_port(self):
         import serial  # pyserial
-        self._serial = serial.Serial(port, baudrate=baudrate, timeout=timeout)
-        self._last = Fix(lat=0.0, lon=0.0)
+        return serial.Serial(self.port, baudrate=self.baudrate, timeout=self.timeout)
 
-    def read(self) -> Fix:
+    def _note(self, message):
+        """Log a change of state once, not every second it persists."""
+        if message != self._last_error:
+            print(f"[gps] {message}")
+            self._last_error = message
+
+    def _connect(self):
+        try:
+            self._serial = self._opener()
+            self._note(f"reading NMEA from {self.port}")
+        except Exception as exc:
+            self._serial = None
+            self._reopen_at = self._clock() + REOPEN_S
+            self._note(f"could not open {self.port} ({exc}); showing NO FIX and retrying")
+
+    def _drop_port(self, exc):
+        try:
+            self._serial.close()
+        except Exception:
+            pass
+        self._serial = None
+        self._reopen_at = self._clock() + REOPEN_S
+        self._note(f"lost {self.port} ({exc}); showing NO FIX and retrying")
+
+    def _handle(self, raw):
         import pynmea2
 
-        deadline = time.time() + 1.0
-        while time.time() < deadline:
-            line = self._serial.readline().decode("ascii", errors="replace").strip()
-            if not line.startswith("$"):
-                continue
+        line = raw.decode("ascii", errors="replace").strip()
+        if not line.startswith("$"):
+            return
+        try:
+            msg = pynmea2.parse(line, check=True)
+        except Exception:   # bad or missing checksum, line noise, a sentence type pynmea2 rejects
+            return
+        now = self._clock()
+        st = self._state
+        if isinstance(msg, pynmea2.types.talker.GGA):
+            self._gga_seen = True
+            quality = int(msg.gps_qual or 0)
+            st.satellites = int(msg.num_sats or 0)
+            st.hdop = float(msg.horizontal_dil or 99.9)
+            if quality > 0:
+                st.lat, st.lon, st.fix_quality = msg.latitude, msg.longitude, quality
+                self._valid_until = now + FIX_STALE_S
+            else:
+                self._valid_until = 0.0            # the receiver says the fix is gone: believe it
+        elif isinstance(msg, pynmea2.types.talker.RMC):
+            if msg.status != "A":
+                self._valid_until = 0.0            # void: 0.0/0.0 for position, nothing to use
+                return
+            st.lat, st.lon = msg.latitude, msg.longitude
+            self._valid_until = now + FIX_STALE_S
+            if msg.spd_over_grnd is not None:
+                st.sog_kn = float(msg.spd_over_grnd)
+            if msg.true_course is not None and st.sog_kn >= COURSE_MIN_SOG_KN:
+                st.cog_deg = st.heading_deg = float(msg.true_course)
+        elif isinstance(msg, pynmea2.types.talker.VTG):
+            if msg.spd_over_grnd_kts is not None:
+                st.sog_kn = float(msg.spd_over_grnd_kts)
+            if msg.true_track is not None and st.sog_kn >= COURSE_MIN_SOG_KN:
+                st.cog_deg = st.heading_deg = float(msg.true_track)
+
+    def read(self) -> Fix:
+        now = self._clock()
+        if self._serial is None and now >= self._reopen_at:
+            self._connect()
+        if self._serial is not None:
+            deadline = now + 1.0
             try:
-                msg = pynmea2.parse(line)
-            except pynmea2.ParseError:
-                continue
-
-            if isinstance(msg, pynmea2.types.talker.GGA):
-                self._last.lat = msg.latitude
-                self._last.lon = msg.longitude
-                self._last.satellites = int(msg.num_sats or 0)
-                self._last.hdop = float(msg.horizontal_dil or 99.9)
-                self._last.fix_quality = int(msg.gps_qual or 0)
-            elif isinstance(msg, pynmea2.types.talker.RMC):
-                self._last.lat = msg.latitude
-                self._last.lon = msg.longitude
-                if msg.spd_over_grnd is not None:
-                    self._last.sog_kn = float(msg.spd_over_grnd)
-                if msg.true_course is not None:
-                    self._last.cog_deg = float(msg.true_course)
-                    self._last.heading_deg = float(msg.true_course)
-            elif isinstance(msg, pynmea2.types.talker.VTG):
-                if msg.spd_over_grnd_kts is not None:
-                    self._last.sog_kn = float(msg.spd_over_grnd_kts)
-                if msg.true_track is not None:
-                    self._last.heading_deg = float(msg.true_track)
-
-        self._last.timestamp = time.time()
-        return self._last
+                while self._clock() < deadline:
+                    raw = self._serial.readline()
+                    if raw:
+                        self._handle(raw)
+            except Exception as exc:   # unplugged, I/O error: the rest of the dashboard carries on
+                self._drop_port(exc)
+        # A copy, never the live object: the caller keeps it while the next read is in progress.
+        fix = replace(self._state)
+        if self._clock() >= self._valid_until:
+            fix.fix_quality = 0
+        elif not self._gga_seen:
+            fix.fix_quality = 1   # an RMC-only receiver: status A is a fix, just without a quality
+        fix.timestamp = self._clock()
+        return fix
 
 
 class NoFixGPS:
@@ -143,11 +231,9 @@ class NoFixGPS:
 
 
 def make_gps_source(settings):
-    """Real serial GPS if a port is configured; the simulator only when none is."""
+    """Real serial GPS if a port is configured; the simulator only when none is. A configured GPS
+    that is missing at boot shows NO FIX and is picked up when it appears -- never the simulator,
+    which would put a made-up boat on a real chart."""
     if settings.gps_port:
-        try:
-            return SerialGPS(settings.gps_port, settings.gps_baud)
-        except Exception as exc:  # pragma: no cover - hardware-dependent
-            print(f"[gps] could not open serial GPS on {settings.gps_port} ({exc}); showing NO FIX")
-            return NoFixGPS()
+        return SerialGPS(settings.gps_port, settings.gps_baud)
     return SimulatedGPS()

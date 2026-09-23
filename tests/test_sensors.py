@@ -197,6 +197,33 @@ class TestSensorHub(unittest.TestCase):
         self.assertAlmostEqual(hub.engine()["trim_pct"], 50.0, delta=0.5)
         self.assertEqual(Calibration(Path(self.tmp.name) / "calibration.json").get("trim", "down_ohm"), 5.0)
 
+    def test_a_failing_read_shows_no_data_instead_of_freezing_and_recovers(self):
+        # One exception used to end the sampling thread and leave the last readings on the gauges
+        # as if they were live.
+        import time as _time
+        from unittest import mock
+        hub, adc, tach, cal = make_hub(self.tmp.name)
+        hub.SAMPLE_S = hub.PROBE_S = 0.01
+        adc.set_ohms(0, 136.5)
+        broken = mock.Mock(side_effect=OSError("GPIO fault"))
+        with mock.patch("builtins.print"):
+            hub.start()
+            self.addCleanup(hub.stop)
+            deadline = _time.monotonic() + 3
+            while hub.engine()["fuel_pct"] is None and _time.monotonic() < deadline:
+                _time.sleep(0.01)
+            self.assertIsNotNone(hub.engine()["fuel_pct"])
+            real_rpm, tach.rpm = tach.rpm, broken
+            deadline = _time.monotonic() + 3
+            while hub.engine()["fuel_pct"] is not None and _time.monotonic() < deadline:
+                _time.sleep(0.01)
+            self.assertIsNone(hub.engine()["fuel_pct"], "a failing read left the old value on the gauge")
+            tach.rpm = real_rpm
+            deadline = _time.monotonic() + 3
+            while hub.engine()["fuel_pct"] is None and _time.monotonic() < deadline:
+                _time.sleep(0.01)
+            self.assertIsNotNone(hub.engine()["fuel_pct"], "the sampling thread did not survive")
+
     def test_disconnected_senders_and_missing_adc_show_no_data(self):
         hub, adc, tach, cal = make_hub(self.tmp.name)
         adc.volts[0] = 3.3               # open circuit floats to the rail

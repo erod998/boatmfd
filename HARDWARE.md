@@ -99,7 +99,7 @@ section — this is the short version of the order to do it in:
    switches for a 4-cylinder 4-stroke gasoline engine (ratio 2) and, for the fuel sender's
    "switch" wire, connect it to ground for a US-standard 240-33 Ω sender.
 3. Set up the Pi's NMEA 2000 interface (item #4) and bring the interface up
-   (`sudo ip link set can0 up type can bitrate 250000`; `candump can0` should show frames
+   (`sudo ip link set can0 up type can bitrate 250000 restart-ms 100`; `candump can0` should show frames
    once the CX5003 has power).
 4. On the Pi:
    ```bash

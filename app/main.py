@@ -105,6 +105,12 @@ async def lifespan(_app):
         for task in tasks:
             task.cancel()
         lighting.stop()
+        # A clean stop (systemctl restart, an update) writes out what is otherwise only saved on a
+        # timer. The battery switch gives no such chance, which is what those timers are for.
+        trip_tracker.flush()
+        quickdraw.flush()
+        if sensor_hub:
+            sensor_hub.stop()
 
 
 app = FastAPI(title="Boat Dashboard", lifespan=lifespan)
@@ -152,7 +158,9 @@ class LightingIn(BaseModel):
 
 class MediaIn(BaseModel):
     action: str = Field(max_length=40)
-    value: Optional[int] = Field(default=None, ge=0, le=100)
+    # Shared by every action, so bounded to the widest real domain -- a byte, since the head unit
+    # reports its own source ids -- and each action checks its own range (volume 0..max) after.
+    value: Optional[int] = Field(default=None, ge=0, le=255)
     # As numbered on the stereo: 1 = Zone 1. Settings caps a Fusion head unit at four zones.
     zone: int = Field(default=1, ge=1, le=4)
 
@@ -353,15 +361,17 @@ def set_waypoint(wp: WaypointIn):
     active route (Route To) -- the two are mutually exclusive, like on a real chartplotter."""
     global waypoint
     route_tracker.stop()
-    origin = None
-    if track:
-        origin = track[-1]
+    # The leg starts where the boat is. With no position yet (just booted, no fix) the start is
+    # left unknown and filled in from the first fix -- see _full_frame. It used to default to the
+    # destination itself, a zero-length leg that made course read 0 and cross-track error
+    # meaningless for the whole trip: an off-course alarm on nothing, and Course Up aimed north.
+    origin = track[-1] if track else None
     waypoint = {
         "lat": wp.lat,
         "lon": wp.lon,
         "name": wp.name,
-        "origin_lat": origin["lat"] if origin else wp.lat,
-        "origin_lon": origin["lon"] if origin else wp.lon,
+        "origin_lat": origin["lat"] if origin else None,
+        "origin_lon": origin["lon"] if origin else None,
     }
     return {"ok": True, "waypoint": waypoint}
 
@@ -778,6 +788,8 @@ def _full_frame():
         trip_tracker.tick(fix.lat, fix.lon, fix.sog_kn, engine.get("fuel_gph"))
 
     nav = None
+    if waypoint is not None and fix.has_fix and waypoint["origin_lat"] is None:
+        waypoint["origin_lat"], waypoint["origin_lon"] = fix.lat, fix.lon   # set before the first fix
     if waypoint is not None and fix.has_fix:
         nav = waypoint_nav(
             fix.lat, fix.lon, fix.sog_kn,
