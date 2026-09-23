@@ -1,0 +1,13 @@
+(version 1)
+
+# The tach's ignition side (Delco EST gray wire: 12 V between sparks, a few hundred volts at each
+# spark) stays 3 mm from every other net on the board.
+(rule "tach ignition side isolation"
+  (constraint clearance (min 3mm))
+  (condition "A.NetClass == 'TACH_HV' && B.NetClass != 'TACH_HV'"))
+
+# Inside the ignition side, the spike is divided across the three series resistors: keep those
+# nets 0.6 mm from each other and from the LED side.
+(rule "tach series chain"
+  (constraint clearance (min 0.6mm))
+  (condition "A.NetClass == 'TACH_HV' && B.NetClass == 'TACH_HV' && A.NetName != B.NetName && (A.NetName == '/TACH_A' || A.NetName == '/TACH_B' || A.NetName == '/TACH_IN')"))

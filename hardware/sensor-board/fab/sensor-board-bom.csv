@@ -1,0 +1,20 @@
+Comment,Designator,Footprint,MPN,Qty,Mount,Note
+100n,"C1,C2,C3,C4,C5,C6,C7,C9",0805,CL21B104KBCNNNC,8,SMD,ADC input filter; U1 decoupling; U2 decoupling
+10n,C11,0805,CL21B103KBANNNC,1,SMD,filters the ring-down after each spark
+1u,"C8,C10",0805,CL21B105KAFNNNE,2,SMD,U1 decoupling; U2 decoupling
+BAT54S,"D1,D2,D3,D4,D5,D6",SOT-23,"BAT54S,215",6,SMD,clamps the divider node between GND and 3V3
+1N4148W,D7,SOD-123,1N4148W-7-F,1,SMD,keeps the ring-down's negative swing off the LED
+SMAJ5.0A,D8,SMA,SMAJ5.0A,1,SMD,the probe wire runs to the engine bay
+39k,"R1,R2,R4,R5,R6",1206,RC1206FR-0739KL,5,SMD,tap top resistor (1206 for voltage rating)
+1k,"R13,R14,R15,R16,R17,R18,R23",0805,RC0805FR-071KL,7,SMD,ADC pin series resistor; protects the GPIO
+3.3k,"R19,R20,R21",1206,RC1206FR-073K3L,3,SMD,tach input: 3 in series share the ignition spike
+4.7k,R24,0805,RC0805FR-074K7L,1,SMD,1-Wire pull-up
+100,R25,0805,RC0805FR-07100RL,1,SMD,1-Wire series resistor
+47k,R3,1206,RC1206FR-0747KL,1,SMD,tap top resistor (1206 for voltage rating)
+10k,"R7,R8,R9,R10,R11,R12,R22",0805,RC0805FR-0710KL,7,SMD,divider bottom; opto pull-up
+ADS1115IDGSR,"U1,U2",TSSOP-10,ADS1115IDGSR,2,SMD,"I2C 0x48: fuel, trim, battery, gauge supply; I2C 0x49: oil, spare (optional)"
+PC817,U3,SMDIP-4,"PC817 SMD (gull-wing), CTR rank B or C",1,SMD,isolates the Pi from the ignition
+HELM,J1,"PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 8-GF-3,81 (plug: MC 1,5/ 8-STF-3,81)",1,THT (hand solder),"1 fuel S, 2 trim S, 3 battery +12V, 4 gauge I, 5 oil S, 6 spare, 7 gauge G, 8 battery -"
+TACH,J2,"PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 2-GF-3,81 (plug: MC 1,5/ 2-STF-3,81)",1,THT (hand solder),"Delco EST: 1 gray tach wire, 2 engine ground"
+PROBES,J3,"PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal_ThreadedFlange","Phoenix MC 1,5/ 3-GF-3,81 (plug: MC 1,5/ 3-STF-3,81)",1,THT (hand solder),"DS18B20 probes: 1 red, 2 yellow, 3 black"
+RPi GPIO,J4,PinSocket_2x20_P2.54mm_Vertical,"2x20 female stacking header, 2.54 mm, extra-tall (e.g. Adafruit 1979)",1,THT (hand solder),to the Raspberry Pi

@@ -7,7 +7,7 @@ it in*. Nothing here is final until you've soldered it — treat part numbers as
 starting point, not gospel, and check current price/stock before ordering.
 
 
-> **Engine data without a converter:** instead of the CX5003, the [passive-tap sensor board](SENSOR_BOARD.md) reads fuel, trim, oil, battery and RPM straight off the existing gauges' wires while they keep working. It is a design to build, not yet a proven board.
+> **Engine data without a converter:** instead of the CX5003, the [passive-tap sensor board](SENSOR_BOARD.md) reads fuel, trim, oil, battery and RPM straight off the existing gauges' wires while they keep working. The KiCad design and ready-to-order fabrication files are in [hardware/sensor-board/](hardware/sensor-board/); it has not been built and proven on the boat yet.
 
 ## Parts list
 
