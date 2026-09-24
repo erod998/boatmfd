@@ -37,6 +37,13 @@ if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
         export DISPLAY=:0
     fi
 fi
+# Chromium picks X11 unless told otherwise (it only guesses Wayland from XDG_SESSION_TYPE, which an
+# SSH session doesn't have), and then exits with "Missing X server or $DISPLAY".
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    PLATFORM=wayland
+else
+    PLATFORM=x11
+fi
 
 # One kiosk at a time.
 stop
@@ -51,6 +58,7 @@ fi
 
 nohup "$BROWSER" \
     --user-data-dir="$PROFILE" \
+    --ozone-platform="$PLATFORM" \
     --kiosk \
     --noerrdialogs \
     --disable-infobars \
@@ -59,5 +67,5 @@ nohup "$BROWSER" \
     --check-for-update-interval=31536000 \
     --disable-features=Translate \
     --autoplay-policy=no-user-gesture-required \
-    "file://$DIR/starting.html#$DASHBOARD_URL" >/dev/null 2>&1 &
+    "file://$DIR/starting.html#$DASHBOARD_URL" >"$XDG_RUNTIME_DIR/boatmfd-kiosk.log" 2>&1 &
 disown
