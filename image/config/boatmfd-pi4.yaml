@@ -11,7 +11,9 @@ include:
 
 device:
   layer: rpi4
-  storage_type: usb
+  # sd even on the USB flash drive: the image's description only knows sd, emmc and nvme, and
+  # nothing else reads it (usb_boot below is what boots it from USB).
+  storage_type: sd
   hostname: boatmfd
   user1: admin
   # SSH is by key only (ssh.pubkey_only), and the account has no password at all, so sudo can't
@@ -38,6 +40,13 @@ ssh:
 
 ieee80211:
   regdom: US
+
+# The dashboard's clock is the system's: Old Hickory Lake is on Central time.
+locale:
+  default: en_US.UTF-8
+  keyboard_keymap: us
+  keyboard_layout: English (US)
+  timezone: America/Chicago
 
 boatmfd:
   usb_boot: y

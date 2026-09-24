@@ -61,10 +61,13 @@ browser() {
     if [ -f "$prefs" ]; then
         sed -i -e 's/"exited_cleanly":false/"exited_cleanly":true/' -e 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$prefs"
     fi
+    # --force-dark-mode: the browser's own window is dark, not white, for the moment before the
+    # page's first frame. (The dashboard doesn't follow the system's light/dark setting.)
     "$BROWSER" \
         --user-data-dir="$PROFILE" \
         --ozone-platform="$PLATFORM" \
         --kiosk \
+        --force-dark-mode \
         --noerrdialogs \
         --disable-infobars \
         --no-first-run \

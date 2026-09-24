@@ -138,7 +138,6 @@ function openPanel(name) {
   if (name === "mapsettings") buildMapSettingsMenu();
   if (name === "navdata") buildNavDataMenu();
   if (name === "navalarms") buildNavAlarmsMenu();
-  if (name === "ais") buildAisMenu();
   if (name === "pinned") buildPinnedMenu();
 }
 document.querySelectorAll(".p-close").forEach((b) => b.addEventListener("click", closePanels));
@@ -169,7 +168,6 @@ document.querySelectorAll("[data-opt]").forEach((b) => b.addEventListener("click
   else if (opt === "mapsettings") openPanel("mapsettings");
   else if (opt === "navdata") openPanel("navdata");
   else if (opt === "navalarms") openPanel("navalarms");
-  else if (opt === "ais") openPanel("ais");
   else if (opt === "pinned") openPanel("pinned");
   else if (opt === "center") { centerOnBoat(); closePanels(); }
   else if (opt === "clearwp") { clearWaypoint(); closePanels(); }
@@ -731,35 +729,6 @@ async function buildNavAlarmsMenu() {
     onChange: (v) => { s.anchor_radius_ft = v; save({ anchor_radius_ft: v }); },
   }).set(s.anchor_radius_ft, true);
 }
-
-// ---------- AIS Targets ----------
-function fmtClockDuration(minutes) {
-  if (minutes == null) return "--";
-  if (minutes < 60) return `${minutes.toFixed(0)} min`;
-  return `${(minutes / 60).toFixed(1)} hr`;
-}
-
-function renderAisList() {
-  const body = $("aisBody");
-  if (!body || $("panel-ais").hidden || !lastData) return;
-  const targets = lastData.ais || [];
-  if (!targets.length) { body.innerHTML = '<p class="p-note">No AIS targets. (No real AIS receiver is connected -- these are simulated nearby vessels, for demo purposes.)</p>'; return; }
-  body.replaceChildren(...targets.map((t) => {
-    const row = document.createElement("div");
-    row.className = "trip-row";
-    const cpa = t.cpa_nm != null ? `${t.cpa_nm.toFixed(2)} ${UNITS[unit].dist} CPA in ${fmtClockDuration(t.tcpa_min)}` : "not closing";
-    row.innerHTML = `<div><div class="trip-date">${t.range_nm != null ? toDist(t.range_nm).toFixed(2) + " " + UNITS[unit].dist : "--"} &middot; ${Math.round(t.bearing_deg || 0)}&deg; &middot; ${cpa}</div>` +
-      `<div class="trip-stats">${t.name} &middot; ${toSpeed(t.sog_kn).toFixed(1)} ${UNITS[unit].speed}</div></div>`;
-    return row;
-  }));
-}
-
-function buildAisMenu() {
-  const body = $("aisBody");
-  body.innerHTML = '<p class="p-note">No real AIS receiver is connected -- these are simulated nearby vessels, for demo purposes.</p>';
-  renderAisList();
-}
-document.addEventListener("telemetry", renderAisList);
 
 // ---------- Pinned screens (Options -> Pinned screens) ----------
 // Which screens the Home overlay's "Pinned" tab and the menu bar's prev/next swipe cycle through.

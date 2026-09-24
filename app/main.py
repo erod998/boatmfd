@@ -26,7 +26,6 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from .ais import SimulatedAIS
 from .alarms import AlarmManager
 from .boundaries import BoundaryManager
 from .celestial import moon_phase, sun_times
@@ -75,7 +74,6 @@ boundaries = BoundaryManager(DATA_DIR / "boundaries.json")
 switching = SwitchingPanel(DATA_DIR / "switching.json")
 quickdraw = QuickdrawRecorder(DATA_DIR / "quickdraw.json")
 nav_alarms = NavAlarmManager(DATA_DIR / "nav_alarms.json")
-ais = SimulatedAIS(36.306, -86.563)  # no real AIS receiver: a few other boats nearby, for demo purposes
 chart_store = ChartStore(CHARTS_DIR)
 
 
@@ -664,15 +662,6 @@ def set_switching(circuit_id: str, cmd: SwitchIn):
     return {"ok": True, "circuit": asdict(circuit)}
 
 
-# ---------------- AIS: simulated nearby vessels ----------------
-@app.get("/api/ais")
-def get_ais():
-    fix = _latest["fix"]
-    if fix and fix.has_fix:
-        return {"targets": ais.targets(fix.lat, fix.lon, fix.sog_kn)}
-    return {"targets": ais.targets()}
-
-
 # ---------------- Quickdraw-style depth recording ----------------
 @app.get("/api/quickdraw")
 def get_quickdraw():
@@ -932,9 +921,6 @@ def _full_frame():
         for e, _ in _recent_boundary_events.values()
     ]
 
-    ais.tick()
-    ais_targets = ais.targets(fix.lat, fix.lon, fix.sog_kn) if fix.has_fix else ais.targets()
-
     sunrise, sunset = sun_times(fix.lat, fix.lon, datetime.now().date()) if fix.has_fix else (None, None)
     moon_phase_name, moon_illum = moon_phase(datetime.now().date())
 
@@ -956,7 +942,6 @@ def _full_frame():
         "route_nav": route_nav,
         "nav_alerts": nav_alerts,
         "anchor": {"dropped": nav_alarms.anchor_dropped},
-        "ais": ais_targets,
         "switching": switching.list(),
         "quickdraw_enabled": quickdraw.enabled,
         "sun": {

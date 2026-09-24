@@ -59,7 +59,21 @@ jobs:
         run: python3 boatmfd/image/make-splash.py boatmfd/kiosk/plymouth/splash.png boatmfd/image/build/splash.tga
 
       - name: Build the image
-        run: cd rpi-image-gen && ./rpi-image-gen build -S "$GITHUB_WORKSPACE/boatmfd/image" -c "$CONFIG"
+        shell: bash   # with pipefail: the build's own exit status, through tee
+        run: |
+          cd rpi-image-gen
+          ./rpi-image-gen build -S "$GITHUB_WORKSPACE/boatmfd/image" -c "$CONFIG" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Why it failed
+        if: failure()
+        run: |
+          # A run's logs need a GitHub login to read; its annotations don't. Each is cut at about
+          # 4 KB, so the end of the log goes in pieces, oldest first.
+          tail -n 200 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r' > "$RUNNER_TEMP/tail.txt"
+          (cd "$RUNNER_TEMP" && split -C 2500 -d -a 2 tail.txt part.)
+          for f in $(ls "$RUNNER_TEMP"/part.* | tail -n 8); do
+            echo "::error title=Build log ${f##*.}::$(sed 's/%/%25/g' "$f" | awk '{ printf "%s%%0A", $0 }')"
+          done
 
       - name: Find it
         id: out
@@ -69,16 +83,27 @@ jobs:
           ls -la "$(dirname "$img")"
           (cd "$(dirname "$img")" && sha256sum "$(basename "$img")" > "$(basename "$img").sha256")
           echo "image=$img" >> "$GITHUB_OUTPUT"
+          # The two images both system copies are made of, for updating a running Pi into its other
+          # copy (/usr/lib/boatmfd/update).
+          out="$(dirname "$(find rpi-image-gen/work -name system.erofs | head -n 1)")"
+          name="$(basename "$img" .img.zst)"
+          for part in boot.vfat system.erofs; do
+            zstd -q -T0 -f "$out/$part" -o "$(dirname "$img")/$name.$part.zst"
+          done
+          ls -la "$(dirname "$img")"
+          echo "deploy=$(dirname "$img")" >> "$GITHUB_OUTPUT"
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ steps.out.outputs.image }}
+          DEPLOY: ${{ steps.out.outputs.deploy }}
         run: |
           notes="Test image for the Pi 4 on a USB flash drive, built from ${GITHUB_SHA::7} by run ${GITHUB_RUN_ID}. Write it with image/flash-from-pi.sh (image/README.md)."
           if ! gh release view "$RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$RELEASE" --repo "$GITHUB_REPOSITORY" --prerelease \
               --target "$GITHUB_SHA" --title "Pi 4 test image" --notes "$notes"
           fi
-          gh release upload "$RELEASE" "$IMAGE" "$IMAGE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE" "$IMAGE" "$IMAGE.sha256" "$DEPLOY"/*.vfat.zst "$DEPLOY"/*.erofs.zst \
+            --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$RELEASE" --repo "$GITHUB_REPOSITORY" --notes "$notes"

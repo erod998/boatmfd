@@ -1159,14 +1159,13 @@ try { if (["heading", "course"].includes(localStorage.getItem("chartRotateChoice
 // The compass direction currently pointing up the screen: 0 in North Up, the (eased) heading in
 // Heading Up, the (eased) leg course in Course Up.
 //
-// Every icon that stands for a real-world direction -- the boat, the AIS targets, the compass
-// rose -- has to be rotated by (its true direction - this). leaflet-rotate keeps the marker pane
-// in its *non-rotating* pane (see _initPanes in static/vendor/leaflet-rotate.js: markerPane is
-// created under norotatePane, and rotateWithView defaults to false), so marker icons stay upright
+// Every icon that stands for a real-world direction -- the boat, the compass rose -- has to be
+// rotated by (its true direction - this). leaflet-rotate keeps the marker pane in its
+// *non-rotating* pane (see _initPanes in static/vendor/leaflet-rotate.js: markerPane is created
+// under norotatePane, and rotateWithView defaults to false), so marker icons stay upright
 // on screen while the chart turns underneath them. Rotating an icon by its bare compass angle is
 // therefore only right in North Up; in the other two modes it is off by exactly the chart's
-// rotation. The compass rose showed N at the top of the screen in Heading Up, and AIS targets
-// pointed the wrong way, for that reason.
+// rotation. The compass rose showed N at the top of the screen in Heading Up for that reason.
 function screenUpAngle() {
   if (chartOrient === "heading") return shownHeading;
   if (chartOrient === "course") return shownCourse;
@@ -1263,9 +1262,9 @@ function boatTick(now) {
   // shows you crabbing off track. North Up: the plain heading. All three are this one expression.
   const svg = boatMarker.getElement() && boatMarker.getElement().querySelector("svg");
   if (svg) svg.style.transform = `rotate(${onScreen(shownHeading)}deg)`;
-  // The chart turns continuously in the rotated modes, so the other direction-bearing icons have
-  // to follow every frame, not only when a new AIS frame or setting arrives.
-  if (rotatedUp()) { orientCompassRose(); orientAisIcons(); }
+  // The chart turns continuously in the rotated modes, so the compass rose has to follow every
+  // frame, not only when a setting changes.
+  if (rotatedUp()) orientCompassRose();
 
   boatAnimId = requestAnimationFrame(boatTick);
 }
@@ -1356,7 +1355,6 @@ function setChartOrient(mode) {
   }
   // North Up gets no per-frame orienting (nothing is turning), so set these once on the way in.
   orientCompassRose();
-  orientAisIcons();
   syncOrientUI();
   try { localStorage.setItem("chartOrient", chartOrient); } catch (e) { /* storage unavailable */ }
 }
@@ -2627,42 +2625,6 @@ function renderSwitching(circuits) {
   });
 }
 
-// ---------- AIS targets drawn on the chart ----------
-const AIS_ICON = L.divIcon({
-  className: "",
-  html: '<svg viewBox="0 0 20 20"><path d="M10 1 L18 17 L10 13.5 L2 17 Z" fill="#2fd6c8" stroke="#06302c" stroke-width="1.2"/></svg>',
-  iconSize: [20, 20], iconAnchor: [10, 10],
-});
-const aisMarkers = {};  // mmsi -> L.Marker
-
-// Rotate the inner <svg>, not the marker's own root element -- that root's transform is how
-// Leaflet positions the marker. Through onScreen(), because the marker pane does not turn with
-// the chart (see screenUpAngle).
-function orientAisIcons() {
-  Object.values(aisMarkers).forEach((m) => {
-    const svg = m.getElement() && m.getElement().querySelector("svg");
-    if (svg) svg.style.transform = `rotate(${onScreen(m.cogDeg || 0)}deg)`;
-  });
-}
-function renderAis(targets) {
-  if (!targets) return;
-  const seen = new Set();
-  targets.forEach((t) => {
-    seen.add(t.mmsi);
-    let marker = aisMarkers[t.mmsi];
-    if (!marker) {
-      marker = L.marker([t.lat, t.lon], { icon: AIS_ICON, interactive: false }).addTo(map);
-      aisMarkers[t.mmsi] = marker;
-    }
-    marker.setLatLng([t.lat, t.lon]);
-    marker.cogDeg = t.cog_deg || 0;
-  });
-  orientAisIcons();
-  Object.keys(aisMarkers).forEach((mmsi) => {
-    if (!seen.has(Number(mmsi))) { map.removeLayer(aisMarkers[mmsi]); delete aisMarkers[mmsi]; }
-  });
-}
-
 function renderAll(data) {
   lastData = data;
   const speed = toSpeed(data.gps.sog_kn);
@@ -2678,7 +2640,6 @@ function renderAll(data) {
   widgets.trip.forEach((w) => w.render(data.trip));
   renderMedia(data.media);
   renderSwitching(data.switching);
-  renderAis(data.ais);
   if (Date.now() > lightingHold) {
     widgets.lights.forEach((w) => w.render(data.lighting));
     lightingState = data.lighting;
