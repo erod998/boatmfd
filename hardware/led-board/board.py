@@ -16,7 +16,7 @@ The board, 178 x 94 mm, two layers, 2 oz copper:
     a channel under their gate resistors; the RP2040 and the link (RJ45, differential I2C) in
     the left-hand column, the pixel data running out along a channel above the bottom outputs;
   * the strips' current on tracks 1.5-6 mm wide on the top layer only (no vias in its path),
-    everything else on 0.2 mm tracks at 0.15 mm spacing; ground on both layers everywhere else,
+    everything else on 0.2 mm tracks at 0.2 mm spacing; ground on both layers everywhere else,
     a stitching via beside every surface-mount ground pad.
 Footprints link to their schematic symbols (same UUIDs as schematic.py), so KiCad's
 schematic-parity check can compare the two.
@@ -45,7 +45,9 @@ PROJECT = "led-board"
 OX, OY = 50.0, 50.0                  # where the board sits on KiCad's page
 W, H = 178.0, 94.0
 TRACK, VIA_D, VIA_DRILL = 0.2, 0.6, 0.3
-CLEAR = 0.15                         # everything else: the RP2040's and USB-C's pins are 0.4-0.5 mm apart
+# Everything else: 0.2 mm (8 mil), PCBWay's minimum track and spacing for 2 oz copper -- which is
+# as tight as the RP2040's and USB-C's own pads are (0.4 and 0.5 mm pitch, 0.2 mm apart).
+CLEAR = 0.2
 POWER = set(design.POWER_NETS)
 # Track widths for the strips' current (IPC-2221, 2 oz outer copper, 20 C rise): 6 mm carries
 # about 20 A, 3 mm a 10 A output, 1.5 mm a colour's 3 A. The 12 V bus and the input also have
@@ -245,7 +247,10 @@ def same_pad(a, b, tol=0.02):
 class Board:
     def __init__(self, dry_run=False):
         self.dry = dry_run or pcbnew is None
-        self.router = Router(W, H, clearance, track=TRACK, via_d=VIA_D, margin=0.03)
+        # No safety margin on the clearance: at the RP2040's 0.4 mm pitch, 0.2 mm tracks 0.2 mm apart
+        # are exactly at the limit, and any margin shuts every pin in. Only round curves, the few
+        # microns a step between grid cells can cut past one (arc_margin). KiCad's DRC is the check.
+        self.router = Router(W, H, clearance, track=TRACK, via_d=VIA_D, margin=-0.0001, arc_margin=True)
         self.pad_items = {}          # (ref, pad number) -> [Item] (a fuse clip has two pads per pin)
         self.tree = {}
         self.failed = []
@@ -547,6 +552,33 @@ class Board:
                 self.add_via(item.net, ex, ey)
         self.recording = None
 
+    def ground_spoke(self, ref, num):
+        """A bottom-layer ground track from a part's exposed pad (through its own vias) out past its
+        pins to a via, before the supplies are routed under it. Their vias sit in the ring between
+        the pins and the pad, and their tracks would otherwise close a loop round the pad on the
+        bottom and cut its ground off from the rest -- on top, its pins already shut it in."""
+        self.router.track = TRACK
+        items = [it for it in self.pad_items[(ref, num)] if BOTTOM in it.layers]
+        cx0, cy0, cx1, cy1 = self.courtyard(ref)
+        via_maps = self.router.blocked("GND", VIA_D / 2)
+        spacing = VIA_DRILL + 0.45
+
+        def ok(i, j, layer):
+            x, y = self.router.xy(i, j)
+            if cx0 - 0.5 < x < cx1 + 0.5 and cy0 - 0.5 < y < cy1 + 0.5:
+                return False
+            if via_maps[TOP][i, j] or via_maps[BOTTOM][i, j]:
+                return False
+            return all((x - vx) ** 2 + (y - vy) ** 2 >= spacing ** 2 for _, vx, vy in self.vias)
+        x, y, _ = PLACE[ref]
+        path = self.router.search("GND", [c for c in self.cells_of(items) if c[2] == BOTTOM], ok, (x, y),
+                                  via_ok=False, allow_layers=(BOTTOM,))
+        if path is None:
+            self.warnings.append(("no way out for the exposed pad's ground", (ref, num)))
+            return
+        self.commit("GND", path, TRACK)
+        self.add_via("GND", *self.router.xy(*path[-1][:2]))
+
     def stitch_gnd(self, refs=None):
         """A via beside every surface-mount GND pad (of these parts, or all), into the bottom plane."""
         self.router.track = TRACK
@@ -624,10 +656,13 @@ class Board:
                 self.stitch_gnd(refs={"U4", "D8"})
             if net == "LINK_SDAP":        # U1's 5 V enable pin sits between SDA and SCL: its via first
                 self.via_out("U1", {"+5V"})
+            if net == "+5V":              # U5's right-hand PWM pins: their vias before the I2C runs past them
+                self.via_out("U5", {f"PWM{ch}" for ch in range(8, 16)})
             if net == ORDER_FANOUT:      # the RP2040's pins claim their way out, and its supplies their vias
                 self.fan_out("U2", {"+1V1", "+3V3"})
                 self.via_out("U2", {"+1V1"})
                 self.via_out("U2", {"+3V3"})
+                self.ground_spoke("U2", "57")
             self.route_net(net)
             print(f"  routed {net}", flush=True)
             if net == until:
@@ -1166,7 +1201,7 @@ def write_project(path):
     pro["net_settings"]["netclass_patterns"] = [{"netclass": "POWER", "pattern": pcb_net_name(n)} for n in design.POWER_NETS]
     rules = pro["board"]["design_settings"]["rules"]
     # PCBWay's standard 2-layer limits, as the sensor board (see sensor-board/board.py).
-    rules.update({"min_clearance": 0.15, "min_track_width": 0.15, "min_via_diameter": 0.6, "min_via_annular_width": 0.15,
+    rules.update({"min_clearance": CLEAR, "min_track_width": 0.2, "min_via_diameter": 0.6, "min_via_annular_width": 0.15,
                   "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_to_hole": 0.41,
                   "min_hole_clearance": 0.15, "min_text_height": 0.8, "min_text_thickness": 0.15})
     pro["sheets"] = [[schematic.ROOT, "Root"]]

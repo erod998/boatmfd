@@ -8,8 +8,8 @@ ordering if the design has changed since.
 
 - **KiCad's checks**: the electrical rules check (ERC), the design rules check (DRC) and the
   schematic-to-board parity check report nothing at any severity. PCBWay's own limits are
-  written into the design rules, so DRC enforces them: 0.1 mm tracks and gaps (this board uses
-  0.2), a 0.15 mm annular ring (vias here have 0.2), 16 mil between holes, 0.25 mm copper to a
+  written into the design rules, so DRC enforces them: 0.2 mm tracks and gaps (8/8 mil, the
+  setting PCBWay needs for 2 oz copper, so both boards go on one order), a 0.15 mm annular ring (vias here have 0.2), 16 mil between holes, 0.25 mm copper to a
   routed edge (0.3 here), silkscreen 0.8 mm tall with a 0.15 mm stroke.
 - **Pinouts read from the manufacturers' datasheets**, not assumed from KiCad's library:
   ISO1044 (TI), MCP2518FD (Microchip, Table 1-1), uA78L05 in SOT-89 (TI: 1 out, 2 ground,
@@ -39,7 +39,7 @@ Upload the Gerber zip; PCBWay reads the size and layers from it. Then:
 | Layers | 2 |
 | Material | FR-4, TG130-140 |
 | Thickness | 1.6 mm |
-| Min track / spacing | 6/6 mil (the board's smallest is 8/8) |
+| Min track / spacing | 8/8 mil |
 | Min hole size | 0.3 mm |
 | Solder mask / silkscreen | Green / White |
 | Edge connector | No |

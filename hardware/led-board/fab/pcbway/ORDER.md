@@ -6,14 +6,16 @@ rebuild before ordering if the design has changed since.
 ## Checked before ordering
 
 - **KiCad's checks**: the electrical rules check (ERC), the design rules check (DRC) and the
-  schematic-to-board parity check report nothing at any severity. PCBWay's standard limits are in
-  the design rules, so DRC enforces them: 0.15 mm tracks and gaps (6 mil; the strips' current runs
-  on 1.5-6 mm tracks and pours), 0.3 mm minimum drill (vias 0.6 mm with 0.3 mm holes), 0.41 mm
+  schematic-to-board parity check report nothing at any severity. PCBWay's limits for 2 oz copper
+  are in the design rules, so DRC enforces them: 0.2 mm tracks and gaps (8/8 mil, the setting 2 oz
+  needs; the strips' current runs on 1.5-6 mm tracks and pours), 0.3 mm minimum drill (vias 0.6 mm with 0.3 mm holes), 0.41 mm
   between holes, 0.25 mm hole to copper, 0.3 mm copper to the edge, silkscreen 0.8 mm tall.
 - **One exception, on purpose**: the USB-C socket's two plastic locating pegs (J11) sit 0.19 mm
   from its own ground pads. That's GCT's land pattern for the USB4105, the one the part is made to
   fit, so the 0.25 mm hole-to-copper rule is relaxed for J11 alone (`led-board.kicad_dru`). If
   PCBWay's review flags it, that's the answer.
+- **The RP2040's pins are 0.2 mm apart** (0.4 mm pitch), right at 8 mil: that's the part's own
+  land pattern, and its tracks leave the pins at the same 0.2 mm.
 - **The RP2040's exposed-pad vias** are drilled 0.3 mm (KiCad's footprint has 0.2 mm, under
   PCBWay's standard minimum).
 
@@ -37,7 +39,7 @@ rebuild before ordering if the design has changed since.
 | Material | FR-4, TG150 (it runs warm at 20 A) |
 | Thickness | 1.6 mm |
 | **Finished copper** | **2 oz** -- the 20 A input, the bus and the outputs are sized for it. 1 oz is not enough |
-| Min track / spacing | 6/6 mil |
+| Min track / spacing | **8/8 mil** -- PCBWay only offers 2 oz copper at 8/8 or wider |
 | Min hole size | 0.3 mm |
 | Solder mask / silkscreen | Green / White |
 | Surface finish | **Immersion gold (ENIG)**: flat pads for the RP2040's 0.4 mm pitch |

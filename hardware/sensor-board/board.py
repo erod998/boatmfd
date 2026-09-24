@@ -811,10 +811,10 @@ def write_project(path):
         [{"netclass": "TACH_HV", "pattern": pcb_net_name(n)} for n in design.TACH_HV_NETS] +
         [{"netclass": "N2K_BUS", "pattern": pcb_net_name(n)} for n in design.N2K_BUS_NETS])
     rules = pro["board"]["design_settings"]["rules"]
-    # PCBWay's standard 2-layer limits (pcbway.com/capabilities.html), with margin where it is free:
-    # tracks/gaps 0.1 mm, annular ring 0.15 mm, hole-to-hole 16 mil, copper to a routed edge 0.25 mm,
-    # silkscreen 0.8 mm tall with a 0.15 mm stroke.
-    rules.update({"min_clearance": 0.15, "min_track_width": 0.15, "min_via_diameter": 0.6, "min_via_annular_width": 0.15,
+    # PCBWay's 2-layer limits (pcbway.com/capabilities.html) at 8/8 mil, the setting that allows 2 oz
+    # copper (ordered with the LED board): tracks/gaps 0.2 mm, annular ring 0.15 mm, hole-to-hole
+    # 16 mil, copper to a routed edge 0.25 mm, silkscreen 0.8 mm tall with a 0.15 mm stroke.
+    rules.update({"min_clearance": 0.2, "min_track_width": 0.2, "min_via_diameter": 0.6, "min_via_annular_width": 0.15,
                   "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_to_hole": 0.41,
                   "min_hole_clearance": 0.25, "min_text_height": 0.8, "min_text_thickness": 0.15})
     pro["sheets"] = [[schematic.ROOT, "Root"]]
