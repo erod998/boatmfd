@@ -280,7 +280,9 @@ h2.wtitle { margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--soft);
 .mw-sources { display: none; gap: 0.5rem; flex-wrap: wrap; }
 .mw-progress { display: flex; align-items: center; gap: 0.6rem; font-size: 0.8rem; color: var(--dim); font-variant-numeric: tabular-nums; }
 .mw-progress .bar { flex: 1; height: 0.4rem; background: #2a2c30; }
-.mw-progress .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #1739c9, #62c4fb); transition: width 1s linear; }
+/* Scaled, not resized: a width transition relaid the page out every frame the song played. A
+   transform is done by the GPU, with no layout at all. */
+.mw-progress .bar i { display: block; height: 100%; width: 100%; transform-origin: left center; transform: scaleX(0); background: linear-gradient(90deg, #1739c9, #62c4fb); transition: transform 1s linear; }
 .mw:not(.full) .mw-progress .t { display: none; }
 .mw-transport { display: flex; align-items: center; justify-content: center; gap: 0.8rem; }
 .t-btn { width: 4.4rem; height: 3.4rem; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--btn); border: 0; border-radius: 0.3rem; color: #fff; }

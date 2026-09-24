@@ -2368,10 +2368,12 @@ function mediaWidget(root, variant) {
       q(".mw-title").textContent = live ? media.title || "--" : media.connected ? "Standby" : "No stereo found";
       q(".mw-sub").textContent = live ? [media.artist, media.album].filter(Boolean).join(" · ") : "";
       const pct = live && media.length_s ? Math.min(100, (media.position_s / media.length_s) * 100) : 0;
-      q(".mw-progress .bar i").style.width = `${pct}%`;
+      q(".mw-progress .bar i").style.transform = `scaleX(${pct / 100})`;
       q(".t-el").textContent = live && media.length_s ? fmtClock(media.position_s) : "";
       q(".t-left").textContent = live && media.length_s ? "-" + fmtClock(Math.max(0, media.length_s - media.position_s)) : "";
-      q(".mw-play svg").innerHTML = media.playing ? ICON.pause : ICON.play;
+      const playIcon = media.playing ? ICON.pause : ICON.play;
+      const playSvg = q(".mw-play svg");
+      if (playSvg._icon !== playIcon) { playSvg.innerHTML = playIcon; playSvg._icon = playIcon; }  // not re-parsed every second
       q(".mute-btn").classList.toggle("active", media.muted);
 
       const source = media.sources.find((s) => s.id === media.source_id);

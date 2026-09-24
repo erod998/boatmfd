@@ -79,6 +79,24 @@ const allGauges = new Set();
 let animFrame = 0;
 let animLast = 0;
 
+// Whether each gauge is on a screen that's showing, kept up to date by the browser. Each gauge used
+// to ask for itself (getClientRects) inside its animation step, between one gauge's DOM writes and
+// the next's -- and every such question forced a layout of the whole page, once per gauge per frame.
+// On the Pi that was nearly all of Chromium's CPU. An IntersectionObserver answers without any.
+const gaugeVisibility = new IntersectionObserver((entries) => entries.forEach((e) => {
+  const gauge = e.target._gauge;
+  if (!gauge) return;
+  gauge.shown = e.isIntersecting;
+  if (gauge.shown && gauge.stale) wake(gauge);   // changed while hidden: redraw now it's back
+}));
+function watchVisibility(el, gauge) {
+  // A gauge rebuilt in place (a units change) keeps what the observer last said about its element,
+  // which it won't repeat; a new one counts as shown until the first report, a moment after this.
+  gauge.shown = el._gauge ? el._gauge.shown : true;
+  el._gauge = gauge;
+  gaugeVisibility.observe(el);
+}
+
 function wake(gauge) {
   animating.add(gauge);
   if (!animFrame) {
@@ -288,7 +306,7 @@ function makeDial(svg, cfg) {
   };
   dial.setOmega = (omega) => { spring.w = omega; };  // how quickly the needle follows a new reading, from Options > (hold the gauge)
   dial.step = (dt) => {
-    if (svg.getClientRects().length === 0) {  // on a hidden screen: no animation, and it redraws when the screen is shown
+    if (!dial.shown) {  // on a hidden screen: no animation, and it redraws when the screen is shown
       spring.snap();
       return false;
     }
@@ -301,6 +319,7 @@ function makeDial(svg, cfg) {
   draw();
   svg._dial = dial;
   allGauges.add(dial);
+  watchVisibility(svg, dial);
   return dial;
 }
 
@@ -318,13 +337,14 @@ function makeSegBar(el, cfg) {
   bar.setZones = (zones) => { ring.setZones(zones); bar.stale = true; wake(bar); };
   bar.setOmega = (omega) => { spring.w = omega; };
   bar.step = (dt) => {
-    if (el.getClientRects().length === 0) { spring.snap(); return false; }
+    if (!bar.shown) { spring.snap(); return false; }
     spring.step(dt);
     draw();
     bar.stale = !spring.settled;
     return !spring.settled;
   };
   allGauges.add(bar);
+  watchVisibility(el, bar);
   draw();
   return bar;
 }
