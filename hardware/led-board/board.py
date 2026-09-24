@@ -50,7 +50,7 @@ POWER = set(design.POWER_NETS)
 # Track widths for the strips' current (IPC-2221, 2 oz outer copper, 20 C rise): 6 mm carries
 # about 20 A, 3 mm a 10 A output, 1.5 mm a colour's 3 A. The 12 V bus and the input also have
 # pours under their tracks.
-WIDE = {"VIN": 4.0, "+12V": 4.0, "+5V": 0.4}   # (+3V3 is only ~50 mA, and reaches 0.4 mm-pitch pins)
+WIDE = {"VIN": 4.0, "+12V": 4.0, "+5V": 0.3}   # (5 V and 3.3 V are ~100 mA: thin enough to reach fine-pitch pins)
 WIDE.update({f"Z{z}_12V": 3.0 for z in range(1, design.ZONES + 1)})
 WIDE.update({f"P{n}_12V": 3.0 for n in range(1, design.PIXELS + 1)})
 WIDE.update({f"Z{z}_{c}": 1.5 for z in range(1, design.ZONES + 1) for c in design.COLOURS})
@@ -161,13 +161,18 @@ ORDER = (["VIN", "+12V"] + [f"Z{z}_12V" for z in range(1, design.ZONES + 1)] +
           "STATUS", "STATUS_LED", "MCU_SDA", "MCU_SCL"] +
          # The SDA pair's pins (3, 6) are in the middle of the RJ45's rows, the SCL pair's (1, 2) at
          # the end: SDA first, or SCL's tracks shut it in.
-         ["LINK_SDAP", "LINK_SDAM", "LINK_SCLP", "LINK_SCLM"] + ["SDA", "SCL"] +
-         [f"G{ch}" for ch in range(16)] + [f"PWM{ch}" for ch in range(16)] +
+         ["LINK_SDAP", "LINK_SDAM", "LINK_SCLP", "LINK_SCLM"] +
+         # The 5 V before the I2C: U1's enable pin (5 V) sits between its SDA and SCL pins. Then the
+         # long runs across the board before the gate tracks fill the channels.
+         ["+5V", "SDA", "SCL"] + [f"PIX{n}" for n in range(design.PIXELS, 0, -1)] +
          [f"PIX{n}_5V" for n in range(1, design.PIXELS + 1)] + [f"P{n}_DATA" for n in range(1, design.PIXELS + 1)] +
-         [f"PIX{n}" for n in range(1, design.PIXELS + 1)] + ["+5V"])
+         [f"G{ch}" for ch in range(16)] + [f"PWM{ch}" for ch in range(16)])
 # The RP2040's supplies drop to the bottom layer at its pins: on top, a supply joining two pins
 # on one side would run across the signal pins between them and shut them in.
 PREFER_BOTTOM = {"+1V1", "+3V3"}
+# ...and the long signal runs, the pixel data along the bottom channel and the PWM along the top
+# one: the strips' current (top layer only) crosses both channels, and underneath is clear.
+PREFER_BOTTOM |= {f"PIX{n}" for n in range(1, design.PIXELS + 1)} | {f"PWM{ch}" for ch in range(16)}
 ORDER_FANOUT = "USB_D+"           # the net before which the RP2040 is fanned out
 
 
@@ -239,6 +244,7 @@ class Board:
         self.pad_items = {}          # (ref, pad number) -> [Item] (a fuse clip has two pads per pin)
         self.tree = {}
         self.failed = []
+        self.warnings = []
         self.stitched = set()
         self.tracks, self.vias = [], []     # (net, a, b, layer, width), (net, x, y): what the dry run draws
         if not self.dry:
@@ -523,7 +529,9 @@ class Board:
                 path = self.router.search("GND", self.cells_of([item]), lambda i, j, l: (i, j, l) in goal,
                                           (g["x"], g["y"]), via_ok=False, allow_layers=(TOP,)) if goal else None
                 if path is None:
-                    self.failed.append(("GND via", (ref, num)))
+                    # No room for a via or a join: the pad still has the top ground pour round it,
+                    # and KiCad's DRC checks that it reaches it.
+                    self.warnings.append(("GND via", (ref, num)))
                 else:
                     self.commit("GND", path, TRACK)
                 continue
@@ -543,6 +551,8 @@ class Board:
         if rest:
             print("  (not in ORDER, routed last:", ", ".join(rest) + ")")
         for net in ORDER + rest:
+            if net == "LINK_SDAP":        # U1's 5 V enable pin sits between SDA and SCL: its via first
+                self.via_out("U1", {"+5V"})
             if net == ORDER_FANOUT:      # the RP2040's pins claim their way out, and its supplies their vias
                 self.fan_out("U2", {"+1V1", "+3V3"})
                 self.via_out("U2", {"+1V1"})
@@ -670,32 +680,40 @@ class Board:
         for ref, names in PIN_LABELS.items():
             pads = sorted((p for p in self.fps[ref].Pads() if p.GetNumber().isdigit()), key=lambda p: int(p.GetNumber()))
             pts = [(pcbnew.ToMM(p.GetPosition().x) - OX, pcbnew.ToMM(p.GetPosition().y) - OY) for p in pads]
-            if abs(pts[0][0] - pts[-1][0]) < 0.1:            # a column on the right edge
+            if abs(pts[0][0] - pts[-1][0]) < 0.1:            # a column on the right edge (J2)
                 for (px, py), name in zip(pts, names):
-                    text(name, px - 3.6, py, 0.8, just="right")
+                    text(name, px - 3.2, py, 0.8, just="right")
             else:                                            # a row on the top or bottom edge
                 side = 1 if pts[0][1] < H / 2 else -1
                 for (px, py), name in zip(pts, names):
-                    text(name, px, py + side * 3.3, 0.8)
+                    text(name, px, py + side * 4.4, 0.8)
+        # Which connector and which fuse is which.
         for z in range(1, design.ZONES + 1):
             x, y, _ = PLACE[f"J{2 + z}"]
-            text(f"ZONE {z}", x + (-7.6 if z <= 2 else 7.6), y + (5.6 if z <= 2 else -5.6), 0.9)
-        text("J1 LINK: sensor board J6", 1.0, 18.2 - 1.6, 0.8, just="left")
-        text("patch cable - NOT ETHERNET", 1.0, 18.2 - 0.3, 0.8, just="left")
-        for z in range(1, design.ZONES + 1):
-            x, y, rot = PLACE[f"F{z}"]
-            text(f"F{z}", x + (1.7 if rot == 90 else -1.7), y + (-4.96 if rot == 90 else 4.96), 0.9)
-        text("F5", 88.0, 31.4, 0.9)
-        text("F6", 88.2, 83.1, 0.9)
-        lines = ["FUSES: mini blade (ATM), 7.5 A max,", "sized for each output's wire",
-                 "12V IN: own fuse, 10 A; heavy ground", "to the Pi supply's ground point",
-                 "ZONES: common-anode 12 V strips", "ADDR: 12 V addressable (WS2815)",
-                 "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
-        y = 42.0
+            text(f"ZONE {z}", x - 10.2, y + 4.4, 0.9)
+            fx, fy, _ = PLACE[f"F{z}"]
+            text(f"F{z}", fx + 5.6, fy - 8.0, 0.9, rot=90)
+        for n in range(1, design.PIXELS + 1):
+            x, y, _ = PLACE[f"J{6 + n}"]
+            text(f"PIXEL {n}", x + 17.4, y - 4.4, 0.9)
+            fx, fy, _ = PLACE[f"F{4 + n}"]
+            text(f"F{4 + n}", fx + 3.6, fy + 8.0, 0.9, rot=90)
+        x0, y0, x1, y1 = self.courtyard("J1")
+        text("J1 LINK: sensor board J6", x0 + 0.5, y0 - 1.9, 0.8, just="left")
+        text("patch cable - NOT ETHERNET", x0 + 0.5, y0 - 0.7, 0.8, just="left")
+        x0, y0, x1, y1 = self.courtyard("J11")
+        text("USB: firmware", x1 + 0.3, y0 - 0.8, 0.8, just="left")
+        for ref, name in (("SW1", "BOOTSEL"), ("SW2", "RESET")):
+            x0, y0, x1, y1 = self.courtyard(ref)
+            text(name, (x0 + x1) / 2, y1 + 0.9, 0.8)
+        # The rules the labels can't carry, between F6 and F7 below the bus.
+        lines = ["FUSES: blade ATO/ATC, each", "sized for its output's wire:", "10 A for 5 m on 16 AWG",
+                 "12V IN: 10 AWG, own 25 A fuse", "ZONES: common-anode RGBW",
+                 "PIXELS: 12 V WS2815, BI = GND", f"{design.TITLE} r{design.REVISION}"]
+        y = 62.6
         for body in lines:
-            if body:
-                text(body, 52.0, y, 0.8, just="left")
-            y += 1.3 if body else 0.6
+            text(body, 73.0, y, 0.8, just="left")
+            y += 1.25
 
     def save(self, path):
         pcbnew.SaveBoard(str(path), self.board)
@@ -835,6 +853,8 @@ def main():
         print("wrote", out.name)
     if clash:
         print("OVERLAPPING COURTYARDS:", clash)
+    if b.warnings:
+        print("NO STITCHING VIA (joined by the top pour only):", b.warnings)
     if failed:
         print("UNROUTED:", failed)
     if failed or clash:

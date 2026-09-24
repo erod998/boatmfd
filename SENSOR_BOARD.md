@@ -6,7 +6,8 @@ voltage and RPM** by
 the boat's **NMEA 2000** network (the Fusion stereo, the depth transducer) through an isolated
 CAN interface, so no separate CAN HAT is needed. Since rev 1.2 it also powers the Pi, from an
 external 12 V to 5 V converter wired to J7, and has a connector (J6, LIGHTS) for a separate LED
-controller board. Nothing is disconnected: every
+controller board -- since rev 1.3 an RJ45, for an ordinary patch cable to the
+[LED board](LED_BOARD.md). Nothing is disconnected: every
 analog gauge stays wired exactly as it is and keeps working, so if the Pi is off or broken the
 helm is just a normal helm. It replaces buying an engine-data converter (the CX5003 route).
 
@@ -23,11 +24,14 @@ stock analog gauges.
   [tests/test_sensor_board.py](tests/test_sensor_board.py) runs it end to end against simulated
   gauges).
 
-> **Status: a checked design, not a proven board.** The KiCad files pass KiCad's electrical
-> rules check, its design rules check and its schematic-to-board parity check with nothing
-> reported at any severity, and the software is tested against simulated gauges. No board has
-> been built or connected to this boat yet, so the bring-up section below checks each block with
-> a multimeter before it is trusted.
+> **Status: a checked design, not a proven board -- and rev 1.3 is not rebuilt yet.** Rev 1.2's
+> KiCad files passed KiCad's electrical rules check, its design rules check and its
+> schematic-to-board parity check with nothing reported at any severity. Rev 1.3 (the RJ45 link
+> to the LED board) is in design.py, the schematic and board.py, and places and routes completely
+> in board.py's dry run, but **`sensor-board.kicad_pcb` and everything in `fab/` are still
+> rev 1.2** until `build.py` is run under KiCad 10 and passes those checks again: don't order
+> from `fab/` before then. No board has been built or connected to this boat yet, so the
+> bring-up section below checks each block with a multimeter before it is trusted.
 
 ![The board, top side](hardware/sensor-board/fab/sensor-board-angle.png)
 
@@ -51,7 +55,7 @@ stock analog gauges.
 
   NMEA 2000 drop cable (Fusion stereo, depth transducer) ───── J5 ── isolated CAN ── SPI0 + GPIO 25 (can0)
 
-  LED controller board (separate) ─────────────────────────── J6 ── I2C, GPIO 18 / 19 / 21, 3V3, GND
+  LED board (LED_BOARD.md), patch cable ───────────────────── J6 (RJ45) ── differential I2C ── GPIO 5 / 6
 
   12 V -> 5 V converter (separate) ── J7 ── ideal diode ── header pins 2, 4: the Pi, and from it this board's 3V3
 ```
@@ -218,60 +222,41 @@ the header would double them up.
 - J7 and these parts sit on a **tab above the header's left half** (see Ordering): the Pi's 5 V
   pins are at that corner, and the tab keeps the 5 V run to them short.
 
-### Lights connector (J6): for a separate LED board
+### Lights connector (J6): the link to the LED board
 
-The LED controllers are deliberately **not** on this board: several amps of switched strip
-current would sit next to the millivolt-level gauge taps, and a shorted strip shouldn't be able
-to take the engine data down with it. J6 gives a separate LED board everything it needs from the
-Pi, and nothing it switches:
+The LED controllers are deliberately **not** on this board: 20 A of switched strip current would
+sit next to the millivolt-level gauge taps, and a shorted strip shouldn't be able to take the
+engine data down with it. They're on the [LED board](LED_BOARD.md), and J6 is its link: an
+**RJ45** for an ordinary straight-through Cat5e/Cat6 patch cable (rev 1.3; rev 1.2 had an 8-way
+JST GH carrying logic-level signals, which a long cable run through a boat would not have liked).
 
 ```
-  J6.1 3V3  ── the Pi's 3.3 V, for the LED board's logic only (keep it under 50 mA)
-  J6.2 SDA  ── GPIO 5  ┐ the LED board's own I2C bus (R24/R25 pull it up to 3V3 here): PWM
-  J6.3 SCL  ── GPIO 6  ┘ channels are PCA9685s on the LED board, 16 each, as many as needed
-  J6.4 GND
-  J6.5 DAT1 ── GPIO 18 (PWM0)  addressable strip data (WS2812B / WS2815...), 3.3 V
-  J6.6 DAT2 ── GPIO 19 (PWM1)  a second addressable strip, driven independently
-  J6.7 GND
-  J6.8 AUX  ── GPIO 21         spare: an output enable, a third data line (PCM), a button...
+  J6.1 / J6.2  ── pair: the LED board's I2C clock  ┐ differential I2C (U8, a PCA9615): GPIO 5/6,
+  J6.3 / J6.6  ── pair: the LED board's I2C data   ┘ the LED board's own bus (R24/R25 pull it up)
+  J6.4 / J6.5, J6.7 / J6.8 ── the other two pairs: reserved, not connected
 ```
 
-**What that is enough for** -- the future LED board can grow without this board changing:
+- **One I2C bus, everything on it.** The LED board's PCA9685 (0x40, its four RGBW zones), its
+  current monitor (INA226, 0x45) and the RP2040 that runs its four addressable outputs (0x30) all
+  sit on the bus from GPIO 5/6. It's a bus of its own, so a fault out there can't stall the
+  converters' bus and with it the engine data; and a kernel-driven one (i2c-gpio), which honours
+  clock stretching -- the RP2040 stretches, and the Pi's hardware I2C gets that wrong.
+- **Differential I2C**: U8 (NXP PCA9615) turns the bus into two differential pairs at 5 V, and the
+  LED board's PCA9615 turns it back. Each pair is terminated at both ends, 620 Ω up, 120 Ω across,
+  620 Ω down (R29-R34 here), so the cable is matched and an idle bus reads as idle. Good for many
+  metres of cable at the 100 kHz the bus runs at.
+- **No ground and no power in the cable.** The strips' current returns on the LED board's own
+  heavy ground wire to the supply's ground point, and can't come back through the Pi. The PCA9615
+  is built for exactly this: it tolerates a few volts between the two boards' grounds.
+- **NOT Ethernet.** Never plug either end into a network switch, router or PoE injector: the
+  pairs carry 5 V logic, and a PoE injector would put 48 V on them. Both boards say so beside
+  their RJ45s.
+- **GPIO 18, 19 and 21 are free since rev 1.3**: rev 1.2 passed them to the LED board for
+  addressable data, but the Pi can only drive two such strips (and none on a Pi 5), so the LED
+  board's RP2040 makes that data itself now.
 
-- **12 V PWM strips, 4 channels each (RGBW), as many as you like.** A PCA9685 has 16 PWM
-  outputs, so each one runs four RGBW strips (or five RGB), each output switching a logic-level
-  MOSFET sized for its channel's current. PCA9685s chain on the same two wires, up to 62 of them
-  by address. They make the PWM themselves (12-bit, flicker-free), so the Pi only sends a new
-  colour when one changes.
-- **12 V addressable strips** (WS2815, WS2811 12 V, ...): their power is 12 V but their data is
-  still logic-level. DAT1 and DAT2 are two independent data lines, each on its own PWM channel of
-  the Pi, and each can run several strips chained end to end (one strip's DOUT into the next
-  one's DIN), which the software treats as segments.
-- **More independent addressable outputs than two:** put a small microcontroller on the LED
-  board (an RP2040 drives eight at once) and talk to it over the same I2C bus, with AUX as its
-  interrupt or reset. Nothing here changes for that either.
-- **Its own I2C bus** keeps all of that apart from the engine data: a stuck or shorted LED board
-  can't stall the converters. It's a kernel-driven bus on GPIO 5/6 (no hardware I2C pair is free
-  at J6's corner of the header), which also handles a microcontroller that stretches the clock,
-  something the Pi's hardware I2C gets wrong.
-
-The rules for the LED board, whatever it ends up carrying:
-
-- **Logic only on this cable.** The strips' 12 V comes into the LED board on its own fused
-  feed, and their current returns on its own heavy ground wire to the same ground point as the
-  Pi's supply -- never through J6. J6's GND is the signal reference.
-- **Buffer the data lines to 5 V** on the LED board (a 74AHCT125 or similar, powered from the
-  LED board's own 5 V), with a ~330 Ω series resistor at each strip's data input. WS28xx strips
-  want 5 V logic; the Pi's pins are 3.3 V and must never see more.
-- **PCA9685 addresses:** any of 0x40-0x7F except 0x70 (the PCA9685's all-call address); the
-  converters are on the other bus. The software's default is 0x40 (`BOAT_PCA9685_ADDR`). Run the
-  PCA9685s from J6's 3V3, so their I2C levels match the Pi's.
-- **Pull-ups** are on this board (4.7 kΩ); a PCA9685 breakout's own are fine alongside them.
-- **Addressable strips on the Pi's PWM** (`BOAT_LED_DRIVER=ws281x`, `BOAT_LED_GPIO=18`) need the
-  Pi's analog audio off: `dtparam=audio=off` in `/boot/firmware/config.txt`. The stereo is on NMEA
-  2000, so nothing is lost.
-- The connector is a **JST GH** 8-way (1.25 mm, latching): use a ready-made GH 8-pin cable wired
-  **pin 1 to pin 1** ("same direction"), with the same connector on the LED board.
+Software: `dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6` in `/boot/firmware/config.txt`,
+then `BOAT_LED_DRIVER=ledboard` and `BOAT_LED_I2C_BUS=7` (LED_BOARD.md, "Software").
 
 ---
 
@@ -280,19 +265,16 @@ The rules for the LED board, whatever it ends up carrying:
 | Pin | Signal | Use |
 |---|---|---|
 | 2, 4 | 5V | **in**: the Pi's power, from J7 through the ideal diode |
-| 1, 17 | 3V3 | converters, pull-ups (a few mA in total); J6's 3V3 (under 50 mA) |
-| 3 | GPIO 2 / SDA | both ADS1115; J6 |
-| 5 | GPIO 3 / SCL | both ADS1115; J6 |
+| 1, 17 | 3V3 | converters, pull-ups, U8's input side (a few mA in total) |
+| 3 | GPIO 2 / SDA | both ADS1115 |
+| 5 | GPIO 3 / SCL | both ADS1115 |
 | 6, 9, 14, 20, 25, 30, 34, 39 | GND | |
 | 33 | GPIO 13 | tach |
 | 19, 21, 23, 24 | GPIO 10, 9, 11, 8 (SPI0 MOSI, MISO, SCLK, CE0) | NMEA 2000 CAN controller |
 | 22 | GPIO 25 | CAN controller interrupt |
-| 29, 31 | GPIO 5, 6 | J6 SDA, SCL: the LED board's own I2C bus (i2c-gpio) |
-| 12 | GPIO 18 (PWM0) | J6 DAT1: addressable LED data |
-| 35 | GPIO 19 (PWM1) | J6 DAT2: second addressable LED data |
-| 40 | GPIO 21 | J6 AUX: spare |
+| 29, 31 | GPIO 5, 6 | SDA, SCL of the LED board's own I2C bus (i2c-gpio), out on J6 through U8 |
 
-Everything else is left free, GPIO 4 (used for NMEA 0183 by some marine HATs) included. The
+Everything else is left free -- GPIO 18, 19 and 21 too, since rev 1.3 -- GPIO 4 (used for NMEA 0183 by some marine HATs) included. The
 header is a stacking socket, so another HAT can go on top; check its pin list against this one
 first -- in particular, a CAN HAT on SPI0 CE0 would clash with the one built in here.
 
@@ -300,7 +282,8 @@ first -- in particular, a CAN HAT on SPI0 CE0 would clash with the one built in 
 
 J1, J2, J5 and J7 are Phoenix Contact **MC 1,5 / 3.81 mm pluggable terminal blocks with
 screw-locking flanges**: the plug screws to the header, so it can't walk out on a boat. Each
-connector's plug overhangs the board edge. J6, board to board, is a latching **JST GH**.
+connector's plug overhangs the board edge. J6, the LED board's link, is an **RJ45** for a
+straight-through patch cable (Amphenol 54602-908LF, on the tab beside J7's, facing up).
 
 Since rev 1.2 every pin is labelled on the board itself, beside the pin, with the name in the
 **Printed** column; the **WIRING** block in the middle of the board sums up the table below.
@@ -322,8 +305,7 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 | | 3 | BLK | NET-C: the network's 0 V |
 | | 4 | WHT | NET-H: CAN high |
 | | 5 | BLU | NET-L: CAN low |
-| **J6** lights (8, right edge, JST GH) | 1 / 2 / 3 / 4 | 3V3 / SDA / SCL / GND | the LED board (see "Lights connector" above) |
-| | 5 / 6 / 7 / 8 | DAT1 / DAT2 / GND / AUX | GPIO 18 / GPIO 19 / ground / GPIO 21 |
+| **J6** lights (RJ45, on the tab, facing up) | 1-8 | "J6 LIGHTS: LED board J1 / patch cable, NOT ETHERNET" | the LED board's J1, by a straight-through Cat5e/Cat6 patch cable (see "Lights connector" above) |
 | **J7** 5V IN (2, on the tab, plug faces up) | 1 | +5V | the 12 V -> 5 V converter's **+5 V** output |
 | | 2 | GND | the converter's **0 V** output |
 | **J4** | | | the Pi's 40-pin header, underneath |
@@ -344,7 +326,9 @@ The full list, with manufacturer part numbers, is
 | R7–R12, R22 | 7 | 10 kΩ 1% 0805 | divider bottoms; tach pull-up |
 | R13–R18, R23 | 7 | 1 kΩ 0805 | ADC pin series resistors; GPIO protection |
 | R19–R21 | 3 | 3.3 kΩ **1206** | tach input, in series |
-| R24, R25 | 2 | 4.7 kΩ 0805 | J6's I2C pull-ups |
+| R24, R25 | 2 | 4.7 kΩ 0805 | the LED board bus's pull-ups |
+| U8 | 1 | **PCA9615DP** (NXP, TSSOP-10) | differential I2C for the LED link |
+| R29-R34, C22, C23 | 6 + 2 | 620 / 120 / 620 Ω ×2, 100 nF, all 0402 | the link's pair terminations; U8's decoupling |
 | C1–C7, C9 | 8 | 100 nF X7R 0805 | ADC pin filters; decoupling |
 | C8, C10 | 2 | 1 µF X7R 0805 | decoupling |
 | C11 | 1 | 10 nF X7R 0805 | tach ring-down filter |
@@ -358,7 +342,7 @@ The full list, with manufacturer part numbers, is
 | R26, JP1 | 1 | 120 Ω 0805 + solder jumper (open) | bench-only terminator |
 | C12-C18 | 7 | 100 nF / 1 µF 0805, one 1 µF **50 V 1206** (C16) | decoupling |
 | J1 / J2 / J5 | 1 each | Phoenix MC 1,5/ 8-, 2-, 5-GF-3,81 | plus the matching **MC 1,5/ n-STF-3,81** plugs |
-| J6 | 1 | JST **SM08B-GHS-TB** (GH, 8-way, side entry, SMD) | lights; a GH 8-pin 1:1 cable to the LED board |
+| J6 | 1 | Amphenol **54602-908LF** (RJ45, through-hole) | the LED link; any straight-through patch cable |
 | J7 | 1 | Phoenix MC 1,5/ 2-GF-3,81 (as J2) | 5 V in, plus its **MC 1,5/ 2-STF-3,81** plug |
 | U7 / Q1 | 1 each | **LM74700-Q1** (TI, SOT-23-6) / **IRLML0030** (Infineon, SOT-23) | ideal diode |
 | C19, C20 / C21 | 2 / 1 | 100 nF 0805 / 22 µF 25 V X5R **1206** | charge pump, input / 5 V bulk |
@@ -416,8 +400,10 @@ interface, and a **35 × 12 mm tab above the left half of the header** for the 5
   bottom layer (on top it walled the header's GND pin 6 off from the pour). The ideal diode's
   sense pins, caps and D12 join on thin tracks. No via sits in a surface-mount pad anywhere on
   the board, so none can wick solder away from a joint.
-- **J6** sits on the right edge, where rev 1.1's probe connector was, next to the header pins
-  it uses. Its two outer data/spare lines leave the header's far corner on the bottom layer.
+- **J6** (rev 1.3) is an RJ45 on a tab of its own beside J7's, reaching 17.6 mm past the Pi's
+  GPIO edge: 13 mm tall and through-hole, it couldn't go anywhere over the Pi. Its pair
+  terminations stand in two chains beside its pins 1-3; U8 sits below the mounting hole, on the
+  way to GPIO 5/6. Nothing runs on top under the plug's end of it.
 - **The header's GND pins keep their thermal spokes:** no other net's track passes within half a
   pin pitch of one, on either layer, so none is ever walled off from the ground pours.
 - **Conformal coat** everything except the connectors and the header after the board passes bring-up.
@@ -523,7 +509,8 @@ sudo apt install can-utils && venv/bin/pip install python-can
 sudo apt install python3-lgpio && venv/bin/pip install smbus2
 ```
 
-Once there is an LED board on J6, its I2C bus too (and `BOAT_LED_I2C_BUS=7` in `boat.env`):
+Once the LED board is on J6, its I2C bus too (and `BOAT_LED_DRIVER=ledboard`, `BOAT_LED_I2C_BUS=7`
+in `boat.env`; LED_BOARD.md):
 
 ```bash
 echo "dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6" | sudo tee -a /boot/firmware/config.txt

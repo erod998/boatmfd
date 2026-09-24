@@ -21,7 +21,7 @@ starting point, not gospel, and check current price/stock before ordering.
 | 6 | Depth transducer: **Airmar DST800PV-N2** (plastic, thru-hull, NMEA 2000 native) — see "Choosing a transducer" below | Makes the Depth box real | $370-410 |
 | 7 | VDO-type engine temperature sender (301-22 Ω, matches the CX5003's temperature input) | Coolant temperature, since the boat has none | $15-30 |
 | 8 | ADS1115 board (I2C 16-bit ADC) + a 47 kΩ / 10 kΩ resistor pair | Battery voltage (`BOAT_BATTERY_ADC=true`) | $10 |
-| 9 | PCA9685 PWM board + 3 logic-level N-channel MOSFETs (e.g. IRLZ44N) + gate resistors/pulldowns | Drives the 12 V RGB strips | $15-25 |
+| 9 | PCA9685 PWM board + 3 logic-level N-channel MOSFETs (e.g. IRLZ44N) + gate resistors/pulldowns -- or, with the sensor board, the [LED board](LED_BOARD.md) (4 RGBW zones + 4 addressable strips, 20 A, every output fused) | Drives the 12 V strips | $15-25 |
 | 10 | GPS receiver (u-blox NEO-6M/NEO-M8N or similar, UART or USB) | Position and heading | $15-30 |
 | 11 | Fuses, tinned marine wire, connectors, a project box, a 12 V-to-5 V converter for the Pi (3 A+, with output overvoltage protection; with the sensor board it plugs into the board's J7 and powers the Pi through the header) | Wiring and enclosure | $40-80 |
 
