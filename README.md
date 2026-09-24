@@ -961,6 +961,10 @@ service -- one-time `chmod +x update.sh` first, or just `bash update.sh`).
   the power switch can leave the Pi unbootable), printing, Bluetooth, NFS. Disabled, not
   uninstalled, and recorded: `--undo` turns back on exactly those. It saves boot time, not CPU:
   measured, Chromium drawing the dashboard is nearly all of the Pi's CPU.
+- `kiosk/network-later.sh`, once, then `sudo reboot`: the dashboard first, the network after.
+  NetworkManager takes ~16 s to start on the Pi and the display waits for it; now it starts the
+  moment the display is up instead, with a timer that starts it 60 s after boot regardless, so
+  WiFi and SSH always come back. `--undo`.
 
 ## Architecture
 
