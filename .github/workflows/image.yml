@@ -59,7 +59,18 @@ jobs:
         run: python3 boatmfd/image/make-splash.py boatmfd/kiosk/plymouth/splash.png boatmfd/image/build/splash.tga
 
       - name: Build the image
-        run: cd rpi-image-gen && ./rpi-image-gen build -S "$GITHUB_WORKSPACE/boatmfd/image" -c "$CONFIG"
+        shell: bash   # with pipefail: the build's own exit status, through tee
+        run: |
+          cd rpi-image-gen
+          ./rpi-image-gen build -S "$GITHUB_WORKSPACE/boatmfd/image" -c "$CONFIG" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Why it failed
+        if: failure()
+        run: |
+          # A run's logs need a GitHub login to read; its summary and annotations don't.
+          tail -n 150 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r' > "$RUNNER_TEMP/tail.txt"
+          { echo '```'; cat "$RUNNER_TEMP/tail.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Build log, last 150 lines::$(sed 's/%/%25/g' "$RUNNER_TEMP/tail.txt" | awk '{ printf "%s%%0A", $0 }')"
 
       - name: Find it
         id: out
