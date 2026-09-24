@@ -1,0 +1,6 @@
+# boatmfd-kiosk.service: the display's login on tty1. No password (systemd never asks PAM to
+# authenticate a service's user); this only opens the session, so the display gets the seat, the
+# screen and the input devices, as any login would.
+account  required  pam_unix.so
+session  required  pam_unix.so
+session  required  pam_systemd.so

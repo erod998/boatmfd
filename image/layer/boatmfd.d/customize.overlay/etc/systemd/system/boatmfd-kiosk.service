@@ -1,0 +1,32 @@
+# The display: labwc on tty1, logged in as admin with no password the way a desktop's auto-login
+# is (/etc/pam.d/boatmfd-kiosk), running only what /etc/boatmfd/labwc/autostart starts -- the screen
+# mode, the splash as the background, and the dashboard in Chromium (kiosk/start-kiosk.sh).
+#
+# It doesn't clear the screen when it starts, so the kernel's boot logo stays up until labwc
+# draws the same picture as its background.
+[Unit]
+Description=Boat MFD display
+After=systemd-user-sessions.service boat-dashboard.service
+Wants=boat-dashboard.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=admin
+PAMName=boatmfd-kiosk
+TTYPath=/dev/tty1
+TTYVHangup=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+# As Raspberry Pi OS's own labwc session sets it on a Pi.
+Environment=WLR_DRM_FORCE_LIBLIFTOFF=1
+EnvironmentFile=-/var/lib/boatmfd/boat.env
+ExecStart=/usr/bin/labwc -C /etc/boatmfd/labwc
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

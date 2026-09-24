@@ -1,0 +1,12 @@
+#!/bin/sh
+# Puts every screen in BOAT_DISPLAY_MODE (/var/lib/boatmfd/boat.env), 1920x1080 unless set; "auto"
+# leaves each screen's own choice. Run by the display's session (/etc/boatmfd/labwc/autostart)
+# before anything draws.
+#
+# labwc takes whatever mode a screen lists first, often its highest resolution at 30 Hz: four
+# times the pixels for Chromium to draw, and half the frame rate.
+mode="${BOAT_DISPLAY_MODE:-1920x1080}"
+[ "$mode" = auto ] && exit 0
+for output in $(wlr-randr | awk '/^[^ ]/ { print $1 }'); do
+    wlr-randr --output "$output" --mode "$mode" 2>/dev/null || true
+done

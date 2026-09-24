@@ -1,0 +1,124 @@
+# METABEGIN
+# X-Env-Layer-Name: boatmfd
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: The boat MFD: the dashboard's server, and the dashboard full
+#  screen on the Pi's display from power-on (labwc and Chromium), with nothing
+#  else ever on screen. The files it installs as they are live in boatmfd.d/.
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Requires: device-user-admin,openssh-server,rpi-ab-slot-mapper
+#
+# X-Env-VarPrefix: boatmfd
+#
+# X-Env-Var-src: ${DIRECTORY}/../..
+# X-Env-Var-src-Desc: The boatmfd checkout to install: app/, static/, kiosk/
+#  and the charts in data/charts/.
+# X-Env-Var-src-Required: n
+# X-Env-Var-src-Valid: dir
+# X-Env-Var-src-Set: y
+#
+# X-Env-Var-video: HDMI-A-1:1920x1080@60
+# X-Env-Var-video-Desc: The kernel's video= setting: the screen mode from the
+#  boot logo on. Empty leaves it to the screen.
+# X-Env-Var-video-Required: n
+# X-Env-Var-video-Valid: string-or-empty
+# X-Env-Var-video-Set: y
+#
+# X-Env-Var-usb_boot: n
+# X-Env-Var-usb_boot-Desc: Let the A/B system boot from a USB drive, which
+#  rpi-image-gen only does from an SD card or NVMe (boatmfd.d/usb-boot.sh). For
+#  test builds on a USB flash drive, with no other USB drive plugged in.
+# X-Env-Var-usb_boot-Required: n
+# X-Env-Var-usb_boot-Valid: bool
+# X-Env-Var-usb_boot-Set: y
+# METAEND
+---
+mmdebstrap:
+  packages:
+    # The display: a Wayland compositor with the splash as its background, and the browser.
+    - labwc
+    - swaybg
+    - wlr-randr
+    - chromium
+    - libgl1-mesa-dri
+    - libegl-mesa0
+    - fonts-dejavu-core
+    - dbus
+    - libpam-systemd
+    - curl
+    # The dashboard's server.
+    - python3-venv
+    - python3-lgpio
+    - ca-certificates
+    - iproute2
+    # Found as boatmfd.local on the network.
+    - avahi-daemon
+    # For working on it over SSH.
+    - i2c-tools
+    - can-utils
+    - less
+    - nano
+  customize-hooks:
+    - |-
+      # The program, read-only like the rest of the system. The charts it was built with stay with
+      # it (BOAT_CHARTS_DIR); what the boat writes goes to /var/lib/boatmfd (BOAT_DATA_DIR).
+      set -eu
+      src="$IGconf_boatmfd_src"
+      dst="$1/opt/boatmfd"
+      install -d "$dst/data"
+      cp -r "$src/app" "$src/static" "$src/kiosk" "$src/requirements.txt" "$dst/"
+      cp -r "$src/data/charts" "$dst/data/"
+      find "$dst" -name __pycache__ -prune -exec rm -rf {} +
+      chmod 0755 "$dst"/kiosk/*.sh
+      install -d "$1/var/lib/boatmfd"
+    - |-
+      # Its Python packages, from PyPI, in a venv beside it (with the system's lgpio). pip needs a
+      # resolver inside the chroot; the image's own resolv.conf points at systemd-resolved, which
+      # isn't running here, so the build machine's stands in while it runs.
+      set -eu
+      rc="$1/etc/resolv.conf"
+      moved=""
+      if [ -e "$rc" ] || [ -L "$rc" ]; then mv "$rc" "$rc.boatmfd"; moved=1; fi
+      cat /etc/resolv.conf > "$rc"
+      chroot "$1" python3 -m venv --system-site-packages /opt/boatmfd/venv
+      chroot "$1" /opt/boatmfd/venv/bin/pip install --no-cache-dir --disable-pip-version-check \
+        -r /opt/boatmfd/requirements.txt pyserial pynmea2 python-can smbus2
+      # Compiled now: nothing can write __pycache__ on the read-only system.
+      chroot "$1" /opt/boatmfd/venv/bin/python -m compileall -q /opt/boatmfd/app
+      rm -f "$rc"
+      if [ -n "$moved" ]; then mv "$rc.boatmfd" "$rc"; fi
+    - |-
+      # The sensor board (hardware/sensor-board): I2C for its ADCs, SPI for the CAN controller on J5,
+      # and the LED board's own I2C bus on GPIO 5/6 (J6, bus 7). No rainbow square at power-on.
+      set -eu
+      cat >> "$1/boot/firmware/config.txt" <<'EOF'
+
+      [all]
+      # boatmfd (image/layer/boatmfd.yaml)
+      disable_splash=1
+      dtparam=i2c_arm=on
+      dtparam=spi=on
+      dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25
+      dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6
+      EOF
+    - |-
+      # Boot messages go to a console nobody sees (tty3), so the screen shows only the boot logo
+      # until the dashboard's session takes it over. No console on the serial port either: that's
+      # the GPS's.
+      set -eu
+      f="$1/boot/firmware/cmdline.txt"
+      line="$(sed -e 's/console=serial0,[0-9]* *//' -e 's/console=tty1/console=tty3/' "$f" | tr -d '\n')"
+      for p in quiet loglevel=3 vt.global_cursor_default=0 ${IGconf_boatmfd_video:+video=$IGconf_boatmfd_video}; do
+        case " $line " in *" $p "*) ;; *) line="$line $p" ;; esac
+      done
+      printf '%s\n' "$line" > "$f"
+    - |-
+      # Nothing but the dashboard on tty1: no login prompt there, ever.
+      set -eu
+      ln -sf /dev/null "$1/etc/systemd/system/getty@tty1.service"
+      chmod 0755 "$1"/usr/lib/boatmfd/*
+      $BDEBSTRAP_HOOKS/enable-units "$1" boat-dashboard boatmfd-kiosk boatmfd-settings avahi-daemon
+    - |-
+      set -eu
+      if igconf isy boatmfd_usb_boot; then
+        sh "$IGconf_boatmfd_src/image/layer/boatmfd.d/usb-boot.sh" "$1"
+      fi

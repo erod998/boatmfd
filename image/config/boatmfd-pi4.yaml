@@ -1,0 +1,43 @@
+# The boat MFD's system image for the Pi 4 test unit, booted from a USB flash drive (image/README.md).
+# The boat's Pi 5 build will be this with device.layer rpi5, booting from its SD card or NVMe, and
+# without usb_boot.
+#
+# Built on Raspberry Pi's minimal Debian 13 A/B configuration: two copies of a read-only system
+# (a failed update boots the other), and everything the boat writes -- tracks, settings, logs, the
+# dashboard's browser profile -- on a separate partition. Cutting the power with the switch can't
+# damage the system, because nothing ever writes to it.
+include:
+  file: trixie-minbase-ab.yaml
+
+device:
+  layer: rpi4
+  storage_type: usb
+  hostname: boatmfd
+  user1: admin
+  # SSH is by key only (ssh.pubkey_only), and the account has no password at all, so sudo can't
+  # ask for one.
+  user1sudo: nopasswd
+
+image:
+  name: boatmfd-pi4
+  boot_part_size: 128M
+  system_part_size: 2G      # Chromium, labwc and Python; each of the two copies
+  data_part_size: 2G
+
+layer:
+  app: boatmfd
+  splash: rpi-splash-screen
+
+splash:
+  # Made by make-splash.py from kiosk/plymouth/splash.png; the workflow (.github/workflows/image.yml)
+  # runs it before the build.
+  image_path: ${@SRCROOT}/build/splash.tga
+
+ssh:
+  pubkey_only: y
+
+ieee80211:
+  regdom: US
+
+boatmfd:
+  usb_boot: y

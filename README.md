@@ -967,6 +967,10 @@ service -- one-time `chmod +x update.sh` first, or just `bash update.sh`).
   moment the display is up instead, with a timer that starts it 60 s after boot regardless, so
   WiFi and SSH always come back. `--undo`.
 
+**Or a system of its own** ([image/](image/README.md)): an image built for the dashboard alone,
+with no Raspberry Pi OS underneath -- the boot logo, then the dashboard, from a read-only system
+the power switch can't damage.
+
 ## Architecture
 
 ```

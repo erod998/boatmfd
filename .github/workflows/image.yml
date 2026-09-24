@@ -1,0 +1,84 @@
+# Builds the boat MFD's system image (image/README.md) with Raspberry Pi's rpi-image-gen, on one of
+# GitHub's arm64 machines the way rpi-image-gen's own CI builds its examples, and publishes it as
+# the "pi4-test" pre-release, where a Pi can download it without logging in:
+#   https://github.com/erod998/boatmfd/releases/download/pi4-test/boatmfd-pi4.img.zst
+# The image has nothing private in it: SSH keys and WiFi go onto the drive after it's written
+# (image/flash-from-pi.sh).
+name: Pi image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "image/**"
+      - "app/**"
+      - "static/**"
+      - "kiosk/**"
+      - "data/charts/**"
+      - "requirements.txt"
+      - ".github/workflows/image.yml"
+
+concurrency:
+  group: pi-image
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # to publish the release
+
+env:
+  # rpi-image-gen, pinned: it changes often, and the image should only change when this repo does.
+  RPI_IMAGE_GEN_REF: ab93ed499d75150faa250a6c2230bdb53f4db1d3
+  CONFIG: boatmfd-pi4.yaml
+  RELEASE: pi4-test
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: boatmfd
+
+      - uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/rpi-image-gen
+          ref: ${{ env.RPI_IMAGE_GEN_REF }}
+          path: rpi-image-gen
+
+      - name: Build tools
+        run: |
+          sudo apt-get update
+          # As rpi-image-gen's own CI: its builder runs as another user inside the checkout.
+          sudo chmod o+x /home/runner
+          cd rpi-image-gen && sudo ./install_deps.sh
+          sudo apt-get install -y python3-pil
+
+      - name: Boot logo
+        run: python3 boatmfd/image/make-splash.py boatmfd/kiosk/plymouth/splash.png boatmfd/image/build/splash.tga
+
+      - name: Build the image
+        run: cd rpi-image-gen && ./rpi-image-gen build -S "$GITHUB_WORKSPACE/boatmfd/image" -c "$CONFIG"
+
+      - name: Find it
+        id: out
+        run: |
+          img="$(find rpi-image-gen/work -path '*deploy*' -name '*.img.zst' | head -n 1)"
+          if [ -z "$img" ]; then find rpi-image-gen/work -maxdepth 3; exit 1; fi
+          ls -la "$(dirname "$img")"
+          (cd "$(dirname "$img")" && sha256sum "$(basename "$img")" > "$(basename "$img").sha256")
+          echo "image=$img" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.out.outputs.image }}
+        run: |
+          notes="Test image for the Pi 4 on a USB flash drive, built from ${GITHUB_SHA::7} by run ${GITHUB_RUN_ID}. Write it with image/flash-from-pi.sh (image/README.md)."
+          if ! gh release view "$RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE" --repo "$GITHUB_REPOSITORY" --prerelease \
+              --target "$GITHUB_SHA" --title "Pi 4 test image" --notes "$notes"
+          fi
+          gh release upload "$RELEASE" "$IMAGE" "$IMAGE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE" --repo "$GITHUB_REPOSITORY" --notes "$notes"

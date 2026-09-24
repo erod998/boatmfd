@@ -7,3 +7,6 @@ data/*
 # ...but the charts are the one thing the Pi cannot re-create for itself: it lives offline and
 # fetch_charts.py needs the internet. 2 MB, and a plain `git pull` now delivers them at the dock.
 !data/charts/
+
+# The image build's generated boot logo (image/make-splash.py).
+image/build/

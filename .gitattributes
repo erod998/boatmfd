@@ -1,2 +1,5 @@
 *.sh text eol=lf
 *.py text eol=lf
+# The Pi image: shell scripts, systemd units and config files with no extension, all for Linux.
+image/** text eol=lf
+.github/** text eol=lf

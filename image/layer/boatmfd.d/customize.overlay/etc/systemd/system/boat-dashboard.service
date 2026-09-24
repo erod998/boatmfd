@@ -1,0 +1,27 @@
+# The dashboard's server (image/layer/boatmfd.yaml). Nothing here waits for the network: the
+# dashboard comes up whether or not there is one.
+#
+# The boat's own settings (README.md: BOAT_SENSORS, BOAT_CAN, ...) go in /var/lib/boatmfd/boat.env,
+# one NAME=value per line; it is kept across updates, and read by the display's session too.
+[Unit]
+Description=Boat dashboard server
+
+[Service]
+User=admin
+WorkingDirectory=/opt/boatmfd
+# /var/lib/boatmfd is on the data partition, shared by both system copies
+# (/etc/rpi-image-gen/slot-shared.d/boatmfd.conf).
+StateDirectory=boatmfd
+Environment=BOAT_DATA_DIR=/var/lib/boatmfd
+Environment=BOAT_CHARTS_DIR=/opt/boatmfd/data/charts
+Environment=BOAT_LED_I2C_BUS=7
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/var/lib/boatmfd/boat.env
+# The NMEA 2000 bus, if the board's CAN controller is there.
+ExecStartPre=+/bin/sh -c 'if ip link show can0 >/dev/null 2>&1; then ip link set can0 down; ip link set can0 up type can bitrate 250000 restart-ms 100; fi'
+ExecStart=/opt/boatmfd/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8090
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

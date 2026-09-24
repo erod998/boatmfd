@@ -1,0 +1,37 @@
+#!/bin/sh
+# Settings left in boatmfd/ on the drive's small FAT partition (BOOTCONFIG, the one a PC can open;
+# /bootfs here), applied at every boot (boatmfd-settings.service). Nothing in them is ever in the
+# image or the repo.
+#
+#   authorized_keys   SSH public keys to let in as admin: added to theirs, and left in place
+#   *.psk             WiFi networks, as iwd profiles: moved into /var/lib/iwd, since they hold the
+#                     password
+#
+# image/flash-from-pi.sh fills these in from the Pi that writes the drive.
+set -u
+DIR=/bootfs/boatmfd
+[ -d "$DIR" ] || exit 0
+USER_NAME=admin
+HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+
+if [ -f "$DIR/authorized_keys" ] && [ -n "$HOME_DIR" ]; then
+    keys="$HOME_DIR/.ssh/authorized_keys"
+    install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.ssh"
+    [ -f "$keys" ] || install -m 0600 -o "$USER_NAME" -g "$USER_NAME" /dev/null "$keys"
+    # Written on Windows, possibly: CRLF line ends, no newline at the end.
+    tr -d '\r' < "$DIR/authorized_keys" | while IFS= read -r key || [ -n "$key" ]; do
+        case "$key" in ""|"#"*) continue ;; esac
+        if ! grep -qxF -- "$key" "$keys"; then
+            printf '%s\n' "$key" >> "$keys"
+            echo "Added an SSH key: ${key##* }"
+        fi
+    done
+fi
+
+for profile in "$DIR"/*.psk; do
+    [ -f "$profile" ] || continue
+    install -m 0600 "$profile" "/var/lib/iwd/$(basename "$profile")"
+    rm -f "$profile"
+    echo "Added WiFi network: $(basename "$profile" .psk)"
+done
+exit 0

@@ -13,6 +13,7 @@ import contextlib
 import gzip
 import json
 import math
+import os
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -52,7 +53,11 @@ from .waypoints import SavedWaypoints
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
-DATA_DIR = BASE_DIR / "data"
+# Where the boat's own records live (tracks, waypoints, settings), and the charts. Both default to
+# data/ in the checkout; the Pi image (image/) keeps the program read-only and points these at its
+# writable storage and at the charts it was built with.
+DATA_DIR = Path(os.environ.get("BOAT_DATA_DIR") or BASE_DIR / "data")
+CHARTS_DIR = Path(os.environ.get("BOAT_CHARTS_DIR") or DATA_DIR / "charts")
 
 settings = Settings()
 gps_source = make_gps_source(settings)
@@ -71,7 +76,7 @@ switching = SwitchingPanel(DATA_DIR / "switching.json")
 quickdraw = QuickdrawRecorder(DATA_DIR / "quickdraw.json")
 nav_alarms = NavAlarmManager(DATA_DIR / "nav_alarms.json")
 ais = SimulatedAIS(36.306, -86.563)  # no real AIS receiver: a few other boats nearby, for demo purposes
-chart_store = ChartStore(DATA_DIR / "charts")
+chart_store = ChartStore(CHARTS_DIR)
 
 
 def make_led_driver(settings):
@@ -308,7 +313,7 @@ def calibrate_page():
 @app.get("/api/chart/areas")
 def chart_areas():
     """Which chart areas are on disk, so the frontend can pick one without being told."""
-    root = DATA_DIR / "charts"
+    root = CHARTS_DIR
     areas = []
     if root.exists():
         for d in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -329,7 +334,7 @@ def chart_survey(area: str):
     would cost the Pi a second or two for nothing."""
     if "/" in area or ".." in area:
         return Response(status_code=404)
-    path = DATA_DIR / "charts" / area / "survey_depth.json"
+    path = CHARTS_DIR / area / "survey_depth.json"
     if not path.exists():
         return Response(status_code=404)
     return FileResponse(str(path), media_type="application/json")

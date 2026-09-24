@@ -1,0 +1,13 @@
+# SSH keys and WiFi networks left on the drive's FAT partition (/usr/lib/boatmfd/apply-settings).
+[Unit]
+Description=Apply settings left on the boot drive
+ConditionPathIsDirectory=/bootfs/boatmfd
+RequiresMountsFor=/bootfs /home /var/lib/iwd
+Before=iwd.service ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/boatmfd/apply-settings
+
+[Install]
+WantedBy=multi-user.target
