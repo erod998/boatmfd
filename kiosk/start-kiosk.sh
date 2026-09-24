@@ -90,5 +90,7 @@ if session_running; then
     exit 0
 fi
 sleep 0.5
-browser &
+# Detached from the terminal too: over SSH, a background job still holding the session's output
+# keeps the connection open until the browser closes.
+browser </dev/null >/dev/null 2>&1 &
 disown
