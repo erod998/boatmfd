@@ -7,9 +7,11 @@
 #       keeps the dashboard up for as long as the session runs: closed (Alt+F4) or crashed, it's
 #       back a second later. --stop ends that too; start-kiosk.sh brings it back.
 #
-# It opens starting.html first, which says "Starting up" until the dashboard's server answers and
-# then switches to it, so at boot the screen never shows a "can't connect" page while the server
-# is still starting.
+# At boot, Chromium only starts once the dashboard's server answers -- until then the session's
+# background is the splash -- and opens it with ?kiosk, which keeps the same splash over the page
+# until it's fully drawn (index.html, app.js). So the screen never shows "can't connect", a white
+# window or a half-built page. If the server hasn't answered after two minutes it opens
+# starting.html instead, which keeps waiting and says what to check.
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILE="$HOME/.config/boatmfd-kiosk"      # its own profile: kept apart from normal browsing, and findable
@@ -70,7 +72,22 @@ browser() {
         --check-for-update-interval=31536000 \
         --disable-features=Translate \
         --autoplay-policy=no-user-gesture-required \
-        "file://$DIR/starting.html#$DASHBOARD_URL" >"$LOG" 2>&1
+        --disable-pinch \
+        --overscroll-history-navigation=0 \
+        "$(page_url)" >"$LOG" 2>&1
+}
+
+page_url() {
+    # The dashboard itself once its server answers; the waiting page if it doesn't in two minutes.
+    local i
+    for i in $(seq 1 120); do
+        if curl -fs -o /dev/null --max-time 2 "$DASHBOARD_URL"; then
+            echo "${DASHBOARD_URL}?kiosk=1"
+            return
+        fi
+        sleep 1
+    done
+    echo "file://$DIR/starting.html#${DASHBOARD_URL}?kiosk=1"
 }
 
 rm -f "$STOPPED"

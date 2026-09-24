@@ -13,14 +13,13 @@
   html, body { margin: 0; height: 100%; background: #000; color: #d6d8dc; cursor: default; }
   body { display: flex; align-items: center; justify-content: center; flex-direction: column;
          font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  #msg { font-size: 48px; font-weight: 300; letter-spacing: 0.02em; }
-  #dots::after { content: ""; animation: dots 1.5s steps(4, end) infinite; }
-  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
-  #hint { margin-top: 28px; font-size: 18px; color: #7d8189; visibility: hidden; text-align: center; }
+  /* The boot splash's own image, where the boot splash puts it: dead centre. */
+  #splash { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #hint { position: fixed; left: 0; right: 0; top: calc(50% + 90px); font-size: 18px; color: #7d8189; visibility: hidden; text-align: center; }
 </style>
 </head>
 <body>
-<div id="msg">Starting up<span id="dots"></span></div>
+<img id="splash" src="plymouth/splash.png" alt="Starting up...">
 <div id="hint">Still waiting for the dashboard's server.<br>On the Pi: <code>sudo systemctl status boat-dashboard</code></div>
 <script>
   const target = decodeURIComponent(location.hash.slice(1)) || "http://127.0.0.1:8090/";
@@ -34,7 +33,7 @@
       location.replace(target);
       return;
     } catch (e) {
-      if (Date.now() - started > 90000) document.getElementById("hint").style.visibility = "visible";
+      if (Date.now() - started > 5000) document.getElementById("hint").style.visibility = "visible";
       setTimeout(poll, 1000);
     }
   }

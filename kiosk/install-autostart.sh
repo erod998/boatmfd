@@ -59,7 +59,8 @@ case "$MODE" in
             mkdir -p "$(dirname "$SESSION")"
             cat > "$SESSION" <<EOF
 # boatmfd kiosk session (kiosk/install-autostart.sh): instead of the desktop and taskbar, only the
-# screen settings and the dashboard. install-autostart.sh --desktop brings the desktop back.
+# splash as the background, the screen settings and the dashboard. --desktop brings the desktop back.
+/usr/bin/swaybg -c 000000 -i $DIR/plymouth/splash.png -m center &
 /usr/bin/kanshi &
 $DIR/start-kiosk.sh --session &
 EOF

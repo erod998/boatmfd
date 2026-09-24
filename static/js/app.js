@@ -1385,7 +1385,26 @@ try { savedMode = localStorage.getItem("chartMode") || "day"; } catch (e) { /* s
 setChartMode(savedMode);
 setTrackVisible(trackVisible);
 applyVesselSettings();
-initCharts();   // load whatever charts are on disk; the rest of the dashboard works without them
+const chartsLoaded = initCharts();   // load whatever charts are on disk; the rest of the dashboard works without them
+
+// ---------- The kiosk's boot splash (index.html, ?kiosk) ----------
+// On the Pi's own screen the page loads behind a splash identical to the boot splash, and only
+// fades in once it is complete: the chart built and drawn around the boat, the gauges holding the
+// first real readings. So power-on goes splash, then the finished dashboard -- never a page
+// assembling itself piece by piece. Given up on after 45 s, so a missing chart or a server that
+// isn't sending can't leave the screen stuck on the splash.
+if (document.documentElement.classList.contains("kiosk-boot")) {
+  const firstFrame = new Promise((resolve) => document.addEventListener("telemetry", resolve, { once: true }));
+  const giveUp = new Promise((resolve) => setTimeout(resolve, 45000));
+  Promise.race([Promise.all([chartsLoaded, firstFrame]), giveUp]).then(() => {
+    // Two frames: the one that draws what the first reading changed, and the one after it is shown.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const splash = document.getElementById("bootSplash");
+      splash.classList.add("gone");
+      splash.addEventListener("transitionend", () => splash.remove(), { once: true });
+    }));
+  });
+}
 
 // Back to the boat, and following it again. Not animated: an animated pan that is still running
 // when an Options panel closes and the chart resizes ends up off-centre.

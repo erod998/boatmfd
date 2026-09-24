@@ -13,6 +13,11 @@
 #                logo.nologo                       no raspberry logos
 #                vt.global_cursor_default=0        no blinking cursor
 #                plymouth.ignore-serial-consoles
+#                video=HDMI-A-1:1920x1080@60       the screen's mode from the first frame of boot:
+#                                                  otherwise it boots at the monitor's own (4K on
+#                                                  the bench one) and blanks while it switches when
+#                                                  the session sets 1080p. BOOT_VIDEO=... to change
+#                                                  it; BOOT_VIDEO= (empty) to leave the mode alone.
 #   the boot splash theme                          "boatmfd" (plymouth/), in place of the Pi's own
 #   the desktop background                         black, for the second before the kiosk opens
 # Safe to run again: it only adds what's missing.
@@ -28,6 +33,7 @@ CMDLINE="$BOOT/cmdline.txt"
 CONFIG="$BOOT/config.txt"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 THEMES=/usr/share/plymouth/themes
+BOOT_VIDEO="${BOOT_VIDEO-HDMI-A-1:1920x1080@60}"
 
 rebuild_initramfs() {
     # The splash runs from the initramfs on current Pi OS; rebuild it so the theme is in there.
@@ -71,10 +77,11 @@ for word in $line; do
     case "$word" in
         console=tty1) word="console=tty3" ;;
         loglevel=*) continue ;;              # replaced by loglevel=3 below
+        video=HDMI-A-1:*) [ -n "$BOOT_VIDEO" ] && continue ;;   # replaced by BOOT_VIDEO below
     esac
     new="$new $word"
 done
-for want in quiet splash loglevel=3 logo.nologo vt.global_cursor_default=0 plymouth.ignore-serial-consoles; do
+for want in quiet splash loglevel=3 logo.nologo vt.global_cursor_default=0 plymouth.ignore-serial-consoles ${BOOT_VIDEO:+video=$BOOT_VIDEO}; do
     case " $new " in
         *" $want "*) ;;
         *) new="$new $want" ;;
