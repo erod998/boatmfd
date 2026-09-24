@@ -28,7 +28,9 @@ EOF
 echo "Added $ENTRY: the dashboard opens full screen at every desktop login."
 
 # Boot straight into the desktop, logged in, with nobody at a login screen.
-if command -v raspi-config >/dev/null 2>&1; then
+if grep -rqs "^autologin-user=$USER\$" /etc/lightdm/lightdm.conf /etc/lightdm/lightdm.conf.d/; then
+    echo "The Pi already boots to the desktop, logged in as $USER."
+elif command -v raspi-config >/dev/null 2>&1; then
     sudo raspi-config nonint do_boot_behaviour B4
     echo "Set the Pi to boot to the desktop, logged in automatically."
 else

@@ -18,6 +18,9 @@
 # Safe to run again: it only adds what's missing.
 set -eu
 set -f          # the kernel command line is split into words below; never glob them
+# plymouth-set-default-theme and update-initramfs live in /usr/sbin, which isn't on a normal
+# user's PATH on Debian: without this the theme check fails and the initramfs is never rebuilt.
+PATH="$PATH:/usr/sbin:/sbin"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BOOT=/boot/firmware
 [ -f "$BOOT/cmdline.txt" ] || BOOT=/boot
@@ -92,17 +95,21 @@ if ! grep -q '^disable_splash=1' "$CONFIG"; then
     echo "config.txt: disable_splash=1"
 fi
 
-# ---- the desktop background, for the moment between the splash and the kiosk
-conf_dir="$HOME/.config/pcmanfm/LXDE-pi"
-if [ ! -e "$conf_dir/desktop-items-0.conf" ] && [ -f /etc/xdg/pcmanfm/LXDE-pi/desktop-items-0.conf ]; then
-    mkdir -p "$conf_dir"
-    cp /etc/xdg/pcmanfm/LXDE-pi/desktop-items-0.conf "$conf_dir/"
-fi
+# ---- the desktop background, for the moment between the splash and the kiosk. The desktop's
+# settings are per profile ("default" on Trixie, "LXDE-pi" on Bookworm) and per monitor
+# (desktop-items-0, -1...); a user copy overrides the system's.
 set +f
-for f in "$conf_dir"/desktop-items-*.conf; do
-    [ -f "$f" ] || continue
-    sed -i -e 's/^wallpaper_mode=.*/wallpaper_mode=color/' -e 's/^desktop_bg=.*/desktop_bg=#000000/' "$f"
-    echo "Desktop background: black ($f)"
+for sys_dir in /etc/xdg/pcmanfm/default /etc/xdg/pcmanfm/LXDE-pi; do
+    [ -d "$sys_dir" ] || continue
+    conf_dir="$HOME/.config/pcmanfm/$(basename "$sys_dir")"
+    mkdir -p "$conf_dir"
+    for sys_file in "$sys_dir"/desktop-items-*.conf; do
+        [ -f "$sys_file" ] || continue
+        f="$conf_dir/$(basename "$sys_file")"
+        [ -f "$f" ] || cp "$sys_file" "$f"
+        sed -i -e 's/^wallpaper_mode=.*/wallpaper_mode=color/' -e 's/^desktop_bg=.*/desktop_bg=#000000/' "$f"
+        echo "Desktop background: black ($f)"
+    done
 done
 set -f
 
