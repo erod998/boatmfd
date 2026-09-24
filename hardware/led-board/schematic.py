@@ -368,7 +368,7 @@ BLOCKS = [
       "C31", "C32", "R49", "SW2", "R50", "SW1", "J11", "R51", "R52", "R53", "R54", "R55", "D8",
       "Q17", "Q18", "R41", "R42"]),
 ]
-ZONE_X, ZONE_Y, ZONE_W = 610.0, 30.48, 210.0
+ZONE_X, ZONE_Y, ZONE_W = 609.6, 30.48, 210.0   # x on the 1.27 mm grid: the power flags are placed from it directly
 PIXEL_X, PIXEL_Y, PIXEL_W = 250.0, 300.0, 330.0
 
 

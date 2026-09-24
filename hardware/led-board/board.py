@@ -323,6 +323,9 @@ class Board:
                 pad.SetNet(self.net(self.unused[(part.ref, num)], raw=True))
             if pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
                 continue
+            # Paste-only apertures (the LFPAK33's twelve unnumbered stencil openings) have no copper.
+            if not (pad.IsOnLayer(pcbnew.F_Cu) or pad.IsOnLayer(pcbnew.B_Cu)):
+                continue
             theirs = pcbnew_item(pad, netname)
             if not any(same_pad(theirs, m) for m in mine):
                 sys.exit(f"{part.ref} pad {num}: padgeom and pcbnew disagree ({theirs.geo}) -- fix padgeom.py first")
