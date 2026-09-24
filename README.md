@@ -417,6 +417,39 @@ not a tuning change, it was a correction:
 | Tap a feature | nothing | **full chart attributes** |
 | Load with no internet | only pre-cached area | **everything fetched** |
 
+### A chart app of its own in the chart's place (GPS Nautical Charts)
+
+GPS Nautical Charts sells Center Hill Lake charts, but only inside their own app, not
+as files the dashboard can draw. Their Raspberry Pi app (`Boating_App-aarch64.AppImage`,
+a Qt/X11 program, verified by them on Debian 13) can take the chart's place on the
+helm display instead. The dashboard's screens stay as they are, and the app's window
+sits where the chart would be: on the Helm and Chart screens, clear of the data boxes,
+an open side panel and the alarm banner, and out of sight on the other screens and
+under the Home overlay.
+
+On the Pi (the custom image):
+
+```bash
+mkdir -p ~/boating-app && cd ~/boating-app
+curl -fLO https://www.gpsnauticalcharts.com/static_html/Boating_App-aarch64.AppImage
+chmod +x Boating_App-aarch64.AppImage && ./Boating_App-aarch64.AppImage --appimage-extract
+echo "BOAT_CHART_APP=$HOME/boating-app/squashfs-root/AppRun" >> /var/lib/boatmfd/boat.env
+sudo systemctl restart boat-dashboard boatmfd-kiosk
+```
+
+(Extracted rather than run as an AppImage: the image has no FUSE, and it starts faster.)
+Then, in the app's settings, set its NMEA 0183 source to **TCP, 127.0.0.1, port
+10110**: the dashboard sends the boat's position, speed, course, heading, depth and
+water temperature there once a second (`app/nmea_out.py`; `BOAT_NMEA_TCP_PORT` and
+`BOAT_NMEA_TCP_HOST` change where).
+
+How it fits together: the kiosk page (`static/js/chart-app.js`) reports where its
+chart is on the screen (`POST /api/chart-app/rect`); `kiosk/chart-app.py`, started by
+labwc's autostart when `BOAT_CHART_APP` is set, keeps the app running and moves its
+window there; labwc's window rule (`/etc/boatmfd/labwc/rc.xml`) takes its title bar
+off and keeps it above the dashboard. Remove the `BOAT_CHART_APP` line to go back to
+the dashboard's own chart.
+
 ## Going to real hardware
 
 **GPS** (e.g. u-blox NEO-6M/NEO-M8N on the Pi's UART or a USB adapter):

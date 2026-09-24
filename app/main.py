@@ -37,6 +37,7 @@ from .media import make_media_source
 from .n2k import make_n2k_node
 from .nav import relative_bearing
 from .nav_alarms import NavAlarmManager
+from .nmea_out import NmeaServer, sentences as nmea_sentences
 from .offline_check import report as report_offline_assets
 from .quickdraw import QuickdrawRecorder
 from .routes import RouteTracker
@@ -75,6 +76,13 @@ switching = SwitchingPanel(DATA_DIR / "switching.json")
 quickdraw = QuickdrawRecorder(DATA_DIR / "quickdraw.json")
 nav_alarms = NavAlarmManager(DATA_DIR / "nav_alarms.json")
 chart_store = ChartStore(CHARTS_DIR)
+# A chart app of its own on the helm display, in the chart's place (kiosk/chart-app.py): the
+# kiosk page reports where its chart is, and the app reads the boat's position and depth as
+# NMEA 0183 over TCP (nmea_out.py).
+CHART_APP = os.environ.get("BOAT_CHART_APP", "")
+NMEA_TCP_PORT = int(os.environ.get("BOAT_NMEA_TCP_PORT") or (10110 if CHART_APP else 0))
+nmea_server = NmeaServer(os.environ.get("BOAT_NMEA_TCP_HOST", "127.0.0.1"), NMEA_TCP_PORT) if NMEA_TCP_PORT else None
+chart_app_rect = {"visible": False, "x": 0, "y": 0, "w": 0, "h": 0}
 
 
 def make_led_driver(settings):
@@ -113,12 +121,19 @@ async def lifespan(_app):
     report_offline_assets(STATIC_DIR)
     lighting.start()  # applies light changes at once and keeps the rainbow moving; see lighting.py
     _read_engine_and_boat()  # so the very first full frame already has engine and boat readings
+    if nmea_server:
+        try:
+            await nmea_server.start()
+        except OSError as exc:  # the port taken: the dashboard itself still runs
+            print(f"[nmea] can't serve NMEA 0183 on port {nmea_server.port}: {exc}")
     tasks = [asyncio.create_task(_fast_loop()), asyncio.create_task(_full_loop())]
     try:
         yield
     finally:
         for task in tasks:
             task.cancel()
+        if nmea_server:
+            await nmea_server.stop()
         lighting.stop()
         # A clean stop (systemctl restart, an update) writes out what is otherwise only saved on a
         # timer. The battery switch gives no such chance, which is what those timers are for.
@@ -444,6 +459,33 @@ def calibrate(cmd: CalibrationIn):
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True, "message": message, "status": sensor_hub.status()}
+
+
+class ChartAppRectIn(BaseModel):
+    visible: bool
+    x: float = Field(0, ge=-10000, le=10000)
+    y: float = Field(0, ge=-10000, le=10000)
+    w: float = Field(0, ge=0, le=10000)
+    h: float = Field(0, ge=0, le=10000)
+
+
+@app.get("/api/chart-app")
+def chart_app_config():
+    """Whether a chart app of its own takes the chart's place on the helm display."""
+    return {"enabled": bool(CHART_APP), "nmea_port": NMEA_TCP_PORT or None}
+
+
+@app.get("/api/chart-app/rect")
+def chart_app_get_rect():
+    return chart_app_rect
+
+
+@app.post("/api/chart-app/rect")
+def chart_app_set_rect(rect: ChartAppRectIn):
+    """Where the kiosk page's chart is on the screen, in screen pixels (kiosk/chart-app.py puts
+    the app's window there), or not showing."""
+    chart_app_rect.update(rect.model_dump())
+    return {"ok": True}
 
 
 @app.get("/api/health")
@@ -1003,6 +1045,8 @@ async def _full_loop():
         frame = await asyncio.to_thread(_full_frame)
         _latest["full"] = frame
         await _broadcast(frame)
+        if nmea_server:
+            await nmea_server.publish(nmea_sentences(frame["gps"], frame["boat_info"]))
     await _paced(FULL_PERIOD_S, work)
 
 

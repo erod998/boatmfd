@@ -1,6 +1,8 @@
 # The boat MFD's display session (boatmfd-kiosk.service): the screen mode, the splash as the
 # background -- the same picture as the boot logo, in the same place -- and the dashboard, which
-# keeps that splash over itself until it's fully drawn. Nothing else.
+# keeps that splash over itself until it's fully drawn; and a chart app, if one is set up.
 /usr/lib/boatmfd/display-mode
 /usr/bin/swaybg -c 000000 -i /opt/boatmfd/kiosk/plymouth/splash.png -m center &
 /opt/boatmfd/kiosk/start-kiosk.sh --session &
+# A chart app of its own in the chart's place, when /var/lib/boatmfd/boat.env names one.
+[ -n "$BOAT_CHART_APP" ] && /usr/bin/python3 /opt/boatmfd/kiosk/chart-app.py &
