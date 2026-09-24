@@ -26,6 +26,7 @@ class GaugeBoard:
     def __init__(self, supply=12.6, fuel_pct=50.0, trim_ohm=40.0, oil_ohm=10.0, temp_f=70.0):
         self.supply, self.fuel_pct, self.trim_ohm, self.oil_ohm = supply, fuel_pct, trim_ohm, oil_ohm
         self.battery = 12.7
+        self.house = 12.9
         self.fuel_wire_on = True
         # Engine temperature: a thermistor sender on MerCruiser's published curve (about 134 ohm
         # at 140 F, B about 3890 K) driven by a gauge with a 120 ohm Thevenin resistance.
@@ -59,6 +60,8 @@ class GaugeBoard:
             if not self.temp_wire_on:
                 return 0.0
             return self.s_terminal(self.supply, self.temp_sender_ohms(), self.temp_r_th, 0.9) * DIVIDER
+        if channel == 6:   # the house battery (J1.8), on the same 47k/10k divider as the engine's
+            return self.house * 10 / 57
         raise OSError("input not wired")
 
 
@@ -192,6 +195,39 @@ class TestSensorBoard(unittest.TestCase):
             self.assertIn("ratio", tap[name])
             self.assertIn("note", tap[name])
         self.assertAlmostEqual(self.hub.battery_volts(), 12.7, places=2)
+
+
+class TestHouseBattery(unittest.TestCase):
+    """The house battery on J1.8, beside the engine battery on J1.3."""
+
+    def hub(self, **settings):
+        tmp = tempfile.mkdtemp()
+        return board_hub(tmp, GaugeBoard(), **settings)
+
+    def test_both_batteries_read_on_their_own_inputs(self):
+        hub = self.hub(house_battery=True)
+        for _ in range(100):
+            hub.sample_once()
+        self.assertAlmostEqual(hub.battery_volts(), 12.7, places=2)
+        self.assertAlmostEqual(hub.house_volts(), 12.9, places=2)
+        self.assertTrue(hub.status()["house_enabled"])
+
+    def test_it_calibrates_on_its_own(self):
+        hub = self.hub(house_battery=True)
+        for _ in range(100):
+            hub.sample_once()
+        hub.capture("house", 13.1)
+        self.assertAlmostEqual(hub.house_volts(), 13.1, places=2)
+        self.assertAlmostEqual(hub.battery_volts(), 12.7, places=2)   # the engine battery's scale is its own
+        with self.assertRaises(ValueError):
+            hub.capture("house")
+
+    def test_off_unless_wired(self):
+        hub = self.hub()
+        for _ in range(20):
+            hub.sample_once()
+        self.assertIsNone(hub.house_volts())
+        self.assertFalse(hub.status()["house_enabled"])
 
 
 class TestEngineTemperature(unittest.TestCase):

@@ -503,6 +503,7 @@ export BOAT_CAN=can0
 export BOAT_N2K_ENGINE_INSTANCE=0        # RPM, trim, oil, temperature: use what /calibrate shows
 export BOAT_N2K_FUEL_TANK_INSTANCE=0     # fuel level
 export BOAT_BATTERY_ADC=true             # only if you fitted the ADS1115 for the battery
+export BOAT_HOUSE_BATTERY=true           # the sensor board's house battery input (J1.8): a second battery
 export BOAT_REDLINE_RPM=4800             # your engine's maximum WOT RPM
 export BOAT_ENGINE_HP=135 BOAT_ENGINE_WOT_RPM=4600      # only used for the fuel-burn estimate
 export BOAT_FUEL_CAPACITY_GAL=40                        # tank size: turns fuel % into gallons, economy and range

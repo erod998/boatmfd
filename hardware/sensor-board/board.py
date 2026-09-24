@@ -114,16 +114,33 @@ PLACE = {
     "C19": (26.6, -8.2, 0, "F"), "C20": (26.9, -4.6, 90, "F"),
     "C21": (29.6, -2.6, 90, "F"), "D12": (32.6, -6.0, 90, "F"),
 }
+
+
+def lane(i, x, y, turn=0):
+    """Channel i's five parts in a lane from its input at x to its ADC end 14.4 mm along; turn=180
+    is the same lane turned round, running right to left."""
+    s = -1 if turn else 1
+    top, bot, clamp, ser, cap = design.channel_refs(i)
+    for ref, dx, dy, rot in ((top, 0.0, 0.0, 0),        # top resistor: IN left, DIV right
+                             (bot, 3.8, 1.7, -90),      # divider bottom: DIV up, GND down
+                             (clamp, 7.2, -0.94, -90),  # clamp: COM down onto the lane, GND/3V3 up
+                             (ser, 11.0, 0.0, 0),       # series: DIV left, ADC right
+                             (cap, 14.4, 1.7, -90)):    # filter: ADC up, GND down
+        PLACE[ref] = (x + s * dx, y + s * dy, rot + turn, "F")
+
+
 for i, y in enumerate(LANE_Y):
-    PLACE[f"R{1 + i}"] = (14.8, y, 0, "F")            # top resistor: IN left, DIV right
-    PLACE[f"R{7 + i}"] = (18.6, y + 1.7, -90, "F")    # divider bottom: DIV up, GND down
-    PLACE[f"D{1 + i}"] = (22.0, y - 0.94, -90, "F")   # clamp: COM down onto the lane, GND/3V3 up
-    PLACE[f"R{13 + i}"] = (25.8, y, 0, "F")           # series: DIV left, ADC right
-    PLACE[f"C{1 + i}"] = (29.2, y + 1.7, -90, "F")    # filter: ADC up, GND down
+    lane(i, 14.8, y)
+# The house battery (rev 1.3) has no room in that column, where the CAN controller is: its lane
+# runs right to left beside U2, whose AIN2 it feeds, and its input crosses the board from J1.8.
+lane(6, 62.3, 33.4, turn=180)
+# C22's GND pad is boxed in by U8's 3.3 V and a link pair, with room for one thermal spoke: it
+# joins GND through its own via only (stitch_gnd), not the top pour.
+NO_POUR_JOIN = {("C22", "2")}
 
 # What each connector pin is for, printed beside the pin (silk()). Pin order.
 PIN_LABELS = {
-    "J1": ["FUEL", "TRIM", "BAT+", "IGN", "OIL", "TEMP", "GND", "GND"],
+    "J1": ["FUEL", "TRIM", "ENG+", "IGN", "OIL", "TEMP", "GND", "HSE+"],
     "J2": ["TACH", "GND"],
     "J5": ["BARE", "RED", "BLK", "WHT", "BLU"],     # the drop cable's wire colours
     "J7": ["+5V", "GND"],
@@ -136,10 +153,12 @@ ORDER = (["LINK_SCLP", "LINK_SCLM", "LINK_SDAP", "LINK_SDAM"] + ["VIN", "+5V", "
          ["TACH_IN", "TACH_A", "TACH_B", "TACH_LED", "TACH_GND"] +
          ["N2K_NET_S", "N2K_12V", "N2K_GND", "N2K_5V", "N2K_H", "N2K_L", "N2K_TERM"] +
          ["CAN_TXD", "CAN_RXD", "CAN_CLK"] +
-         [f"{n}_{s}" for n, *_ in design.CHANNELS for s in ("IN", "DIV", "ADC")] +
+         [f"{n}_{s}" for n, *_ in design.CHANNELS if n != "HOUSE" for s in ("IN", "DIV", "ADC")] +
          ["SDA", "SCL",
           "CAN_INT", "SPI_CE0", "SPI_MOSI", "SPI_MISO", "SPI_SCLK",
-          "TACH_OUT", "TACH_GPIO", "LIGHT_SDA", "LIGHT_SCL", "+3V3"])
+          "TACH_OUT", "TACH_GPIO", "LIGHT_SDA", "LIGHT_SCL",
+          # the house battery's input crosses the board from J1.8: after everything it could wall off
+          "HOUSE_DIV", "HOUSE_ADC", "HOUSE_IN", "+3V3"])
 # The SPI bus runs the length of the board, from the header down to the CAN controller, across
 # every input lane and past the converters: it prefers the bottom layer, leaving the top to the
 # parts it passes.
@@ -390,6 +409,8 @@ class Board:
             elif (part.ref, num) in self.unused:
                 # An unused pin gets the schematic's own name for it, unconnected-(...)
                 pad.SetNet(self.net(self.unused[(part.ref, num)], raw=True))
+            if (part.ref, num) in NO_POUR_JOIN:
+                pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_NONE)
             if pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
                 continue
             theirs = pad_item(pad, netname)
@@ -666,19 +687,21 @@ class Board:
         text("J1", 12.15, 11.6, 0.9, rot=90)
         text("J2", 40.2, 63.85, 0.9, just="right")
         text("J5 NMEA 2000", 15.6, 62.6, 0.9)
+        # The RJ45's, in the strip between it and the tab's left edge (its right is the pairs'
+        # terminations): what it is, and the one thing never to do with it.
         x0, y0, x1, y1 = self.courtyard("J6")
-        text("J6 LIGHTS: LED board J1", x1 + 0.4, y1 - 3.2, 0.8, rot=90, just="left")
-        text("patch cable, NOT ETHERNET", x1 + 1.8, y1 - 3.2, 0.8, rot=90, just="left")
+        text("J6 LED LINK", x0 - 2.0, -1.2, 0.8, rot=90, just="left")
+        text("NOT ETHERNET", x0 - 0.8, -1.2, 0.8, rot=90, just="left")
         text("J7 5V IN", 15.0, 0.15, 0.9, just="left")
         # The rules the pin labels can't carry, in plain words. (Rev 1.0-1.1 had a numbered pinout
         # here instead, which said less than the labels now do.)
         lines = ["WIRING", "FUEL TRIM OIL TEMP: that gauge's S terminal", "IGN: any gauge's I terminal",
-                 "BAT+: dashboard 12V, 1A fuse",
+                 "ENG+ HSE+: each battery's +, 1A fuse there",
                  "GND: gauge G terminal / battery -", "TACH: gray wire, coil TACH terminal",
-                 "NMEA: drop cable, bare shield unused", "LIGHTS: J6, patch cable to the LED board",
+                 "NMEA: drop cable, bare shield unused", "LIGHTS: J6, patch cable to LED board J1",
                  "5V IN: J7, from the converter at 5.1V",
                  "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
-        y = 35.0
+        y = 36.0   # below the house battery's lane
         for body in lines:
             if body:
                 text(body, 34.6, y, 1.0 if body == "WIRING" else 0.8, just="left")

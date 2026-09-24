@@ -277,8 +277,8 @@ def build():
 
     # ---- each input: IN -> R_top -> node (R_bot to GND, clamp to GND/3V3) -> R_ser -> ADC (C to GND)
     for i, (name, pin, adc, adc_pin, _) in enumerate(design.CHANNELS):
-        x, y0 = 88.9 + i * 40.64, 66.04
-        rt, rb, rs, c, d = f"R{1 + i}", f"R{7 + i}", f"R{13 + i}", f"C{1 + i}", f"D{1 + i}"
+        x, y0 = design.channel_sch(i)
+        rt, rb, d, rs, c = design.channel_refs(i)
         place(rt, x, y0)
         place(rb, x, y0 + 17.78)
         place(d, x + 17.78, y0 + 3.81, text_side="clamp")
@@ -296,7 +296,7 @@ def build():
         cx, cy = sh.pin(c, "1")
         sh.path((cx, cy), (cx + 5.08, cy))
         sh.net_label(f"{name}_ADC", cx + 5.08, cy, "right")
-        sh.items.append(text(f"{name}: J1.{pin} -> {adc} AIN{adc_pin - 4}", x - 7.62, 50.8, size=1.6, bold=True))
+        sh.items.append(text(f"{name}: J1.{pin} -> {adc} AIN{adc_pin - 4}", x - 7.62, y0 - 15.24, size=1.6, bold=True))
 
     # ---- tach: three resistors in series, then the LED with the capacitor and diode across it
     tx, ty = 88.9, 182.88

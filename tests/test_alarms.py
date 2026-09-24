@@ -154,6 +154,17 @@ class TestThresholds(unittest.TestCase):
         self.assertEqual(ids(self.m, "alarm"), ["battery_low"])
         self.assertIn("11.0 V", self.m.active()[0]["message"])
 
+    def test_the_house_battery_has_its_own_low_and_high_alarms(self):
+        run(self.m, self.clock, {}, {"house_battery_voltage": 11.2}, seconds=5.4)
+        self.assertEqual(ids(self.m, "alarm"), ["house_low"])
+        self.assertIn("11.2 V", self.m.active()[0]["message"])
+        run(self.m, self.clock, {}, {"house_battery_voltage": 15.1}, seconds=5.4)
+        self.assertEqual(ids(self.m, "alarm"), ["house_high"])
+
+    def test_no_house_battery_input_no_house_alarms(self):
+        run(self.m, self.clock, {}, {"house_battery_voltage": None}, seconds=20)
+        self.assertEqual(self.m.active(), [])
+
     def test_oil_pressure_is_only_watched_once_the_engine_has_been_running(self):
         run(self.m, self.clock, {"rpm": 0, "oil_pressure_psi": 0}, seconds=10)
         self.assertEqual(self.m.active(), [])                                  # engine off: 0 psi is normal

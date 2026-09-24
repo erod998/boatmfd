@@ -6,7 +6,8 @@ out and routes the PCB from it, so the two cannot disagree -- and KiCad's own pa
 
 What the board does, and why each part is there, is in ../../SENSOR_BOARD.md. The input
 channels here must match the software's channel map in app/sensors.py (tap mode):
-fuel 0, trim 1, battery 2, gauge supply 3 on the first ADS1115, oil 4 and temp 5 on the second.
+fuel 0, trim 1, engine battery 2, gauge supply 3 on the first ADS1115, oil 4, temp 5 and the
+house battery 6 on the second.
 """
 from dataclasses import dataclass, field
 
@@ -21,14 +22,34 @@ DATE = "2026-09-24"
 # resistor into 10k at the gauge end of the wire, in case the wire chafed, and 39k here.)
 # Listed in board order, top to bottom. Battery comes before the gauge supply so their traces reach
 # U1's right-hand pins (AIN2 below AIN3) around the chip without crossing.
+# The boat has two batteries on a common negative, their positives kept apart: the engine's (BATT,
+# J1.3) and the house's (HOUSE, J1.8, which was a second GND until rev 1.3). Each is wired straight
+# from its battery's + terminal through a 1 A fuse there, so both read with every switch off.
 CHANNELS = [
     ("FUEL", 1, "U1", 4, "49.9k"),  # software channel 0
     ("TRIM", 2, "U1", 5, "49.9k"),  # 1
-    ("BATT", 3, "U1", 6, "47k"),    # 2
+    ("BATT", 3, "U1", 6, "47k"),    # 2: the engine battery
     ("GAUGE", 4, "U1", 7, "49.9k"), # 3: the gauges' own supply (I terminal)
     ("OIL", 5, "U2", 4, "49.9k"),   # 4
     ("TEMP", 6, "U2", 5, "49.9k"),  # 5: the engine temperature gauge (BOAT_TEMP_SENDER=true)
+    ("HOUSE", 8, "U2", 6, "47k"),   # 6: the house battery
 ]
+
+
+def channel_refs(i):
+    """Channel i's parts: (top resistor, divider bottom, clamp, series resistor, filter capacitor).
+    The first six are numbered by channel, as they have been since rev 1.0; the house battery's
+    came later and take the next free numbers."""
+    if i < 6:
+        return f"R{1 + i}", f"R{7 + i}", f"D{1 + i}", f"R{13 + i}", f"C{1 + i}"
+    return "R35", "R36", "D13", "R37", "C24"
+
+
+def channel_sch(i):
+    """Where channel i's block sits on the schematic: the first six in a row across the top, the
+    house battery below them."""
+    return (88.9 + i * 40.64, 66.04) if i < 6 else (210.82, 132.08)
+
 
 # Pi header: physical pin -> net. Everything not listed is left unconnected.
 PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
@@ -116,17 +137,18 @@ def build_parts():
 
     # ---------------- analog front ends: one per channel ----------------
     for i, (name, _, _, _, top) in enumerate(CHANNELS):
-        x = 88.9 + i * 40.64   # schematic column
+        x, y = channel_sch(i)
+        r_top, r_bot, clamp, r_ser, cap = channel_refs(i)
         n_in, n_div, n_adc = f"{name}_IN", f"{name}_DIV", f"{name}_ADC"
         parts += [
-            resistor(f"R{1 + i}", top, n_in, n_div, size="1206", sch=(x, 66.04),
+            resistor(r_top, top, n_in, n_div, size="1206", sch=(x, y),
                      note="tap top resistor (1206 for voltage rating)"),
-            Part(f"D{1 + i}", "Diode:BAT54S", "BAT54S", "sensor-board:SOT-23_NoSilk",
-                 {"1": "GND", "2": "+3V3", "3": n_div}, mpn="BAT54S,215", sch=(x + 15.24, 81.28),
+            Part(clamp, "Diode:BAT54S", "BAT54S", "sensor-board:SOT-23_NoSilk",
+                 {"1": "GND", "2": "+3V3", "3": n_div}, mpn="BAT54S,215", sch=(x + 15.24, y + 15.24),
                  note="clamps the divider node between GND and 3V3"),
-            resistor(f"R{7 + i}", "10k", n_div, "GND", sch=(x, 93.98), note="divider bottom"),
-            resistor(f"R{13 + i}", "1k", n_div, n_adc, sch=(x + 10.16, 106.68), note="ADC pin series resistor"),
-            capacitor(f"C{1 + i}", "100n", n_adc, "GND", sch=(x + 20.32, 119.38), note="ADC input filter"),
+            resistor(r_bot, "10k", n_div, "GND", sch=(x, y + 27.94), note="divider bottom"),
+            resistor(r_ser, "1k", n_div, n_adc, sch=(x + 10.16, y + 40.64), note="ADC pin series resistor"),
+            capacitor(cap, "100n", n_adc, "GND", sch=(x + 20.32, y + 53.34), note="ADC input filter"),
         ]
 
     # ---------------- converters ----------------
@@ -138,7 +160,7 @@ def build_parts():
         Part("U1", "Analog_ADC:ADS1115IDGS", "ADS1115IDGSR", "Package_SO:TSSOP-10_3x3mm_P0.5mm", adc_pins["U1"],
              mpn="ADS1115IDGSR", sch=(345.44, 71.12), note="I2C 0x48: fuel, trim, battery, gauge supply"),
         Part("U2", "Analog_ADC:ADS1115IDGS", "ADS1115IDGSR", "Package_SO:TSSOP-10_3x3mm_P0.5mm", adc_pins["U2"],
-             mpn="ADS1115IDGSR", sch=(345.44, 124.46), note="I2C 0x49: oil, engine temperature"),
+             mpn="ADS1115IDGSR", sch=(345.44, 124.46), note="I2C 0x49: oil, engine temperature, house battery"),
         capacitor("C7", "100n", "+3V3", "GND", sch=(375.92, 60.96), note="U1 decoupling"),
         capacitor("C8", "1u", "+3V3", "GND", sch=(386.08, 60.96), note="U1 decoupling"),
         capacitor("C9", "100n", "+3V3", "GND", sch=(375.92, 114.3), note="U2 decoupling"),
@@ -247,12 +269,12 @@ def build_parts():
 
     # ---------------- connectors ----------------
     helm = {str(pin): f"{name}_IN" for name, pin, _, _, _ in CHANNELS}
-    helm.update({"7": "GND", "8": "GND"})
+    helm.update({"7": "GND"})   # pin 8 is the house battery (rev 1.3); one GND serves both
     parts += [
         Part("J1", "Connector_Generic:Conn_01x08", "HELM",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_8-GF-3.81_1x08_P3.81mm_Horizontal_ThreadedFlange", helm,
              mpn="Phoenix Contact 1827923 (MC 1,5/ 8-GF-3,81); plug 1827761 (MC 1,5/ 8-STF-3,81)", sch=(35.56, 157.48),
-             note="FUEL/TRIM/OIL/TEMP: that gauge's S terminal; BAT+: the dashboard's switched 12 V (1 A fuse); IGN: any gauge's I terminal; GND: gauge G / battery -"),
+             note="FUEL/TRIM/OIL/TEMP: that gauge's S terminal; ENG+ / HSE+: the engine / house battery's + terminal (1 A fuse at the battery); IGN: any gauge's I terminal; GND: gauge G / battery -"),
         Part("J2", "Connector_Generic:Conn_01x02", "TACH",
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "TACH_IN", "2": "TACH_GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",

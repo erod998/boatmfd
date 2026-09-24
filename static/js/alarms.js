@@ -15,10 +15,14 @@ let alarmControls = {};     // id -> the menu's level control
 const ALARM_GROUPS = {
   coolant: { title: "Coolant / engine temp alarm", ids: ["coolant"] },
   oil: { title: "Oil pressure alarm", ids: ["oil"] },
-  battery: { title: "Battery voltage alarms", ids: ["battery_low", "battery_high"] },
+  // The house battery's alarms live in the battery tile's menu too; its bar shows the engine battery's.
+  battery: { title: "Battery voltage alarms", ids: ["battery_low", "battery_high", "house_low", "house_high"],
+             bandIds: ["battery_low", "battery_high"] },
   fuel: { title: "Fuel level alarm", ids: ["fuel"] },
   depth: { title: "Depth alarm", ids: ["depth"] },
 };
+
+const HOUSE_ALARMS = new Set(["house_low", "house_high"]);
 
 // the gauges' scales, for painting their red/amber bands where the alarms are set
 const ALARM_SCALES = { coolant: [100, 260], oil: [0, 80], battery: [10, 16], fuel: [0, 100] };
@@ -28,6 +32,8 @@ const ALARM_VALUE = {
   oil: () => latestReadings.engine.oil_pressure_psi,
   battery_low: () => latestReadings.boat.battery_voltage,
   battery_high: () => latestReadings.boat.battery_voltage,
+  house_low: () => latestReadings.boat.house_battery_voltage,
+  house_high: () => latestReadings.boat.house_battery_voltage,
   fuel: () => latestReadings.engine.fuel_pct,
   depth: () => latestReadings.boat.depth_ft,
 };
@@ -38,7 +44,7 @@ const alarmFmt = (def, v) => (v == null ? "--" : Number(v).toFixed(def.decimals)
 function alarmBands(group) {
   const [min, max] = ALARM_SCALES[group];
   const bands = [];
-  ALARM_GROUPS[group].ids.forEach((id) => {
+  (ALARM_GROUPS[group].bandIds || ALARM_GROUPS[group].ids).forEach((id) => {
     const a = alarmCfg[id];
     if (!a || !a.enabled) return;
     if (a.side === "high") bands.push({ from: a.level - a.warn, to: a.level, level: "amber" }, { from: a.level, to: max, level: "red" });
@@ -260,6 +266,7 @@ function buildAlarmMenu() {
   groups.forEach((g) => ALARM_GROUPS[g].ids.forEach((id) => {
     const def = alarmDefs.alarms.find((a) => a.id === id);
     if (!def) return;
+    if (HOUSE_ALARMS.has(id) && ALARM_VALUE[id]() == null) return;   // no house battery input on this boat
     const block = document.createElement("div");
     block.className = "al-block";
     block.dataset.id = id;

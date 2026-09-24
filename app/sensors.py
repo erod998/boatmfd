@@ -189,6 +189,7 @@ class Calibration:
         "oil": {"zero_ohm": 10.0, "full_ohm": 180.0, "full_psi": 80.0,  # US standard 0-80 psi sender
                 "n2k_full_psi": N2K_OIL_FULL_PSI},  # the sender's real full scale, if the converter assumes 10 bar
         "battery": {"scale": 1.0},
+        "house": {"scale": 1.0},
         "tach": {"scale": 1.0},
         "probes": {"engine": "", "water": "", "engine_offset_f": 0.0, "water_offset_f": 0.0},
         "fuel_burn": {"scale": 1.0, "used_gal": 0.0},
@@ -228,7 +229,7 @@ class SensorHub:
     PROBE_S = 2.0
     FLUSH_S = 60.0
     # Fuel sloshes, so it's heavily smoothed; trim and oil move quickly; temperature slowly anyway.
-    SMOOTHING = {"fuel": 0.05, "trim": 0.3, "oil": 0.3, "temp": 0.2, "battery": 0.2}
+    SMOOTHING = {"fuel": 0.05, "trim": 0.3, "oil": 0.3, "temp": 0.2, "battery": 0.2, "house": 0.2}
     TAPS = ("fuel", "trim", "oil", "temp")
 
     def __init__(self, settings, calibration, adc=None, tach=None, w1=None, n2k=None, env=None, clock=time.monotonic):
@@ -257,6 +258,8 @@ class SensorHub:
                 self.channels["fuel"] = 0
             if settings.oil_sender:
                 self.channels["oil"] = 3
+        if settings.house_battery and settings.sensors in ("real", "n2k"):   # the sensor board's J1.8
+            self.channels["house"] = 6
         self._smoothed = {}
         self._ratio_history = {}   # tap name -> deque of (time, smoothed ratio), for the settle check
         self._readings = {}
@@ -359,6 +362,9 @@ class SensorHub:
         v = volts.get("battery")
         raw_battery = None if v is None else v * (s.batt_r_top + s.batt_r_bottom) / s.batt_r_bottom
         readings["battery_v_raw"] = self._smooth("battery", raw_battery)
+        v = volts.get("house")   # the same 47k/10k divider as the engine battery's
+        raw_house = None if v is None else v * (s.batt_r_top + s.batt_r_bottom) / s.batt_r_bottom
+        readings["house_v_raw"] = self._smooth("house", raw_house)
         readings["rpm_raw"] = self.tach.rpm() if self.tach else None
 
         now = self._clock()
@@ -566,6 +572,11 @@ class SensorHub:
             return raw * self.cal.get("battery", "scale")
         return self.n2k.alternator_v() if self.n2k else None  # no ADC: the converter's alternator volts, if it sends them
 
+    def house_volts(self):
+        """The house battery (the sensor board's J1.8), or None where it isn't measured."""
+        raw = self.readings().get("house_v_raw")
+        return None if raw is None else raw * self.cal.get("house", "scale")
+
     def engine_heard(self):
         """Is the NMEA 2000 engine converter alive? None if this hub isn't listening to the bus."""
         return self.n2k.heard_engine() if self.n2k else None
@@ -581,6 +592,8 @@ class SensorHub:
             "readings": self.readings(),
             "engine": self.engine(),
             "battery_volts": self.battery_volts(),
+            "house_volts": self.house_volts(),
+            "house_enabled": "house" in self.channels,
             "probes": probes,
             "fuel_used_gal": round(self._used_gal, 2),
             "oil_enabled": "oil" in self.channels or self.settings.sensors == "n2k",
@@ -653,6 +666,11 @@ class SensorHub:
                 raise ValueError("enter the voltage your multimeter shows")
             self.cal.set("battery", "scale", value / r["battery_v_raw"])
             return "Battery calibrated to %.2f V" % value
+        if action == "house":
+            if not value or value <= 0 or not r.get("house_v_raw"):
+                raise ValueError("enter the house battery voltage your multimeter shows")
+            self.cal.set("house", "scale", value / r["house_v_raw"])
+            return "House battery calibrated to %.2f V" % value
         if action == "tach":
             raw = self._rpm_raw(r)
             if not value or value <= 0 or not raw:
@@ -714,7 +732,8 @@ class RealBoatInfo:
         self.hub = hub
 
     def read(self, engine_running):
-        return {"battery_voltage": self.hub.battery_volts(), "depth_ft": self.hub.depth_ft(), "water_temp_f": self.hub.water_temp_f()}
+        return {"battery_voltage": self.hub.battery_volts(), "house_battery_voltage": self.hub.house_volts(),
+                "depth_ft": self.hub.depth_ft(), "water_temp_f": self.hub.water_temp_f()}
 
 
 def make_sensor_sources(settings, data_dir, node=None):
@@ -724,13 +743,15 @@ def make_sensor_sources(settings, data_dir, node=None):
 
     cal = Calibration(Path(data_dir) / "calibration.json")
     adc = tach = None
-    if settings.sensors == "real" or settings.battery_adc:
+    if settings.sensors == "real" or settings.battery_adc or settings.house_battery:
         try:
             from smbus2 import SMBus
 
             bus = SMBus(settings.i2c_bus)
             adc = ADS1115(bus, settings.ads1115_address)
-            if settings.sensors == "real" and settings.sender_wiring == "tap" and (settings.oil_sender or settings.temp_sender):
+            # The second converter carries oil, temperature and the house battery.
+            if settings.house_battery or (settings.sensors == "real" and settings.sender_wiring == "tap"
+                                          and (settings.oil_sender or settings.temp_sender)):
                 adc = ADS1115Pair(adc, ADS1115(bus, settings.ads1115_address2))
         except Exception as exc:  # pragma: no cover - hardware-dependent
             print(f"[sensors] could not open the ADS1115 on I2C bus {settings.i2c_bus} ({exc}); analog inputs will show no data")

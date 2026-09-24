@@ -153,6 +153,12 @@
     <div class="row"><input id="battInput" inputmode="decimal" placeholder="e.g. 12.6" /><button class="primary" data-act="battery" data-input="battInput">Apply</button></div>
   </div>
 
+  <div class="card" id="houseCard" hidden><h2>House battery</h2>
+    <div class="reading"><span id="houseV">--</span><small>volts (raw <span id="houseRaw">--</span>)</small></div>
+    <p>The sensor board's HSE+ input (J1.8, <code>BOAT_HOUSE_BATTERY=true</code>). Measure the house battery with a multimeter and type what it shows.</p>
+    <div class="row"><input id="houseInput" inputmode="decimal" placeholder="e.g. 12.8" /><button class="primary" data-act="house" data-input="houseInput">Apply</button></div>
+  </div>
+
   <div class="card"><h2>Tach (RPM)</h2>
     <div class="reading"><span id="rpm">--</span><small>rpm (raw <span id="rpmRaw">--</span>)</small></div>
     <p data-mode="n2k">With the engine running steadily, type what the ANALOG tach shows. The converter's speed-ratio DIP switches must already be right (ratio 2 for a 4-cylinder, 4-stroke gasoline engine); this scale only corrects small errors, so if the two differ by a factor of two, fix the switches instead.</p>
@@ -311,6 +317,8 @@ function render(s) {
   $("oilSavedN2k").textContent = `Sender full scale: ${num(c.oil.n2k_full_psi, 0)} psi`;
 
   $("battV").textContent = num(s.battery_volts, 2); $("battRaw").textContent = num(r.battery_v_raw, 2);
+  $("houseCard").hidden = !s.house_enabled;
+  $("houseV").textContent = num(s.house_volts, 2); $("houseRaw").textContent = num(r.house_v_raw, 2);
   $("rpm").textContent = num(e.rpm, 0); $("rpmRaw").textContent = num(mode === "n2k" ? raw.rpm : r.rpm_raw, 0);
   $("usedGal").textContent = num(s.fuel_used_gal, 1);
   $("burnSaved").textContent = `Current burn-estimate scale: x${c.fuel_burn.scale}`;

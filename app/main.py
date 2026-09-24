@@ -428,6 +428,7 @@ def sensors_status():
             "fuel_pct": engine.get("fuel_pct"),
             "fuel_gph": engine.get("fuel_gph"),
             "battery_voltage": boat.get("battery_voltage"),
+            "house_battery_voltage": boat.get("house_battery_voltage"),
             "depth_ft": boat.get("depth_ft"),
             "water_temp_f": boat.get("water_temp_f"),
         },

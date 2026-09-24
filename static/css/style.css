@@ -122,6 +122,12 @@ button.overlay-box:active { background: rgba(59, 123, 232, 0.28); }
 .tile.wide { grid-column: span 3; }
 .tile-head { display: flex; align-items: baseline; gap: 0.5rem; }
 .tile-label { font-size: 0.85rem; color: var(--soft); }
+/* A second line under a tile's label (the house battery, under BATTERY), level with the big number:
+   the label lines up on its last line (flex-end where last-baseline alignment isn't supported). */
+.tile-label:has(.tile-sub) { display: inline-block; align-self: flex-end; align-self: last baseline; }
+.tile-sub { display: block; font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
+.tile-sub[hidden] { display: none; }
+.tile-sub b { color: #fff; font-size: 1rem; font-weight: 500; }
 .tile-extra { flex: 1; text-align: center; font-size: 0.95rem; color: var(--dim); white-space: nowrap; }
 .tile-extra b { color: #fff; font-size: 1.15rem; font-weight: 500; }
 .tile-value { margin-left: auto; font-size: 2rem; font-weight: 500; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }

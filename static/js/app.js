@@ -1761,6 +1761,7 @@ const OVERLAY_FIELDS = {
   oil: { group: "Engine", label: "Oil Pressure", decimals: 0, unit: () => "psi", get: (d) => (d ? d.engine.oil_pressure_psi : null) },
   trim: { group: "Engine", label: "Trim", decimals: 0, unit: () => "%", get: (d) => (d ? d.engine.trim_pct : null) },
   battery: { group: "Engine", label: "Battery", decimals: 1, unit: () => "V", get: (d) => (d ? d.boat_info.battery_voltage : null) },
+  house: { group: "Engine", label: "House battery", decimals: 1, unit: () => "V", get: (d) => (d ? d.boat_info.house_battery_voltage : null) },
 
   // ---- Fuel ----
   fuel: { group: "Fuel", label: "Fuel Level", decimals: 0, unit: () => "%", get: (d) => (d ? d.engine.fuel_pct : null) },
@@ -1965,7 +1966,7 @@ dials.trim = makeDial($("dialTrim"), { size: "small", min: 0, max: 100, segments
 const TILE_SPECS = [
   { id: "cool", label: "COOLANT", unit: "°F", min: 100, max: 260, zones: ZONES.cool },
   { id: "oil", label: "OIL", unit: "PSI", min: 0, max: 80, zones: ZONES.oil },
-  { id: "batt", label: "BATTERY", unit: "V", min: 10, max: 16, zones: ZONES.batt, decimals: 1 },
+  { id: "batt", label: "BATTERY", unit: "V", min: 10, max: 16, zones: ZONES.batt, decimals: 1, house: true },
   { id: "fuel", label: "FUEL", unit: "%", min: 0, max: 100, zones: ZONES.fuel, wide: true, economy: true },
   { id: "trim", label: "TRIM", unit: "%", min: 0, max: 100, zones: [], wide: true },
 ];
@@ -1974,7 +1975,10 @@ TILE_SPECS.forEach((s) => {
   const tile = document.createElement("div");
   tile.className = "tile" + (s.wide ? " wide" : "");
   if (s.economy) tile.title = "GPH is measured when a NMEA 2000 fuel sensor is connected; otherwise it is estimated from RPM (see Options > Sensor calibration)";
-  tile.innerHTML = `<div class="tile-head"><span class="tile-label">${s.label}</span>` +
+  // The bar and the big number are the engine battery; the house battery, where it's measured,
+  // under the label, level with the number.
+  const sub = s.house ? `<span class="tile-sub" hidden>HOUSE <b data-bind="houseV">--</b> V</span>` : "";
+  tile.innerHTML = `<div class="tile-head"><span class="tile-label">${s.label}${sub}</span>` +
     (s.economy ? `<span class="tile-extra"><b data-bind="gph">--</b> GPH<span data-bind="gphTag"></span> &middot; <b data-bind="mpg">--</b> <span data-bind="mpgUnit">MPG</span></span>` : "") +
     `<span class="tile-value"><span class="tv">--</span><small>${s.unit}</small></span></div><div class="bar"></div>`;
   $("helmTiles").appendChild(tile);
@@ -2011,6 +2015,9 @@ function renderEngine(engine, boat, sogKn) {
   updateTile("cool", engine.coolant_f);
   updateTile("oil", engine.oil_pressure_psi);
   updateTile("batt", boat.battery_voltage);
+  const house = tiles.batt.tile.querySelector(".tile-sub");
+  house.hidden = boat.house_battery_voltage == null;
+  animBind("houseV", boat.house_battery_voltage, 1);
   updateTile("fuel", engine.fuel_pct);
   updateTile("trim", engine.trim_pct);
 

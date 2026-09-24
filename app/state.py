@@ -36,6 +36,9 @@ class Settings:
     # sim | n2k (engine data from a NMEA 2000 converter such as the CX5003) | real (the Pi reads senders, tach and probes itself)
     sensors: str = os.environ.get("BOAT_SENSORS", "sim")
     battery_adc: bool = os.environ.get("BOAT_BATTERY_ADC", "false").lower() == "true"  # with n2k: measure the battery on an ADS1115
+    # The sensor board's second battery input (J1.8, HSE+: the house battery, on the second ADS1115's
+    # AIN2), beside the engine battery on J1.3.
+    house_battery: bool = os.environ.get("BOAT_HOUSE_BATTERY", "false").lower() == "true"
     i2c_bus: int = int(os.environ.get("BOAT_I2C_BUS", "1"))
     ads1115_address: int = int(os.environ.get("BOAT_ADS1115_ADDR", "0x48"), 0)
     tach_gpio: int = int(os.environ.get("BOAT_TACH_GPIO", "17"))
@@ -102,7 +105,7 @@ def _blend(dt, per_second):
 
 
 class BoatInfo:
-    """Simulated house battery, depth sounder and water temperature (BOAT_SENSORS=sim only;
+    """Simulated engine and house batteries, depth sounder and water temperature (BOAT_SENSORS=sim only;
     see sensors.RealBoatInfo for real depth/water-temperature from a NMEA 2000 transducer).
 
     Dynamics are per second, not per call, so the dashboard can read this at any rate.
@@ -110,6 +113,7 @@ class BoatInfo:
 
     def __init__(self):
         self.battery_voltage = 12.6
+        self.house_voltage = 12.8
         self.depth_ft = 14.0
         self.water_temp_f = 68.0
         self._last_t = time.monotonic()
@@ -124,6 +128,11 @@ class BoatInfo:
         target_v = 13.9 if engine_running else 12.6
         self.battery_voltage += (target_v - self.battery_voltage) * _blend(dt, 0.2) + random.uniform(-0.03, 0.03) * wander
         self.battery_voltage = max(10.0, min(16.0, self.battery_voltage))
+        # The house battery, which runs the lights and the stereo: charged from the engine's side
+        # (a DC-DC charger) while it runs, otherwise slowly drawn down.
+        house_target = 13.6 if engine_running else 12.7
+        self.house_voltage += (house_target - self.house_voltage) * _blend(dt, 0.05) + random.uniform(-0.02, 0.02) * wander
+        self.house_voltage = max(10.0, min(16.0, self.house_voltage))
         # depth wanders around a lake-like 14 ft rather than drifting off for good
         self.depth_ft += (14.0 - self.depth_ft) * _blend(dt, 0.02) + random.uniform(-0.3, 0.3) * wander
         self.depth_ft = max(2.0, min(60.0, self.depth_ft))
@@ -131,6 +140,7 @@ class BoatInfo:
 
         return {
             "battery_voltage": round(self.battery_voltage, 2),
+            "house_battery_voltage": round(self.house_voltage, 2),
             "depth_ft": round(self.depth_ft, 1),
             "water_temp_f": round(self.water_temp_f, 1),
         }

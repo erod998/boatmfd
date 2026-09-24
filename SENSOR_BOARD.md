@@ -24,14 +24,11 @@ stock analog gauges.
   [tests/test_sensor_board.py](tests/test_sensor_board.py) runs it end to end against simulated
   gauges).
 
-> **Status: a checked design, not a proven board -- and rev 1.3 is not rebuilt yet.** Rev 1.2's
-> KiCad files passed KiCad's electrical rules check, its design rules check and its
-> schematic-to-board parity check with nothing reported at any severity. Rev 1.3 (the RJ45 link
-> to the LED board) is in design.py, the schematic and board.py, and places and routes completely
-> in board.py's dry run, but **`sensor-board.kicad_pcb` and everything in `fab/` are still
-> rev 1.2** until `build.py` is run under KiCad 10 and passes those checks again: don't order
-> from `fab/` before then. No board has been built or connected to this boat yet, so the
-> bring-up section below checks each block with a multimeter before it is trusted.
+> **Status: a checked design, not a proven board.** Rev 1.3 (the RJ45 link to the LED board, and
+> the house battery input on J1.8) passes KiCad's electrical rules check, its design rules check
+> and its schematic-to-board parity check with nothing reported at any severity, and `fab/` is
+> built from it. No board has been built or connected to this boat yet, so the bring-up section
+> below checks each block with a multimeter before it is trusted.
 
 ![The board, top side](hardware/sensor-board/fab/sensor-board-angle.png)
 
@@ -47,8 +44,8 @@ stock analog gauges.
                G ── ground ────────────────────────────────── J1.7 GND      │     AIN0 fuel   AIN1 trim
   oil gauge    S ── to the oil sender ──────────── tap wire ── J1.5 OIL ─────┤     AIN2 batt   AIN3 gauge supply
   temp gauge   S ── to the temp sender ─────────── tap wire ── J1.6 TEMP ────┤   ADS1115 U2 (0x49)
-  dashboard's switched 12 V (fused 1 A) ───────────────────── J1.3 BAT+ ────┘     AIN0 oil    AIN1 temp
-  helm ground (battery -) ─────────────────────────────────── J1.8 GND
+  engine battery + (fused 1 A at the battery) ─────────────── J1.3 ENG+ ────┤     AIN0 oil    AIN1 temp
+  house battery + (fused 1 A at the battery) ──────────────── J1.8 HSE+ ────┘     AIN2 house
 
   gray wire: EST coil TACH terminal ── tach gauge ─────────── J2.1 TACH ──── optocoupler ──── GPIO 13
   the tach gauge's G terminal ─────────────────────────────── J2.2 GND (the tach's own, isolated)
@@ -89,7 +86,7 @@ stock analog gauges.
 Reference designators match the KiCad schematic
 ([PDF](hardware/sensor-board/fab/sensor-board-schematic.pdf)). `3V3` and `GND` are the Pi's.
 
-### Tap inputs (×6: fuel, trim, battery, gauge supply, oil, engine temperature)
+### Tap inputs (×7: fuel, trim, engine battery, gauge supply, oil, engine temperature, house battery)
 
 ```
                                              on the board
@@ -109,14 +106,20 @@ Reference designators match the KiCad schematic
 - No TVS diode on these inputs: the 49.9 kΩ already limits any transient to a couple of
   milliamps, and a TVS's leakage current, flowing through it, would show up as a reading error.
 - The top resistors are 1206 for their voltage rating; everything else is 0805.
-- Channels, top to bottom on the board: fuel (R1, R7, R13, C1, D1), trim (…2), battery (…3),
-  gauge supply (…4), oil (…5), engine temperature (…6).
+- Channels, top to bottom on the board: fuel (R1, R7, R13, C1, D1), trim (…2), engine battery
+  (…3), gauge supply (…4), oil (…5), engine temperature (…6). The house battery's (R35, R36, R37,
+  C24, D13) came in rev 1.3, after the other parts were numbered; with no room left in that
+  column, its lane runs right to left beside U2.
 
-### Battery voltage (J1.3, U1 AIN2)
+### Battery voltages (J1.3 engine, U1 AIN2; J1.8 house, U2 AIN2)
 
-Same as a tap input, except the top resistor is **47 kΩ 1% 1206** (R3) -- the feed is fused at
-its source -- giving `V_adc = V_batt × 10/57`. The
-software default `BOAT_BATT_R_TOP=47000`, `BOAT_BATT_R_BOTTOM=10000` matches.
+The boat has two batteries on a common negative, their positives kept apart: the engine's and
+the house's (lights and stereo). Each input is the same as a tap input, except the top resistor
+is **47 kΩ 1% 1206** (R3 engine, R35 house), giving `V_adc = V_batt × 10/57`. The software
+default `BOAT_BATT_R_TOP=47000`, `BOAT_BATT_R_BOTTOM=10000` matches both. Wire each straight from
+its battery's + terminal through a **1 A fuse at the battery**, not from a switched feed, so both
+read with every switch off; the divider draws about 0.2 mA, some 2 Ah a year. One GND (J1.7)
+serves both, since they share the negative. (J1.8 was a second GND until rev 1.3.)
 
 ### Tach: the EST coil's TACH terminal, gray wire (optocoupler)
 
@@ -292,12 +295,12 @@ Since rev 1.2 every pin is labelled on the board itself, beside the pin, with th
 |---|---|---|---|
 | **J1** helm (8, left edge) | 1 | FUEL | fuel gauge **S** terminal |
 | | 2 | TRIM | trim gauge **S** terminal |
-| | 3 | BAT+ | the dashboard switch's 12 V (the same feed as the 5 V converter), **fused 1 A at the source** |
+| | 3 | ENG+ | the engine battery's **+** terminal, through a **1 A fuse at the battery** |
 | | 4 | IGN | the **I** terminal on the back of any one gauge. That's the key-switched +12 V that lights the gauges; they all share it, so any gauge will do. The board measures the senders as a share of it, and uses it to tell that the key is on |
 | | 5 | OIL | oil gauge **S** terminal |
 | | 6 | TEMP | engine temperature gauge **S** terminal |
 | | 7 | GND | the **G** terminal of the same gauge as IGN: the taps measure against the gauges' own ground |
-| | 8 | GND | helm ground / battery - (the BAT+ feed's return) |
+| | 8 | HSE+ | the house battery's **+** terminal, through a **1 A fuse at the battery** (rev 1.3; was a second GND) |
 | **J2** tach (2, bottom edge) | 1 | TACH | the **gray wire** from the EST coil's **TACH** terminal -- easiest where it lands on the tach gauge's signal terminal at the helm. No resistor on this one |
 | | 2 | GND | the tach gauge's **G** terminal -- twist these two wires together |
 | **J5** NMEA 2000 (5, bottom edge) | 1 | BARE | the drop cable's bare drain wire (shield) -- **not connected** here (the backbone grounds its shield at the power tee) |
@@ -322,17 +325,17 @@ The full list, with manufacturer part numbers, is
 | U1, U2 | 2 | **ADS1115IDGSR** (TI, TSSOP-10) | 0x48 and 0x49 |
 | U3 | 1 | **PC817**, rank B or C, SMD gull-wing | tach optocoupler |
 | R1, R2, R4–R6 | 5 | 49.9 kΩ 1% **1206** | tap top resistors |
-| R3 | 1 | 47 kΩ 1% **1206** | battery top resistor |
-| R7–R12, R22 | 7 | 10 kΩ 1% 0805 | divider bottoms; tach pull-up |
-| R13–R18, R23 | 7 | 1 kΩ 0805 | ADC pin series resistors; GPIO protection |
+| R3, R35 | 2 | 47 kΩ 1% **1206** | engine and house battery top resistors |
+| R7–R12, R36, R22 | 8 | 10 kΩ 1% 0805 | divider bottoms; tach pull-up |
+| R13–R18, R37, R23 | 8 | 1 kΩ 0805 | ADC pin series resistors; GPIO protection |
 | R19–R21 | 3 | 3.3 kΩ **1206** | tach input, in series |
 | R24, R25 | 2 | 4.7 kΩ 0805 | the LED board bus's pull-ups |
 | U8 | 1 | **PCA9615DP** (NXP, TSSOP-10) | differential I2C for the LED link |
 | R29-R34, C22, C23 | 6 + 2 | 620 / 120 / 620 Ω ×2, 100 nF, all 0402 | the link's pair terminations; U8's decoupling |
-| C1–C7, C9 | 8 | 100 nF X7R 0805 | ADC pin filters; decoupling |
+| C1–C7, C9, C24 | 9 | 100 nF X7R 0805 | ADC pin filters; decoupling |
 | C8, C10 | 2 | 1 µF X7R 0805 | decoupling |
 | C11 | 1 | 10 nF X7R 0805 | tach ring-down filter |
-| D1–D6 | 6 | BAT54S (SOT-23) | clamps |
+| D1–D6, D13 | 7 | BAT54S (SOT-23) | clamps |
 | D7 | 1 | 1N4148W (SOD-123) | across the opto LED |
 | U4 | 1 | **MCP2518FD** (Microchip, SOIC-14) | CAN controller |
 | U5 | 1 | **ISO1044BD** (TI, SOIC-8) | isolated CAN transceiver |
@@ -350,7 +353,7 @@ The full list, with manufacturer part numbers, is
 | J4 | 1 | 2×20 female **stacking** header, extra-tall (e.g. Adafruit 1979) | |
 | — | 5 | M2.5 standoffs and screws | four HAT holes on the Pi, one (H5) supporting the part past the Pi's edge |
 | — | 1 | NMEA 2000 drop cable with a female Micro-C end | cut the other end into J5's plug |
-| — | 1 | inline fuse holder + 1 A fuse | J1.3 battery feed, at its source |
+| — | 2 | inline fuse holder + 1 A fuse | the J1.3 and J1.8 battery leads, one at each battery |
 | — | 1 | **12 V -> 5 V converter**, 3 A or more, adjustable or fixed at 5.1-5.2 V, **with output overvoltage protection**, potted or sealed | J7; fed from the dashboard switch through its own fuse |
 | — | | 20–22 AWG tinned marine wire, ring terminals | taps; tach pair twisted |
 
@@ -444,10 +447,12 @@ check reports anything.
    tach gauge's **G** terminal to **J2 GND**. Twist the two together. The tach gauge stays
    connected.
 5. **Power:** the dashboard switch's 12 V output feeds the 12 V -> 5 V converter (through its
-   own fuse) and, through a 1 A inline fuse, J1.3 (BAT+), which measures the battery. Helm ground
-   to J1.8 (GND). The converter's output goes to **J7: +5V and GND** -- that powers the Pi and the
+   own fuse); the converter's output goes to **J7: +5V and GND** -- that powers the Pi and the
    whole board; leave the Pi's USB-C unplugged.
-6. **NMEA 2000:** a drop cable from a T on the backbone to J5 (colours in the Connectors table).
+6. **Batteries:** a wire from each battery's **+** terminal, through a 1 A inline fuse right at
+   the battery: the engine battery to **J1.3 ENG+**, the house battery to **J1.8 HSE+**. Not from
+   a switched feed: these read with everything off.
+7. **NMEA 2000:** a drop cable from a T on the backbone to J5 (colours in the Connectors table).
    The backbone needs its power tee and two terminators, as always; see README's "The NMEA 2000
    backbone".
 7. Keep the tap and tach wires away from ignition leads, and zip-tie them against chafe.
@@ -494,6 +499,7 @@ BOAT_TACH_GPIO=13               # the board's tach output (header pin 33)
 BOAT_TACH_PULL=none             # the board has its own pull-up (R22)
 BOAT_OIL_SENDER=true            # the oil tap on U2
 BOAT_TEMP_SENDER=true           # the engine temperature tap on U2 (J1.6)
+BOAT_HOUSE_BATTERY=true         # the house battery on U2 (J1.8); the engine battery (J1.3) is always read
 BOAT_CAN=can0                   # the NMEA 2000 interface on J5 (Fusion stereo, depth)
 # BOAT_TACH_PPR=2               # the default: 2 pulses per revolution on a 4-cylinder
 # BOAT_FUEL_SENDER=false        # only if fuel level comes from NMEA 2000 instead

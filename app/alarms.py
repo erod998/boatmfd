@@ -41,6 +41,13 @@ ALARM_DEFS = [
     {"id": "battery_high", "group": "battery", "label": "Battery voltage high", "what": "Charging voltage", "unit": "V",
      "side": "high", "default": 14.8, "min": 13.5, "max": 16.0, "step": 0.1, "decimals": 1, "warn": 0.3, "hyst": 0.2, "delay": 5.0,
      "source": ("boat_info", "battery_voltage"), "needs_running": False, "default_enabled": True},
+    # The house battery (the sensor board's J1.8): the same levels as the engine's. No reading, no alarm.
+    {"id": "house_low", "group": "battery", "label": "House battery low", "what": "House battery", "unit": "V",
+     "side": "low", "default": 11.8, "min": 10.0, "max": 13.0, "step": 0.1, "decimals": 1, "warn": 0.3, "hyst": 0.2, "delay": 5.0,
+     "source": ("boat_info", "house_battery_voltage"), "needs_running": False, "default_enabled": True},
+    {"id": "house_high", "group": "battery", "label": "House battery high", "what": "House charging voltage", "unit": "V",
+     "side": "high", "default": 14.8, "min": 13.5, "max": 16.0, "step": 0.1, "decimals": 1, "warn": 0.3, "hyst": 0.2, "delay": 5.0,
+     "source": ("boat_info", "house_battery_voltage"), "needs_running": False, "default_enabled": True},
     {"id": "fuel", "group": "fuel", "label": "Fuel level", "what": "Fuel level", "unit": "%",
      "side": "low", "default": 10, "min": 0, "max": 50, "step": 5, "decimals": 0, "warn": 15, "hyst": 2, "delay": 5.0,
      "source": ("engine", "fuel_pct"), "needs_running": False, "default_enabled": True},
