@@ -21,6 +21,9 @@ StandardError=journal
 UtmpIdentifier=tty1
 UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
+# Every cursor transparent: no mouse pointer on the screen (/usr/share/icons/boatmfd-none).
+Environment=XCURSOR_THEME=boatmfd-none
+Environment=XCURSOR_SIZE=24
 # As Raspberry Pi OS's own labwc session sets it on a Pi.
 Environment=WLR_DRM_FORCE_LIBLIFTOFF=1
 EnvironmentFile=-/var/lib/boatmfd/boat.env

@@ -112,6 +112,10 @@ mmdebstrap:
       done
       printf '%s\n' "$line" > "$f"
     - |-
+      # No mouse pointer on the screen (boatmfd.d/no-cursor.py).
+      set -eu
+      python3 "$IGconf_boatmfd_src/image/layer/boatmfd.d/no-cursor.py" "$1"
+    - |-
       # Nothing but the dashboard on tty1: no login prompt there, ever.
       set -eu
       ln -sf /dev/null "$1/etc/systemd/system/getty@tty1.service"

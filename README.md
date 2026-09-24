@@ -24,8 +24,7 @@ of it, to switch):
 **Also reachable from Options** (not full screens, but full features): **Waypoints, Routes &
 Boundaries** (mark/save/rename/delete waypoints, search saved waypoints by name and go straight
 to one — like a GPS — build and follow multi-leg routes, circular geofence alarms), **Navigation
-Alarms** (Arrival, Off Course, Anchor Drag, GPS Accuracy), **AIS Targets** (a live list of
-simulated nearby vessels with range/bearing/CPA), and **Pinned Screens** (choose which screens
+Alarms** (Arrival, Off Course, Anchor Drag, GPS Accuracy), and **Pinned Screens** (choose which screens
 show in the Home overlay's Pinned tab and the prev/next swipe at the bottom of every screen — at
 least one has to stay pinned).
 
@@ -102,7 +101,7 @@ raster-tile black-square problem went away with the tiles.
 **Map layers & colors** (**Options → Map layers & colors**, or the app/gps.py and
 app/state.py simulators' more realistic noise): chart colors are Day/Dusk/Night — three real
 palettes applied to the chart vectors themselves, not a filter smeared over an image, so the
-boat, track and AIS targets keep their own colours while only the chart changes;
+boat and track keep their own colours while only the chart changes;
 **Chart** layer toggles (Land & shoreline, Depths & contours, Aids to navigation, Hazards &
 caution areas, Landmarks) add and remove the matching vector layers on the spot, with no
 refetching — the data is already local; **My Vessel** has a Heading Line
@@ -192,13 +191,6 @@ light, cabin lights, livewell, bilge pump, two accessories, horn) standing in fo
 2000 digital-switching module (a CZone/Empirbus-style relay box) — there isn't one wired up, so
 each circuit just remembers its own state, the same simulate-what-there's-no-hardware-for
 approach as the rest of this dashboard.
-
-**AIS Targets** (**Options → AIS Targets**, and small teal boat icons on the chart itself): a
-handful of other vessels moving nearby, each with a name, range, bearing, speed and a simple
-straight-line closest-point-of-approach (CPA distance and time until it, when the target is
-actually closing) — there's no real AIS receiver, so `app/ais.py` simulates a few boats wandering
-around the chart's default position, the same demo-with-no-hardware idea as the simulated GPS and
-engine. Sorted nearest first, like a real MARPA/AIS target list ranks by how much it matters.
 
 **Smooth gauges:** engine and boat readings arrive five times a second (GPS,
 trip, stereo and lights once a second), and every dial, bar and number glides
@@ -386,7 +378,7 @@ lake charts does; every screen shares the setting. Set it to the day's level, wh
 posts daily, and the chart agrees with the sounder.
 
 Day / Dusk / Night are real palettes applied to the vectors, not a CSS filter
-smeared over an image — so the boat, track and AIS targets keep their own
+smeared over an image — so the boat and track keep their own
 colours while only the chart changes.
 
 ### Coverage: what this data does and does not include
@@ -998,7 +990,6 @@ app/
   boundaries.py  Circular geofence alarms (enter/exit/both), saved to data/boundaries.json
   nav_alarms.py  Arrival, Off Course, Anchor Drag, GPS Accuracy alarms
   switching.py  Simulated digital-switching circuits, saved to data/switching.json
-  ais.py       Simulated nearby AIS vessels + CPA/TCPA math -- no real AIS receiver
   quickdraw.py Simplified Quickdraw-style depth-sample recording, saved to data/quickdraw.json
   chart_data.py   Local vector chart store: fetches S-57 features from USACE as GeoJSON; see "Charts" above
   fetch_charts.py CLI to download an area's charts over WiFi ahead of time (python -m app.fetch_charts)
@@ -1025,7 +1016,6 @@ tests/
   test_routes.py                         Multi-leg routes: save/list/rename/delete, leg-by-leg auto-advance, arrival/finish
   test_boundaries.py                     Circular boundaries: create/list/enable/delete, enter/exit/both crossing detection
   test_switching.py                      Digital switching circuits: defaults, toggle, persistence
-  test_ais.py                            Simulated AIS targets: random-walk motion, range/bearing, CPA/TCPA math
   test_quickdraw.py                      Quickdraw depth recording: enable/disable, distance-based dedup, clear
   test_nav_alarms.py                     Navigation alarms: arrival, off course, anchor drag, GPS accuracy
   test_chart_data.py                     Chart query building, paging, atomic writes, per-layer/detail storage, failure handling

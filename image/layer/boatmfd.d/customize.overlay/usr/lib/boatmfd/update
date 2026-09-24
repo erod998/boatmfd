@@ -1,0 +1,42 @@
+#!/bin/bash
+# Installs a new build of this system over the network, into the copy of the system that isn't
+# running, then restarts into it once to try it:
+#
+#   sudo /usr/lib/boatmfd/update [URL]     URL: where the build's slot images are; the pi4-test
+#                                          release (.github/workflows/image.yml) unless given
+#   sudo /usr/lib/boatmfd/update --commit  keep the new one: it starts from now on
+#
+# Until --commit, any restart -- the power switch included -- goes back to the copy that was
+# running before, so a new build that doesn't work costs nothing. The data partition (tracks,
+# settings, SSH keys, WiFi) is shared by both copies and isn't touched.
+set -euo pipefail
+NAME=boatmfd-pi4
+URL="${1:-https://github.com/erod998/boatmfd/releases/download/pi4-test}"
+die() { echo "update: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "run it with sudo"
+
+tryboot() { [ "$(od -An -tu1 /proc/device-tree/chosen/bootloader/tryboot 2>/dev/null | tr -d ' ')" = 0001 ]; }
+
+if [ "$URL" = --commit ]; then
+    tryboot || die "not running a new build on trial: nothing to keep"
+    # The boot config, with the running copy as the one that starts (rpi-image-gen's A/B tool).
+    /usr/bin/rpi-slot-tryboot > /bootfs/autoboot.txt.new
+    mv /bootfs/autoboot.txt.new /bootfs/autoboot.txt
+    sync
+    echo "Kept: this copy of the system starts from now on."
+    exit 0
+fi
+
+write() {  # write IMAGE SLOT_PART
+    local dev
+    dev="$(readlink -f "/dev/disk/by-slot/other/$2")"
+    [ -b "$dev" ] || die "no other $2 partition"
+    echo "$1 -> $dev"
+    # zstd checks the download as it unpacks: a cut-off or damaged one fails here, before restarting.
+    curl -fL --retry 3 "$URL/$NAME.$1.zst" | zstd -dc | dd of="$dev" bs=4M iflag=fullblock oflag=direct status=progress
+}
+write boot.vfat boot
+write system.erofs system
+sync
+echo "Restarting into the new build, once. If it's good: sudo $0 --commit"
+systemctl reboot "0 tryboot"
