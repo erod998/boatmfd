@@ -950,9 +950,10 @@ service -- one-time `chmod +x update.sh` first, or just `bash update.sh`).
 - `kiosk/start-kiosk.sh` opens the dashboard in Chromium's kiosk mode on the display, now
   (`--stop` closes it). It finds the desktop session itself, so it works over SSH, and first
   shows a "Starting up..." page that switches to the dashboard as soon as the server answers.
-- `kiosk/install-autostart.sh`, once: the Pi logs straight in to a **kiosk session** -- no desktop
-  or taskbar, only the dashboard, which reopens itself if it's closed or crashes. `--desktop`
-  brings back the normal desktop (with the dashboard opened over it at login); `--undo`, neither.
+- `kiosk/install-autostart.sh`, once: the Pi logs straight in to a **kiosk session** of its own
+  (`kiosk-session.sh`) -- none of the Pi desktop, only the splash and the dashboard, which reopens
+  itself if it's closed or crashes. `--desktop` points the auto-login back at the normal desktop
+  (with the dashboard opened over it); `--undo`, the plain desktop.
 - `kiosk/quiet-boot.sh`, once, then `sudo reboot`: no rainbow square, logos or boot text -- a
   black screen that says "Starting up...", the same as the kiosk's first page, until the
   dashboard appears. Every boot file it touches is backed up first; `--undo` puts them back.
