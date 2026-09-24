@@ -37,7 +37,7 @@ class Router:
         self.edge_clear, self.margin = edge_clear, margin
         self.layer_cost, self.via_cost, self.turn_cost = layer_cost, via_cost, turn_cost
         self.items = []
-        self.keepouts = []                      # (x0, y0, x1, y1, allow_fn(net)) regions
+        self.keepouts = []                      # (x0, y0, x1, y1, allow_fn(net)[, layers]) regions
         self.holes = []                         # (x, y, r): nothing within r
         self.outside = []                       # (x0, y0, x1, y1): notches in the outline, off the board
         xs = self.x0 + np.arange(self.nx) * res
@@ -111,7 +111,7 @@ class Router:
             r = self.clearance(net, item.net) + radius + self.margin
             for layer in item.layers:
                 self._paint(maps[layer], item, r)
-        # The board edge, holes and keepouts block both layers.
+        # The board edge and holes block both layers; a keepout, the layers it names (both if none).
         e = self.edge_clear + radius + self.margin
         edge = ((self.X < self.x0 + e) | (self.Y < self.y0 + e) |
                 (self.X > self.x0 + self.w - e) | (self.Y > self.y0 + self.h - e))
@@ -121,13 +121,17 @@ class Router:
             m |= edge
             for x, y, r in self.holes:
                 self._paint(m, Item(None, (0,), "circle", x=x, y=y, r=r), radius + self.margin)
-            for x0, y0, x1, y1, allow in self.keepouts:
-                if not allow(net):
-                    i0, j0, i1, j1 = self._window(x0 - radius, y0 - radius, x1 + radius, y1 + radius)
-                    m[i0:i1, j0:j1] = True
+        for x0, y0, x1, y1, allow, *layers in self.keepouts:
+            if allow(net):
+                continue
+            i0, j0, i1, j1 = self._window(x0 - radius, y0 - radius, x1 + radius, y1 + radius)
+            for layer in (layers[0] if layers else (TOP, BOTTOM)):
+                maps[layer][i0:i1, j0:j1] = True
         return maps
 
     # ---------------------------------------------------------------- search
+    MAX_EXPANDED = 6_000_000
+
     def search(self, net, sources, goal, heur_xy, via_ok=True, allow_layers=(TOP, BOTTOM)):
         """A* from any source cell to any goal cell. sources: list of (i, j, layer).
         goal: (i, j, layer) -> bool. Returns the cell path or None."""
@@ -161,7 +165,7 @@ class Router:
                     path.append(s[:3])
                 return path[::-1]
             expanded += 1
-            if expanded > 1_500_000:
+            if expanded > self.MAX_EXPANDED:
                 return None
             for nd, (di, dj) in enumerate(DIRS):
                 ni, nj = i + di, j + dj

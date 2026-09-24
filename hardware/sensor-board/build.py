@@ -2,6 +2,7 @@
 
 Run with KiCad's bundled Python (the steps need pcbnew):
     & "C:\\Users\\erod9\\AppData\\Local\\Programs\\KiCad\\10.0\\bin\\python.exe" build.py
+(anywhere else, set KICAD_DIR to KiCad's install root first: see kicadpaths.py)
 
   1. footprints.py  -> sensor-board.pretty (the project footprint library)
   2. schematic.py   -> sensor-board.kicad_sch, then KiCad's ERC, which must be clean
@@ -24,9 +25,10 @@ import zipfile
 from pathlib import Path
 
 import design
+from kicadpaths import CLI as KICAD_CLI
 
 HERE = Path(__file__).parent
-KICAD_CLI = Path(r"C:\Users\erod9\AppData\Local\Programs\KiCad\10.0\bin\kicad-cli.exe")
+
 PROJECT = "sensor-board"
 SCH, PCB = HERE / f"{PROJECT}.kicad_sch", HERE / f"{PROJECT}.kicad_pcb"
 FAB, REPORTS = HERE / "fab", HERE / "reports"
@@ -92,8 +94,8 @@ def gerbers():
 
 
 def through_hole(footprint):
-    """The pluggable terminal blocks and the Pi header; the JST lights connector is surface-mount."""
-    return footprint.split(":")[0].startswith(("Connector_Phoenix", "Connector_PinSocket"))
+    """The pluggable terminal blocks, the Pi header and the lights RJ45."""
+    return footprint.split(":")[0].startswith(("Connector_Phoenix", "Connector_PinSocket", "Connector_RJ"))
 
 
 def package(footprint):
@@ -143,7 +145,8 @@ MANUFACTURERS = [("CL21", "Samsung Electro-Mechanics"), ("CL31", "Samsung Electr
                  ("NUP2105", "onsemi"), ("ADS1115", "Texas Instruments"), ("ISO1044", "Texas Instruments"),
                  ("UA78L", "Texas Instruments"), ("EL817", "Everlight"), ("MCP2518", "Microchip"), ("ASE-", "Abracon"),
                  ("Phoenix Contact", "Phoenix Contact"), ("2x20", "Adafruit (1979) or equivalent"), ("SM08B", "JST"),
-                 ("LM74700", "Texas Instruments"), ("IRLML0030", "Infineon")]
+                 ("LM74700", "Texas Instruments"), ("IRLML0030", "Infineon"), ("CL05", "Samsung Electro-Mechanics"),
+                 ("PCA9615", "NXP"), ("Amphenol", "Amphenol")]
 
 
 def manufacturer(mpn):
@@ -165,7 +168,7 @@ def pcbway_files():
     for (value, fp, mpn), parts in groups.items():
         parts.sort(key=lambda p: (re.sub(r"\d", "", p.ref), int(re.sub(r"\D", "", p.ref))))
         tht = through_hole(fp)
-        part_no = mpn.split(" (")[0].replace("Phoenix Contact ", "").split(";")[0]
+        part_no = mpn.split(" (")[0].replace("Phoenix Contact ", "").replace("Amphenol ", "").split(";")[0]
         notes = []
         if tht:
             notes.append("through-hole")

@@ -11,8 +11,8 @@ fuel 0, trim 1, battery 2, gauge supply 3 on the first ADS1115, oil 4 and temp 5
 from dataclasses import dataclass, field
 
 TITLE = "Boat MFD sensor board"
-REVISION = "1.2"
-DATE = "2026-09-23"
+REVISION = "1.3"
+DATE = "2026-09-24"
 
 # ---------------------------------------------------------------- the input channels
 # (name, helm-connector pin, ADC, ADC pin, top resistor). ADS1115 pins: AIN0=4, AIN1=5, AIN2=6, AIN3=7.
@@ -42,18 +42,17 @@ PI_PINS = {1: "+3V3", 17: "+3V3", 3: "SDA", 5: "SCL",
            23: "SPI_SCLK",    # GPIO11
            24: "SPI_CE0",     # GPIO8
            22: "CAN_INT",     # GPIO25
-           # LIGHTS (J6): out to a separate LED board. Its PWM channels (PCA9685s, as many as needed)
-           # are on an I2C bus of their own, so a fault out there can't stall the converters' bus and
-           # with it the engine data. A kernel-driven one (i2c-gpio) on two inner-row pins beside J6's
-           # corner of the header -- no hardware I2C pair is free there -- which also honours clock
-           # stretching, as the Pi's hardware I2C does not:
+           # LIGHTS (J6): the link to the LED board (LED_BOARD.md). Everything on that board -- its
+           # PCA9685, its current monitor, and the RP2040 that runs its addressable strips -- is on
+           # one I2C bus of its own, so a fault out there can't stall the converters' bus and with
+           # it the engine data. A kernel-driven one (i2c-gpio) on two inner-row pins, which also
+           # honours clock stretching (the RP2040 stretches), as the Pi's hardware I2C does not:
            #   dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6   (BOAT_LED_I2C_BUS=7)
+           # U8 carries it down the RJ45's patch cable as differential I2C. (Rev 1.2 also gave the
+           # LED board GPIO 18, 19 and 21 for addressable data; the LED board's RP2040 makes that
+           # data itself now, and those pins are free.)
            29: "LIGHT_SDA",   # GPIO5
            31: "LIGHT_SCL",   # GPIO6
-           # ...and the addressable strips' data lines, and one spare.
-           12: "LIGHT_DAT1",  # GPIO18: PWM0, rpi_ws281x's usual pin  (BOAT_LED_GPIO=18)
-           35: "LIGHT_DAT2",  # GPIO19: PWM1, a second addressable strip
-           40: "LIGHT_AUX",   # GPIO21: spare (PCM out, an enable, a button...)
            6: "GND", 9: "GND", 14: "GND", 20: "GND", 25: "GND", 30: "GND", 34: "GND", 39: "GND"}
 
 # The ignition side of the tach input. Kept 3 mm from everything else (board.py, and the
@@ -90,12 +89,13 @@ C0805, C1206 = "sensor-board:C_0805_2012Metric_NoSilk", "sensor-board:C_1206_321
 
 def yageo(value, size):
     code = {"49.9k": "49K9L", "47k": "47KL", "10k": "10KL", "1k": "1KL", "3.3k": "3K3L", "4.7k": "4K7L", "100": "100RL",
-            "120": "120RL"}[value]
+            "120": "120RL", "620": "620RL"}[value]
     return f"RC{size}FR-07{code}"
 
 
 def resistor(ref, value, a, b, size="0805", **kw):
-    return Part(ref, "Device:R", value, R1206 if size == "1206" else R0805, {"1": a, "2": b},
+    fp = {"1206": R1206, "0402": "sensor-board:R_0402_1005Metric_NoSilk"}.get(size, R0805)
+    return Part(ref, "Device:R", value, fp, {"1": a, "2": b},
                 mpn=yageo(value, size), **kw)
 
 
@@ -103,6 +103,9 @@ def capacitor(ref, value, a, b, size="0805", **kw):
     if size == "1206":   # C16 sees the NMEA 2000 network's 12 V: 50 V; C21 is the 5 V bulk, 25 V (less DC-bias loss)
         return Part(ref, "Device:C", value, C1206, {"1": a, "2": b},
                     mpn={"1u": "CL31B105KBHNNNE", "22u": "CL31A226KAHNNNE"}[value], **kw)
+    if size == "0402":   # the LED link's, on the RJ45's tab
+        return Part(ref, "Device:C", value, "sensor-board:C_0402_1005Metric_NoSilk", {"1": a, "2": b},
+                    mpn={"100n": "CL05B104KO5NNNC"}[value], **kw)
     mpn = {"100n": "CL21B104KBCNNNC", "1u": "CL21B105KAFNNNE", "10n": "CL21B103KBANNNC",
            "4.7u": "CL21A475KAQNNNE"}[value]
     return Part(ref, "Device:C", value, C0805, {"1": a, "2": b}, mpn=mpn, **kw)
@@ -168,8 +171,8 @@ def build_parts():
 
     # ---------------- the LED board's I2C bus: pull-ups, so it idles high with nothing plugged in ----------------
     parts += [
-        resistor("R24", "4.7k", "LIGHT_SDA", "+3V3", sch=(299.72, 243.84), note="J6 I2C pull-up (SDA, GPIO5)"),
-        resistor("R25", "4.7k", "LIGHT_SCL", "+3V3", sch=(312.42, 243.84), note="J6 I2C pull-up (SCL, GPIO6)"),
+        resistor("R24", "4.7k", "LIGHT_SDA", "+3V3", sch=(350.52, 246.38), note="LED board I2C pull-up (SDA, GPIO5)"),
+        resistor("R25", "4.7k", "LIGHT_SCL", "+3V3", sch=(360.68, 246.38), note="LED board I2C pull-up (SCL, GPIO6)"),
     ]
 
     # ---------------- NMEA 2000: an isolated CAN interface ----------------
@@ -267,15 +270,30 @@ def build_parts():
              "Connector_Phoenix_MC:PhoenixContact_MC_1,5_2-GF-3.81_1x02_P3.81mm_Horizontal_ThreadedFlange",
              {"1": "VIN", "2": "GND"}, mpn="Phoenix Contact 1827868 (MC 1,5/ 2-GF-3,81); plug 1827703 (MC 1,5/ 2-STF-3,81)",
              sch=(421.64, 78.74), note="from the 12 V -> 5 V converter (set 5.1-5.2 V, 3 A): 1 +5V, 2 GND"),
-        # Lights: everything a separate LED board needs from the Pi, and nothing it switches. The
-        # strips' 12 V and their current stay on that board; this cable carries logic only. A
-        # latching connector, since the board it plugs into is on a boat too.
-        Part("J6", "Connector_Generic:Conn_01x08", "LIGHTS",
-             "Connector_JST:JST_GH_SM08B-GHS-TB_1x08-1MP_P1.25mm_Horizontal",
-             {"1": "+3V3", "2": "LIGHT_SDA", "3": "LIGHT_SCL", "4": "GND", "5": "LIGHT_DAT1", "6": "LIGHT_DAT2",
-              "7": "GND", "8": "LIGHT_AUX"},
-             mpn="SM08B-GHS-TB(LF)(SN); plug GHR-08V-S (JST GH, 1.25 mm, latching)", sch=(271.78, 243.84),
-             note="to the LED board: 1 3V3 (logic only, under 50 mA), 2 SDA GPIO5, 3 SCL GPIO6 (own bus), 4 GND, 5 DAT1 GPIO18, 6 DAT2 GPIO19, 7 GND, 8 AUX GPIO21"),
+        # Lights: the link to the LED board, over an ordinary straight-through Cat5e/Cat6 patch
+        # cable. U8 turns the LED board's I2C bus into differential I2C on two of the cable's
+        # twisted pairs, and the LED board's PCA9615 turns it back: noise-proof over the boat's
+        # cable runs, and with no ground in the cable, the strips' current can't come back through
+        # it. Each pair is terminated at both ends: 620 ohm up, 120 across, 620 down (NXP's figures
+        # at 5 V, the same as the LED board's end). Pairs 4/5 and 7/8 are reserved.
+        Part("J6", "Connector:RJ45", "LIGHTS", "Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal",
+             {"1": "LINK_SCLM", "2": "LINK_SCLP", "3": "LINK_SDAP", "6": "LINK_SDAM"},
+             mpn="Amphenol 54602-908LF", sch=(271.78, 248.92),
+             note="to the LED board's J1: a straight-through Cat5e/Cat6 patch cable. NOT Ethernet: never plug "
+                  "either end into a network switch or a PoE injector"),
+        Part("U8", "Interface:PCA9615DP", "PCA9615DP", "Package_SO:TSSOP-10_3x3mm_P0.5mm",
+             {"1": "+3V3", "2": "LIGHT_SDA", "3": "+3V3", "4": "LIGHT_SCL", "5": "GND",
+              "6": "LINK_SCLM", "7": "LINK_SCLP", "8": "LINK_SDAP", "9": "LINK_SDAM", "10": "+5V"},
+             mpn="PCA9615DP,118", sch=(317.5, 251.46),
+             note="the LED board's I2C bus (GPIO5/6, 3.3 V) as differential I2C (5 V) on the RJ45"),
+        capacitor("C22", "100n", "+3V3", "GND", size="0402", sch=(441.96, 248.92), note="U8 decoupling, 3.3 V side"),
+        capacitor("C23", "100n", "+5V", "GND", size="0402", sch=(452.12, 248.92), note="U8 decoupling, cable side"),
+        resistor("R29", "620", "+5V", "LINK_SCLP", size="0402", sch=(381.00, 248.92), note="link SCL pair: bias (pull-up)"),
+        resistor("R30", "120", "LINK_SCLP", "LINK_SCLM", size="0402", sch=(391.16, 248.92), note="link SCL pair: termination"),
+        resistor("R31", "620", "LINK_SCLM", "GND", size="0402", sch=(401.32, 248.92), note="link SCL pair: bias (pull-down)"),
+        resistor("R32", "620", "+5V", "LINK_SDAP", size="0402", sch=(411.48, 248.92), note="link SDA pair: bias (pull-up)"),
+        resistor("R33", "120", "LINK_SDAP", "LINK_SDAM", size="0402", sch=(421.64, 248.92), note="link SDA pair: termination"),
+        resistor("R34", "620", "LINK_SDAM", "GND", size="0402", sch=(431.80, 248.92), note="link SDA pair: bias (pull-down)"),
     ]
     # H5 carries the part of the board that reaches past the Pi's edge.
     for i, ref in enumerate(("H1", "H2", "H3", "H4", "H5")):

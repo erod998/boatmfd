@@ -30,8 +30,8 @@
  * together. Everything starts off: the strips stay dark until the Pi sets them, and the Pi
  * repeats its settings every two seconds, so a restart here recovers on its own.
  *
- * Pins (hardware/led-board/design.py): GPIO0/1 I2C0 SDA/SCL (through the BSS138 level shift),
- * GPIO2-5 the four outputs' data (buffered to 5 V by U7-U10), GPIO6 the status LED (D8).
+ * Pins (hardware/led-board/design.py): GPIO0-3 the four outputs' data (J7-J10), GPIO4/5 I2C0
+ * SDA/SCL (through the BSS138 level shift) (buffered to 5 V by U7-U10), GPIO6 the status LED (D8).
  */
 #include <string.h>
 
@@ -51,14 +51,14 @@
 #define VERSION_MINOR 0
 
 #define I2C_ADDRESS 0x30
-#define PIN_SDA 0
-#define PIN_SCL 1
+#define PIN_SDA 4
+#define PIN_SCL 5
 #define PIN_STATUS 6
 #define OUTPUTS 4
 #define MAX_PIXELS 600
 #define BIT_RATE 800000
 
-static const uint PIXEL_PIN[OUTPUTS] = {2, 3, 4, 5};
+static const uint PIXEL_PIN[OUTPUTS] = {0, 1, 2, 3};
 
 enum {
     REG_ID = 0x00, REG_VERSION = 0x02, REG_STATUS = 0x04, REG_FRAME = 0x05, REG_LIMIT = 0x08,

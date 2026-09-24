@@ -36,8 +36,8 @@ ADDR_INA226 = 0x45       # A1 = A0 = VS
 ADDR_RP2040 = 0x30       # set in the RP2040's firmware
 
 # The RP2040's pins, by GPIO number (the firmware uses the same table).
-GPIO_SDA, GPIO_SCL = 0, 1                  # I2C0, as a target at ADDR_RP2040
-GPIO_PIXEL = {1: 2, 2: 3, 3: 4, 4: 5}      # pixel output n's data, through U7-U10 to J7-J10
+GPIO_SDA, GPIO_SCL = 4, 5                  # I2C0, as a target at ADDR_RP2040
+GPIO_PIXEL = {1: 0, 2: 1, 3: 2, 4: 3}      # pixel output n's data, through U7-U10 to J7-J10
 GPIO_STATUS = 6                            # the status LED, D8
 RP2040_GPIO_PIN = {g: str(g + 2) for g in range(8)}    # GPIO0-7 are QFN pins 2-9
 

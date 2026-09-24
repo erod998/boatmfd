@@ -14,9 +14,10 @@ import pcbnew
 HERE = Path(__file__).parent
 LIB = "sensor-board"
 LIB_DIR = HERE / f"{LIB}.pretty"
-KICAD_FP = Path(r"C:\Users\erod9\AppData\Local\Programs\KiCad\10.0\share\kicad\footprints")
+from kicadpaths import FOOTPRINTS as KICAD_FP
 
-SOURCES = [("Resistor_SMD", "R_0805_2012Metric"), ("Resistor_SMD", "R_1206_3216Metric"),
+SOURCES = [("Resistor_SMD", "R_0402_1005Metric"), ("Resistor_SMD", "R_0805_2012Metric"),
+           ("Resistor_SMD", "R_1206_3216Metric"), ("Capacitor_SMD", "C_0402_1005Metric"),
            ("Capacitor_SMD", "C_0805_2012Metric"), ("Capacitor_SMD", "C_1206_3216Metric"),
            ("Package_TO_SOT_SMD", "SOT-23")]
 

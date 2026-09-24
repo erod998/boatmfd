@@ -130,7 +130,7 @@ class Router:
         return maps
 
     # ---------------------------------------------------------------- search
-    MAX_EXPANDED = 2_000_000
+    MAX_EXPANDED = 6_000_000
 
     def search(self, net, sources, goal, heur_xy, via_ok=True, allow_layers=(TOP, BOTTOM)):
         """A* from any source cell to any goal cell. sources: list of (i, j, layer).

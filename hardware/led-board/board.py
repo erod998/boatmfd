@@ -44,13 +44,13 @@ HERE = Path(__file__).parent
 PROJECT = "led-board"
 OX, OY = 50.0, 50.0                  # where the board sits on KiCad's page
 W, H = 178.0, 94.0
-TRACK, VIA_D, VIA_DRILL = 0.2, 0.7, 0.3
+TRACK, VIA_D, VIA_DRILL = 0.2, 0.6, 0.3
 CLEAR = 0.15                         # everything else: the RP2040's and USB-C's pins are 0.4-0.5 mm apart
 POWER = set(design.POWER_NETS)
 # Track widths for the strips' current (IPC-2221, 2 oz outer copper, 20 C rise): 6 mm carries
 # about 20 A, 3 mm a 10 A output, 1.5 mm a colour's 3 A. The 12 V bus and the input also have
 # pours under their tracks.
-WIDE = {"VIN": 6.0, "+12V": 4.0, "+5V": 0.4, "+3V3": 0.4}
+WIDE = {"VIN": 4.0, "+12V": 4.0, "+5V": 0.4}   # (+3V3 is only ~50 mA, and reaches 0.4 mm-pitch pins)
 WIDE.update({f"Z{z}_12V": 3.0 for z in range(1, design.ZONES + 1)})
 WIDE.update({f"P{n}_12V": 3.0 for n in range(1, design.PIXELS + 1)})
 WIDE.update({f"Z{z}_{c}": 1.5 for z in range(1, design.ZONES + 1) for c in design.COLOURS})
@@ -104,22 +104,22 @@ PLACE.update({
     "R34": (20.8, 42.2, 90), "R33": (23.0, 42.2, 90), "R35": (25.2, 42.2, 90),
     "R37": (20.8, 46.0, 90), "R36": (23.0, 46.0, 90), "R38": (25.2, 46.0, 90),
     "R39": (28.6, 33.6, 90), "R40": (30.8, 33.6, 90),
-    "Q17": (29.4, 41.2, 0), "Q18": (29.4, 45.6, 0), "R41": (27.6, 49.8, 90), "R42": (29.8, 49.8, 90),
+    "Q18": (26.3, 61.8, 90), "Q17": (29.8, 61.8, 90), "R42": (26.3, 65.6, 90), "R41": (29.8, 65.6, 90),
     # The RP2040, turned so its GPIO0-6 face right (the I2C up to the level shift, the pixel data
     # down to its channel), its USB and flash pins down, its crystal up.
     "U2": (17.0, 62.0, 180),
-    "Y1": (19.4, 54.4, 0), "R48": (16.6, 55.6, 90), "C21": (15.2, 53.6, 90), "C22": (22.6, 53.4, 90),
-    "C25": (13.6, 57.0, 0), "C31": (13.6, 55.8, 0),
-    "C24": (22.8, 60.2, 90), "C23": (22.6, 65.8, 0),
-    "C26": (11.4, 61.0, 90), "C27": (11.4, 64.6, 90), "C29": (13.6, 67.6, 90), "C30": (12.4, 67.6, 90),
-    "C28": (15.0, 69.4, 0), "C32": (17.4, 70.4, 90),
-    "U3": (21.0, 72.2, 90), "C20": (17.4, 72.6, 90),
-    "J11": (4.3, 72.0, -90), "R51": (11.4, 71.4, 0), "R52": (11.4, 72.6, 0),
-    "R53": (11.6, 75.0, 0), "R54": (11.6, 77.0, 0),
-    "R49": (10.8, 57.4, 90), "R50": (21.0, 78.6, 0),
-    "SW1": (5.2, 81.4, 0), "SW2": (11.8, 81.4, 0),
-    "R55": (18.4, 82.0, 0), "D8": (18.4, 84.2, 0),
-    "U11": (25.6, 57.4, 0), "C33": (29.2, 57.4, 90), "C34": (25.6, 53.8, 0),
+    "Y1": (19.4, 52.8, 180), "R48": (17.0, 55.6, 90), "C21": (22.6, 51.8, 90), "C22": (15.6, 53.0, 90),
+    "C25": (13.4, 55.8, 0), "C31": (13.4, 54.4, 0),
+    "C24": (24.0, 60.0, 90), "C23": (23.8, 67.0, 0),
+    "C26": (10.2, 61.0, 90), "C27": (10.2, 64.6, 90), "C29": (13.4, 69.0, 90), "C30": (12.2, 69.0, 90),
+    "C28": (15.0, 70.8, 0), "C32": (25.6, 70.4, 90),
+    "U3": (21.6, 73.8, -90), "C20": (25.6, 77.6, 90),
+    "J11": (4.3, 72.0, -90), "R52": (11.4, 72.8, 0), "R51": (11.4, 74.0, 0),
+    "R53": (11.6, 76.2, 0), "R54": (11.6, 78.2, 0),
+    "R49": (10.8, 57.4, 90), "R50": (21.6, 80.2, 0),
+    "SW1": (5.2, 82.2, 0), "SW2": (11.8, 82.2, 0),
+    "R55": (29.8, 52.4, 90), "D8": (29.8, 49.0, 90),
+    "U11": (26.4, 56.6, 0), "C33": (29.8, 56.6, 90), "C34": (26.4, 53.0, 0),
     # PWM, in the middle just above the bus: LED0-7 down its left side go to zones 1 and 2,
     # LED8-15 up its right side to zones 3 and 4.
     "U5": (91.0, 36.2, 0), "C5": (96.4, 31.2, 90), "C6": (98.6, 31.2, 90),
@@ -156,16 +156,19 @@ ORDER = (["VIN", "+12V"] + [f"Z{z}_12V" for z in range(1, design.ZONES + 1)] +
          ["ISENSE_P", "ISENSE_N", "V12_LOGIC", "SW5", "BST5", "PWR_LED"] +
          # The RP2040's supplies before its signals: its supply pins sit between signal pins, and
          # need their way out first.
-         ["+1V1", "+3V3", "XIN", "XOUT", "XTAL_O", "USB_DP", "USB_DM", "USB_D+", "USB_D-", "USB_CC1", "USB_CC2",
+         ["USB_D+", "USB_D-", "+3V3", "+1V1", "USB_DM", "USB_DP", "XIN", "XOUT", "XTAL_O", "USB_CC1", "USB_CC2",
           "QSPI_SS", "QSPI_SCLK", "QSPI_SD0", "QSPI_SD1", "QSPI_SD2", "QSPI_SD3", "RUN", "BOOTSEL",
           "STATUS", "STATUS_LED", "MCU_SDA", "MCU_SCL"] +
-         design.LINK_NETS + ["SDA", "SCL"] +
+         # The SDA pair's pins (3, 6) are in the middle of the RJ45's rows, the SCL pair's (1, 2) at
+         # the end: SDA first, or SCL's tracks shut it in.
+         ["LINK_SDAP", "LINK_SDAM", "LINK_SCLP", "LINK_SCLM"] + ["SDA", "SCL"] +
          [f"G{ch}" for ch in range(16)] + [f"PWM{ch}" for ch in range(16)] +
          [f"PIX{n}_5V" for n in range(1, design.PIXELS + 1)] + [f"P{n}_DATA" for n in range(1, design.PIXELS + 1)] +
          [f"PIX{n}" for n in range(1, design.PIXELS + 1)] + ["+5V"])
 # The RP2040's supplies drop to the bottom layer at its pins: on top, a supply joining two pins
 # on one side would run across the signal pins between them and shut them in.
 PREFER_BOTTOM = {"+1V1", "+3V3"}
+ORDER_FANOUT = "USB_D+"           # the net before which the RP2040 is fanned out
 
 
 def pcb_net_name(name):
@@ -420,6 +423,72 @@ class Board:
             self.commit(net, path, width)
             tree_cells += path + list(goal_cells)
 
+    def fan_out(self, ref, inward_nets, short=0.4, via_ring=2.3):
+        """A straight stub from every connected pin of a quad package, before anything is routed
+        round it: outward for the signals, and inward for the supplies, whose vias go in the ring
+        between the pins and the exposed pad -- the bottom layer takes the supplies out under the
+        chip. With every pin's way claimed, no track can run along a row of pins and shut the ones
+        behind it in, and no supply via sits in a signal's way out."""
+        x, y, _ = PLACE[ref]
+        for (r, num), items in self.pad_items.items():
+            item = items[0]
+            if r != ref or item.net in (None, "GND") or len(item.layers) != 1:
+                continue
+            g = item.geo
+            dx, dy = g["x"] - x, g["y"] - y
+            if abs(dx) > abs(dy):
+                tip = x + via_ring * (1 if dx > 0 else -1) if item.net in inward_nets else \
+                    g["x"] + (g["hw"] + short) * (1 if dx > 0 else -1)
+                end = (round(tip, 2), g["y"])
+            else:
+                tip = y + via_ring * (1 if dy > 0 else -1) if item.net in inward_nets else \
+                    g["y"] + (g["hh"] + short) * (1 if dy > 0 else -1)
+                end = (g["x"], round(tip, 2))
+            self.add_track(item.net, (g["x"], g["y"]), end, TOP, TRACK)
+
+    def via_out(self, ref, nets):
+        """A short stub and a via for each of this part's pads on these nets, before anything else
+        is routed round it. For the RP2040's supplies: their pins sit between signal pins, and
+        once the signals are out there's no room left beside them for a via."""
+        self.router.track = TRACK
+        done = []
+        for (r, num), items in self.pad_items.items():
+            item = items[0]
+            if r != ref or item.net not in nets or len(item.layers) != 1:
+                continue
+            g = item.geo
+            # Two pins side by side on one rail share a via: they join each other directly.
+            if any(n == item.net and abs(x - g["x"]) + abs(y - g["y"]) < 0.5 for n, x, y in done):
+                continue
+            done.append((item.net, g["x"], g["y"]))
+            via_maps = self.router.blocked(item.net, VIA_D / 2, own_smd=True)
+            hw, hh = g["hw"], g["hh"]
+            cx0, cy0, cx1, cy1 = self.courtyard(ref)
+            outside = [False]           # under the part first: the supplies' stubs point there
+
+            def ok(i, j, layer):
+                if layer != TOP or via_maps[TOP][i, j] or via_maps[BOTTOM][i, j]:
+                    return False
+                x, y = self.router.xy(i, j)
+                inside = cx0 < x < cx1 and cy0 < y < cy1
+                if inside == outside[0]:
+                    return False
+                dx, dy = max(abs(x - g["x"]) - hw, 0), max(abs(y - g["y"]) - hh, 0)
+                return (dx * dx + dy * dy) ** 0.5 >= VIA_D / 2 + 0.1
+            path = self.router.search(item.net, self.cells_of([item]), ok, (g["x"], g["y"]), via_ok=False,
+                                      allow_layers=(TOP,))
+            if path is None:            # no room under it: outside, then
+                outside[0] = True
+                path = self.router.search(item.net, self.cells_of([item]), ok, (g["x"], g["y"]), via_ok=False,
+                                          allow_layers=(TOP,))
+            if path is None:
+                self.failed.append((item.net + " via", (r, num)))
+                continue
+            if len(path) > 1:
+                self.commit(item.net, path, TRACK)
+            end = path[-1]
+            self.add_via(item.net, *self.router.xy(end[0], end[1]))
+
     def stitch_gnd(self, refs=None):
         """A via beside every surface-mount GND pad (of these parts, or all), into the bottom plane."""
         self.router.track = TRACK
@@ -474,6 +543,10 @@ class Board:
         if rest:
             print("  (not in ORDER, routed last:", ", ".join(rest) + ")")
         for net in ORDER + rest:
+            if net == ORDER_FANOUT:      # the RP2040's pins claim their way out, and its supplies their vias
+                self.fan_out("U2", {"+1V1", "+3V3"})
+                self.via_out("U2", {"+1V1"})
+                self.via_out("U2", {"+3V3"})
             self.route_net(net)
             print(f"  routed {net}", flush=True)
             if net == until:

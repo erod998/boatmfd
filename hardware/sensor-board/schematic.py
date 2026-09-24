@@ -15,7 +15,7 @@ from pathlib import Path
 import design
 from sexpr import dump, find, find_all, num, parse, q
 
-SYMBOL_DIR = Path(r"C:\Users\erod9\AppData\Local\Programs\KiCad\10.0\share\kicad\symbols")
+from kicadpaths import SYMBOLS as SYMBOL_DIR
 PROJECT = "sensor-board"
 STUB = 2.54
 _NS = uuid.UUID("6b1d6a0e-9d1c-4a5e-8e0b-5e2f0c9a7a11")
@@ -334,6 +334,7 @@ def build():
     others.update({ref: parts[ref].sch for ref in
                    ("J5", "D9", "D10", "C16", "U6", "C17", "C18", "D11", "R26", "JP1", "U5", "C15",
                     "U4", "Y1", "C12", "C13", "C14", "R27", "R28", "J6", "R24", "R25",
+                    "U8", "C22", "C23", "R29", "R30", "R31", "R32", "R33", "R34",
                     "J7", "U7", "Q1", "C19", "C20", "C21", "D12") if ref in parts})
     for ref, (x, y) in others.items():
         if ref.startswith("H"):
@@ -374,7 +375,7 @@ def build():
                        ("TACH: Delco EST (ignition side)", 20.32, 190.5),
                        ("CONVERTERS", 342.9, 45.72),
                        ("TACH OUTPUT", 167.64, 167.64), ("MOUNTING / POWER FLAGS", 330.2, 167.64),
-                       ("LIGHTS: to a separate LED board", 254.0, 228.6),
+                       ("LIGHTS: the RJ45 link to the LED board (differential I2C)", 254.0, 228.6),
                        ("5 V IN: from the 12 V -> 5 V converter, to the Pi's 5 V pins", 414.02, 55.88),
                        ("NMEA 2000: network side (isolated, powered by NET-S)", 20.32, 294.64),
                        ("NMEA 2000: Pi side", 213.36, 294.64)]:
@@ -397,11 +398,11 @@ def build():
         "Pi: dtparam=spi=on  dtoverlay=mcp251xfd,spi0-0,oscillator=40000000,interrupt=25  ->  can0 at 250 kbit/s;  BOAT_CAN=can0.",
         20.32, 381.0, size=1.5))
     sh.items.append(text(
-        "J6 carries logic only: the strips' 12 V and current stay on the LED board.\n"
-        "PWM strips: PCA9685s on the LED board's own I2C bus, GPIO5/6 (dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6).\n"
-        "Addressable strips: DAT1 = GPIO18 (PWM0), DAT2 = GPIO19 (PWM1), 3.3 V: buffer to 5 V there.\n"
-        "AUX = GPIO21, spare. 3V3 for the LED board's logic, under 50 mA.",
-        254.0, 269.24, size=1.5))
+        "J6: a straight-through Cat5e/Cat6 patch cable to the LED board's J1 -- NOT Ethernet: never into a switch or PoE.\n"
+        "The LED board's own I2C bus, GPIO5/6 (dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6), as differential I2C:\n"
+        "pairs 1/2 SCL, 3/6 SDA, each 620/120/620 at both ends; 4/5 and 7/8 reserved. No ground or power in the cable.\n"
+        "On it: the LED board's PCA9685 (0x40), INA226 (0x45) and RP2040 (0x30). BOAT_LED_DRIVER=ledboard, BOAT_LED_I2C_BUS=7.",
+        254.0, 274.32, size=1.5))
     sh.items.append(text(
         "J7 takes the converter's 5 V (set 5.1-5.2 V) and runs the Pi through header pins 2 and 4; this board's 3V3 comes from the Pi.\n"
         "U7 + Q1 are an ideal diode (~20 mV): J7 wired backwards is blocked, and the Pi's USB-C can't feed back into the converter.\n"
