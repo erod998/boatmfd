@@ -17,13 +17,22 @@ class Settings:
     gps_baud: int = int(os.environ.get("BOAT_GPS_BAUD", "9600"))
     led_pixel_count: int = int(os.environ.get("BOAT_LED_COUNT", "30"))
     led_gpio_pin: int = int(os.environ.get("BOAT_LED_GPIO", "18"))
-    led_driver: str = os.environ.get("BOAT_LED_DRIVER", "mock")  # mock | ws281x (addressable) | pwm (12 V RGB strip)
+    led_driver: str = os.environ.get("BOAT_LED_DRIVER", "mock")  # mock | ws281x (addressable) | pwm (12 V RGB strip) | ledboard
     pca9685_address: int = int(os.environ.get("BOAT_PCA9685_ADDR", "0x40"), 0)
     # The I2C bus the LED board's PCA9685s are on. The sensor board gives them one of their own on
     # GPIO5/6, apart from its converters: dtoverlay=i2c-gpio,bus=7,i2c_gpio_sda=5,i2c_gpio_scl=6 and
     # BOAT_LED_I2C_BUS=7. Without the board they share the main bus, BOAT_I2C_BUS.
     led_i2c_bus: int = int(os.environ.get("BOAT_LED_I2C_BUS", os.environ.get("BOAT_I2C_BUS", "1")))
     led_pwm_channels: str = os.environ.get("BOAT_LED_PWM_CHANNELS", "0,1,2")  # PCA9685 outputs for R,G,B
+    # The LED board (BOAT_LED_DRIVER=ledboard, LED_BOARD.md): each addressable output's pixel count
+    # (J7-J10), their byte order, and the budget it holds the whole board to. zone/pixel figures are
+    # a zone's full-white draw and one pixel's, for working out what a scene will draw before it's sent.
+    led_board_pixels: str = os.environ.get("BOAT_LED_PIXELS", "300,300,300,300")
+    led_board_order: str = os.environ.get("BOAT_LED_ORDER", "GRB")
+    led_board_max_amps: float = float(os.environ.get("BOAT_LED_MAX_AMPS", "20"))
+    led_board_zone_amps: float = float(os.environ.get("BOAT_LED_ZONE_AMPS", "8"))
+    led_board_pixel_ma: float = float(os.environ.get("BOAT_LED_PIXEL_MA", "25"))
+    led_board_white: bool = os.environ.get("BOAT_LED_WHITE", "true").lower() == "true"  # RGBW zones: light whites with W
     # sim | n2k (engine data from a NMEA 2000 converter such as the CX5003) | real (the Pi reads senders, tach and probes itself)
     sensors: str = os.environ.get("BOAT_SENSORS", "sim")
     battery_adc: bool = os.environ.get("BOAT_BATTERY_ADC", "false").lower() == "true"  # with n2k: measure the battery on an ADS1115

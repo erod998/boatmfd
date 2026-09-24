@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "led-board") (type "KiCad") (uri "${KIPRJMOD}/led-board.pretty") (options "") (descr "KiCad library footprints with their silkscreen moved to the fab layer"))
+)

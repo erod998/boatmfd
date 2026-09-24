@@ -1,0 +1,772 @@
+"""Lays out and routes led-board.kicad_pcb from design.py. Run with KiCad's bundled Python.
+
+    python board.py              under KiCad: writes led-board.kicad_pcb, .kicad_pro, .kicad_dru
+    python board.py --dry-run    anywhere with numpy (and matplotlib, for the picture): the same
+                                 placement and routing from the footprint files alone, checked
+                                 for unrouted nets and overlapping parts, drawn to a PNG
+
+The board, 178 x 94 mm, two layers, 2 oz copper:
+  * the four RGBW zone connectors along the top edge, each with its four MOSFETs right behind
+    its colour pins; the four addressable outputs along the bottom edge; the 12 V input on the
+    right edge, then its surge clamp, its shunt and the current monitor;
+  * a 12 V bus across the middle (a top-layer pour), with the eight fuses standing in two rows
+    along it -- the zones' above, the addressable outputs' below -- each straight in line with
+    its output's +12V pin;
+  * the PCA9685 in the middle, just above the bus, its outputs running out to the MOSFETs along
+    a channel under their gate resistors; the RP2040 and the link (RJ45, differential I2C) in
+    the left-hand column, the pixel data running out along a channel above the bottom outputs;
+  * the strips' current on tracks 1.5-6 mm wide on the top layer only (no vias in its path),
+    everything else on 0.2 mm tracks at 0.15 mm spacing; ground on both layers everywhere else,
+    a stitching via beside every surface-mount ground pad.
+Footprints link to their schematic symbols (same UUIDs as schematic.py), so KiCad's
+schematic-parity check can compare the two.
+"""
+import argparse
+import json
+import math
+import subprocess
+import sys
+from pathlib import Path
+
+import design
+import schematic
+import sexpr
+from kicadpaths import CLI, FOOTPRINTS, TEMPLATES
+from padgeom import Library, rotate
+from router import BOTTOM, TOP, Item, Router
+
+try:
+    import pcbnew
+except ImportError:          # the dry run needs none of it
+    pcbnew = None
+
+HERE = Path(__file__).parent
+PROJECT = "led-board"
+OX, OY = 50.0, 50.0                  # where the board sits on KiCad's page
+W, H = 178.0, 94.0
+TRACK, VIA_D, VIA_DRILL = 0.2, 0.7, 0.3
+CLEAR = 0.15                         # everything else: the RP2040's and USB-C's pins are 0.4-0.5 mm apart
+POWER = set(design.POWER_NETS)
+# Track widths for the strips' current (IPC-2221, 2 oz outer copper, 20 C rise): 6 mm carries
+# about 20 A, 3 mm a 10 A output, 1.5 mm a colour's 3 A. The 12 V bus and the input also have
+# pours under their tracks.
+WIDE = {"VIN": 6.0, "+12V": 4.0, "+5V": 0.4, "+3V3": 0.4}
+WIDE.update({f"Z{z}_12V": 3.0 for z in range(1, design.ZONES + 1)})
+WIDE.update({f"P{n}_12V": 3.0 for n in range(1, design.PIXELS + 1)})
+WIDE.update({f"Z{z}_{c}": 1.5 for z in range(1, design.ZONES + 1) for c in design.COLOURS})
+POWER_CLEAR = 0.3
+
+# ---------------------------------------------------------------- placement (board mm, degrees CCW)
+TOP_Y, BOT_Y = 10.5, 83.5            # the connectors' pin rows: their bodies reach the edge
+FET_Y = 17.0                         # the zones' MOSFETs, right behind their pins
+FUSE_Z_Y, FUSE_P_Y = 47.1, 55.3      # the fuses' +12V clips, either side of the bus
+ZONE_CELL, PIXEL_CELL = 36.6, 31.5   # a connector's width, flanges and all
+ZONE_PIN1 = {z: 7.0 + ZONE_CELL * z - 8.1 for z in range(1, design.ZONES + 1)}    # x of each +12V pin
+PIXEL_PIN1 = {n: 36.7 + PIXEL_CELL * (n - 1) for n in range(1, design.PIXELS + 1)}
+MIDDLE_HOLES = [(51.8, 51.2), (120.0, 51.2)]
+HOLES = [(3.5, 3.5), (W - 3.5, 3.5), (W - 3.5, H - 3.5), (3.5, H - 3.5)] + MIDDLE_HOLES
+
+
+def output_place():
+    """The outputs. A zone: its connector along the top edge (turned over, so pin 1, its +12V, is
+    at the right-hand end), a MOSFET behind each colour pin with its gate resistor and pull-down
+    side by side behind it, and its fuse below, in line with pin 1. An addressable output: its
+    connector along the bottom edge (pin 1 at the left-hand end), its fuse above, in line with
+    pin 1, and the data buffer, series resistor and clamp between them, beside the fuse's track."""
+    out = {}
+    for z in range(1, design.ZONES + 1):
+        a = ZONE_PIN1[z]
+        out[f"J{2 + z}"] = (a, TOP_Y, 180)
+        out[f"F{z}"] = (a - 0.5, FUSE_Z_Y, 90)           # the zone's clip up, toward the pin
+        for k, c in enumerate(design.COLOURS, start=1):
+            ch = design.channel(z, c)
+            x = a - 5.08 * k
+            out[f"Q{ch + 1}"] = (x, FET_Y, 90)               # drain (the tab) up, toward the pin
+            out[f"R{ch + 1}"] = (x + 0.975, FET_Y + 4.4, 90)  # gate resistor under the gate: G up, PWM down
+            out[f"R{ch + 17}"] = (x - 1.3, FET_Y + 4.4, -90)  # pull-down beside it: G up, GND down
+    for n in range(1, design.PIXELS + 1):
+        a = PIXEL_PIN1[n]
+        out[f"J{6 + n}"] = (a, BOT_Y, 0)
+        out[f"F{4 + n}"] = (a + 0.5, FUSE_P_Y, -90)       # the output's clip down, toward the pin
+        out[f"R{42 + n}"] = (a + 5.08, BOT_Y - 6.6, -90)  # over pin 2: PIXn_5V up, DATA down
+        out[f"D{2 + n}"] = (a + 8.6, BOT_Y - 5.6, 0)      # the clamp beside it
+        out[f"U{6 + n}"] = (a + 9.0, BOT_Y - 9.6, 180)    # the buffer, output toward the resistor
+        out[f"C{13 + n}"] = (a + 12.8, BOT_Y - 9.6, 90)
+    return out
+
+
+PLACE = output_place()
+PLACE.update({
+    # The link: the RJ45 on the left edge, its differential-I2C buffer and the pairs' terminations
+    # to its right, and the I2C level shift for the RP2040 below them.
+    "J1": (14.6, 33.0, -90),
+    "U1": (24.6, 37.6, 180), "C1": (24.6, 33.6, 90),
+    "R34": (20.8, 42.2, 90), "R33": (23.0, 42.2, 90), "R35": (25.2, 42.2, 90),
+    "R37": (20.8, 46.0, 90), "R36": (23.0, 46.0, 90), "R38": (25.2, 46.0, 90),
+    "R39": (28.6, 33.6, 90), "R40": (30.8, 33.6, 90),
+    "Q17": (29.4, 41.2, 0), "Q18": (29.4, 45.6, 0), "R41": (27.6, 49.8, 90), "R42": (29.8, 49.8, 90),
+    # The RP2040, turned so its GPIO0-6 face right (the I2C up to the level shift, the pixel data
+    # down to its channel), its USB and flash pins down, its crystal up.
+    "U2": (17.0, 62.0, 180),
+    "Y1": (19.4, 54.4, 0), "R48": (16.6, 55.6, 90), "C21": (15.2, 53.6, 90), "C22": (22.6, 53.4, 90),
+    "C25": (13.6, 57.0, 0), "C31": (13.6, 55.8, 0),
+    "C24": (22.8, 60.2, 90), "C23": (22.6, 65.8, 0),
+    "C26": (11.4, 61.0, 90), "C27": (11.4, 64.6, 90), "C29": (13.6, 67.6, 90), "C30": (12.4, 67.6, 90),
+    "C28": (15.0, 69.4, 0), "C32": (17.4, 70.4, 90),
+    "U3": (21.0, 72.2, 90), "C20": (17.4, 72.6, 90),
+    "J11": (4.3, 72.0, -90), "R51": (11.4, 71.4, 0), "R52": (11.4, 72.6, 0),
+    "R53": (11.6, 75.0, 0), "R54": (11.6, 77.0, 0),
+    "R49": (10.8, 57.4, 90), "R50": (21.0, 78.6, 0),
+    "SW1": (5.2, 81.4, 0), "SW2": (11.8, 81.4, 0),
+    "R55": (18.4, 82.0, 0), "D8": (18.4, 84.2, 0),
+    "U11": (25.6, 57.4, 0), "C33": (29.2, 57.4, 90), "C34": (25.6, 53.8, 0),
+    # PWM, in the middle just above the bus: LED0-7 down its left side go to zones 1 and 2,
+    # LED8-15 up its right side to zones 3 and 4.
+    "U5": (91.0, 36.2, 0), "C5": (96.4, 31.2, 90), "C6": (98.6, 31.2, 90),
+    # 12 V in on the right edge, its surge clamp below it, the shunt and the current monitor
+    # between it and the bus.
+    "J2": (W - 8.73, 56.0, 90), "D1": (171.4, 67.8, -90),
+    "R47": (156.0, 56.0, 180), "U4": (156.0, 49.4, 0), "C18": (160.4, 49.4, 90),
+    # Bulk capacitance along the bus, between the fuses.
+    "C7": (82.8, 51.2, 0), "C8": (45.0, 51.2, 90), "C9": (138.4, 51.2, 90),
+    # The logic's 5 V, below the input: D2 off the bus, the buck and its parts.
+    "D2": (156.2, 66.4, 180), "C10": (158.4, 72.6, 90), "C11": (161.2, 72.6, 90), "U6": (163.0, 76.6, 0),
+    "C12": (166.2, 73.8, 0), "L1": (169.4, 79.6, -90), "C13": (164.4, 84.6, 0), "C19": (169.8, 84.8, 0),
+    "R56": (160.0, 88.6, 90), "D7": (162.2, 88.6, 90),
+})
+for k, (hx, hy) in enumerate(HOLES, start=1):
+    PLACE[f"H{k}"] = (hx, hy, 0)
+
+# The +12V bus: a top-layer pour across the middle, under the fuses' +12V clips, out to the
+# shunt. The input's own pour, from J2 to the shunt.
+BUS = [(31.4, 41.6), (151.0, 41.6), (151.0, 53.6), (155.4, 53.6), (155.4, 58.2), (151.0, 58.2),
+       (151.0, 61.0), (31.4, 61.0)]
+VIN_POUR = [(157.6, 52.4), (W - 1.0, 52.4), (W - 1.0, 67.6), (167.0, 67.6), (167.0, 60.2), (157.6, 60.2)]
+
+# What each connector pin is for, printed beside the pin. Pin order.
+PIN_LABELS = {f"J{2 + z}": ["+12V", "R", "G", "B", "W"] for z in range(1, design.ZONES + 1)}
+PIN_LABELS.update({f"J{6 + n}": ["+12V", "DATA", "BI", "GND"] for n in range(1, design.PIXELS + 1)})
+PIN_LABELS["J2"] = ["+12V", "GND"]
+
+# Routing order: the strips' current first (top layer, no vias), then the fine-pitch parts'
+# nets while there's room round them, then the rest, and the long tracks last.
+ZONE_NETS = [f"Z{z}_{c}" for z in range(1, design.ZONES + 1) for c in design.COLOURS]
+ORDER = (["VIN", "+12V"] + [f"Z{z}_12V" for z in range(1, design.ZONES + 1)] +
+         [f"P{n}_12V" for n in range(1, design.PIXELS + 1)] + ZONE_NETS +
+         ["ISENSE_P", "ISENSE_N", "V12_LOGIC", "SW5", "BST5", "PWR_LED"] +
+         # The RP2040's supplies before its signals: its supply pins sit between signal pins, and
+         # need their way out first.
+         ["+1V1", "+3V3", "XIN", "XOUT", "XTAL_O", "USB_DP", "USB_DM", "USB_D+", "USB_D-", "USB_CC1", "USB_CC2",
+          "QSPI_SS", "QSPI_SCLK", "QSPI_SD0", "QSPI_SD1", "QSPI_SD2", "QSPI_SD3", "RUN", "BOOTSEL",
+          "STATUS", "STATUS_LED", "MCU_SDA", "MCU_SCL"] +
+         design.LINK_NETS + ["SDA", "SCL"] +
+         [f"G{ch}" for ch in range(16)] + [f"PWM{ch}" for ch in range(16)] +
+         [f"PIX{n}_5V" for n in range(1, design.PIXELS + 1)] + [f"P{n}_DATA" for n in range(1, design.PIXELS + 1)] +
+         [f"PIX{n}" for n in range(1, design.PIXELS + 1)] + ["+5V"])
+# The RP2040's supplies drop to the bottom layer at its pins: on top, a supply joining two pins
+# on one side would run across the signal pins between them and shut them in.
+PREFER_BOTTOM = {"+1V1", "+3V3"}
+
+
+def pcb_net_name(name):
+    return name if name in ("GND", "+5V", "+12V") else "/" + name
+
+
+def clearance(a, b):
+    if a is not None and b is not None and a != b and (a in POWER or b in POWER):
+        return POWER_CLEAR
+    return CLEAR
+
+
+# ---------------------------------------------------------------- pad geometry
+LIB = Library(FOOTPRINTS, {PROJECT: HERE / f"{PROJECT}.pretty"})
+
+
+def geo_item(pad, net):
+    layers = ([TOP] if pad.top else []) + ([BOTTOM] if pad.bottom else [])
+    if pad.shape == "circle":
+        return Item(net, layers, "circle", x=pad.x, y=pad.y, r=pad.hw)
+    return Item(net, layers, "rect", x=pad.x, y=pad.y, hw=pad.hw, hh=pad.hh, corner=pad.corner)
+
+
+def pcbnew_item(pad, net):
+    """The router's picture of a pcbnew pad (as sensor-board/board.py)."""
+    pos = pad.GetPosition()
+    x, y = pcbnew.ToMM(pos.x) - OX, pcbnew.ToMM(pos.y) - OY
+    try:
+        size, shape = pad.GetSize(pcbnew.F_Cu), pad.GetShape(pcbnew.F_Cu)
+    except TypeError:
+        size, shape = pad.GetSize(), pad.GetShape()
+    sx, sy = pcbnew.ToMM(size.x), pcbnew.ToMM(size.y)
+    if round(pad.GetOrientationDegrees()) % 180 == 90:
+        sx, sy = sy, sx
+    layers = [l for l, cu in ((TOP, pcbnew.F_Cu), (BOTTOM, pcbnew.B_Cu)) if pad.IsOnLayer(cu)]
+    if shape == pcbnew.PAD_SHAPE_CUSTOM:
+        bb = pad.GetBoundingBox()
+        x0, y0 = pcbnew.ToMM(bb.GetX()) - OX, pcbnew.ToMM(bb.GetY()) - OY
+        w, h = pcbnew.ToMM(bb.GetWidth()), pcbnew.ToMM(bb.GetHeight())
+        return Item(net, layers, "rect", x=x0 + w / 2, y=y0 + h / 2, hw=w / 2, hh=h / 2, corner=0.0)
+    if shape == pcbnew.PAD_SHAPE_CIRCLE:
+        return Item(net, layers, "circle", x=x, y=y, r=sx / 2)
+    corner = 0.0
+    if shape == pcbnew.PAD_SHAPE_OVAL:
+        corner = min(sx, sy) / 2
+    elif shape == pcbnew.PAD_SHAPE_ROUNDRECT:
+        try:
+            corner = pcbnew.ToMM(pad.GetRoundRectCornerRadius(pcbnew.F_Cu))
+        except TypeError:
+            corner = pcbnew.ToMM(pad.GetRoundRectCornerRadius())
+    return Item(net, layers, "rect", x=x, y=y, hw=sx / 2, hh=sy / 2, corner=corner)
+
+
+def same_pad(a, b, tol=0.02):
+    """pcbnew's pad and padgeom's agree (the dry run is only worth anything if they do)."""
+    ga, gb = a.geo, b.geo
+    if a.kind != b.kind or a.layers != b.layers:
+        return False
+    keys = ("x", "y", "r") if a.kind == "circle" else ("x", "y", "hw", "hh")
+    return all(abs(ga[k] - gb[k]) <= tol for k in keys)
+
+
+# ---------------------------------------------------------------- the board
+class Board:
+    def __init__(self, dry_run=False):
+        self.dry = dry_run or pcbnew is None
+        self.router = Router(W, H, clearance, track=TRACK, via_d=VIA_D, margin=0.03)
+        self.pad_items = {}          # (ref, pad number) -> [Item] (a fuse clip has two pads per pin)
+        self.tree = {}
+        self.failed = []
+        self.stitched = set()
+        self.tracks, self.vias = [], []     # (net, a, b, layer, width), (net, x, y): what the dry run draws
+        if not self.dry:
+            self.board = pcbnew.BOARD()
+            self.board.SetCopperLayerCount(2)
+            self.nets = {}
+            self.fps = {}
+            self.unused = unused_pins()
+
+    # ---------------------------------------------------------------- setup
+    def net(self, name, raw=False):
+        if name not in self.nets:
+            ni = pcbnew.NETINFO_ITEM(self.board, name if raw else pcb_net_name(name))
+            self.board.Add(ni)
+            self.nets[name] = ni
+        return self.nets[name]
+
+    def place(self):
+        for part in design.PARTS:
+            x, y, rot = PLACE[part.ref]
+            geo = LIB.pads(part.footprint, x, y, rot)
+            if not self.dry:
+                self.place_pcbnew(part, x, y, rot, geo)
+            for pad in geo:
+                if pad.npth:
+                    self.router.holes.append((pad.x, pad.y, pad.hw + 0.25))
+                    continue
+                net = part.pins.get(pad.number)
+                self.pad_items.setdefault((part.ref, pad.number), []).append(geo_item(pad, net))
+        for items in self.pad_items.values():
+            self.router.items.extend(items)
+        for hx, hy in HOLES:
+            # The middle holes sit in the 12 V bus: a screw head's width of bare board round them.
+            self.router.holes.append((hx, hy, 3.5 if (hx, hy) in MIDDLE_HOLES else 3.2 / 2 + 0.5))
+        # Nothing runs under the edge connectors' bodies, between their pins and the edge: the
+        # strips' wires come in there.
+        edge_refs = ([f"J{2 + z}" for z in range(1, design.ZONES + 1)] + [f"J{6 + n}" for n in range(1, design.PIXELS + 1)] +
+                     ["J1", "J2", "J11"])
+        for ref in edge_refs:
+            x0, y0, x1, y1 = self.courtyard(ref)
+            pads = [it.geo for (r, _), its in self.pad_items.items() if r == ref for it in its]
+            if y0 < 1.0:
+                box = (x0, 0.0, x1, min(g["y"] - g.get("hh", g.get("r", 0)) for g in pads) - 0.1)
+            elif y1 > H - 1.0:
+                box = (x0, max(g["y"] + g.get("hh", g.get("r", 0)) for g in pads) + 0.1, x1, H)
+            elif x0 < 1.0:
+                box = (0.0, y0, min(g["x"] - g.get("hw", g.get("r", 0)) for g in pads) - 0.1, y1)
+            else:
+                box = (max(g["x"] + g.get("hw", g.get("r", 0)) for g in pads) + 0.1, y0, W, y1)
+            self.router.keepouts.append((*box, lambda n: False))
+        # The bus's pour is the 12 V's alone on the top layer: other nets cross it underneath.
+        # (Ground may put a stitching via in it, beside a capacitor's ground pad.)
+        bx = [x for x, _ in BUS]
+        by = [y for _, y in BUS]
+        self.router.keepouts.append((min(bx), min(by), 151.0, max(by), lambda n: n in ("+12V", "GND"), (TOP,)))
+
+    def place_pcbnew(self, part, x, y, rot, geo):
+        fp = load_fp(part.footprint)
+        fp.SetReference(part.ref)
+        fp.SetValue(part.value)
+        self.board.Add(fp)
+        fp.SetPosition(V(x, y))
+        fp.SetOrientationDegrees(rot)
+        fp.SetPath(pcbnew.KIID_PATH("/" + schematic.uid("sym", part.ref)))
+        for key, val in (("MPN", part.mpn), ("Note", part.note)):
+            fp.SetField(key, val)
+            fp.GetField(key).SetVisible(False)
+        fp.Reference().SetLayer(pcbnew.F_Fab)
+        mine = [geo_item(p, part.pins.get(p.number)) for p in geo if not p.npth]
+        for pad in fp.Pads():
+            num = pad.GetNumber()
+            netname = part.pins.get(num)
+            if netname:
+                pad.SetNet(self.net(netname))
+            elif (part.ref, num) in self.unused:
+                pad.SetNet(self.net(self.unused[(part.ref, num)], raw=True))
+            if pad.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+                continue
+            theirs = pcbnew_item(pad, netname)
+            if not any(same_pad(theirs, m) for m in mine):
+                sys.exit(f"{part.ref} pad {num}: padgeom and pcbnew disagree ({theirs.geo}) -- fix padgeom.py first")
+        self.fps[part.ref] = fp
+
+    def courtyard(self, ref):
+        """A part's courtyard as a board rectangle (x0, y0, x1, y1)."""
+        part = next(p for p in design.PARTS if p.ref == ref)
+        cy = LIB.courtyard(part.footprint)
+        x, y, rot = PLACE[ref]
+        pts = [rotate(px, py, rot) for px in (cy[0], cy[2]) for py in (cy[1], cy[3])]
+        return (x + min(p[0] for p in pts), y + min(p[1] for p in pts), x + max(p[0] for p in pts),
+                y + max(p[1] for p in pts))
+
+    def overlaps(self):
+        """Pairs of parts whose courtyard rectangles overlap (KiCad's DRC checks the real outlines)."""
+        refs = [p.ref for p in design.PARTS]
+        boxes = {r: self.courtyard(r) for r in refs}
+        out = []
+        for i, a in enumerate(refs):
+            for b in refs[i + 1:]:
+                A, B = boxes[a], boxes[b]
+                if A[0] < B[2] - 1e-6 and B[0] < A[2] - 1e-6 and A[1] < B[3] - 1e-6 and B[1] < A[3] - 1e-6:
+                    out.append((a, b))
+        return out
+
+    # ---------------------------------------------------------------- routing
+    def add_track(self, net, a, b, layer, width):
+        self.tracks.append((net, a, b, layer, width))
+        self.router.items.append(Item(net, [layer], "seg", x1=a[0], y1=a[1], x2=b[0], y2=b[1], w=width))
+        if not self.dry:
+            t = pcbnew.PCB_TRACK(self.board)
+            t.SetStart(V(*a))
+            t.SetEnd(V(*b))
+            t.SetWidth(mm(width))
+            t.SetLayer(pcbnew.F_Cu if layer == TOP else pcbnew.B_Cu)
+            t.SetNet(self.net(net))
+            self.board.Add(t)
+
+    def add_via(self, net, x, y):
+        self.vias.append((net, x, y))
+        self.router.items.append(Item(net, [TOP, BOTTOM], "circle", x=x, y=y, r=VIA_D / 2))
+        if not self.dry:
+            v = pcbnew.PCB_VIA(self.board)
+            v.SetPosition(V(x, y))
+            v.SetViaType(pcbnew.VIATYPE_THROUGH)
+            v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+            v.SetDrill(mm(VIA_DRILL))
+            try:
+                v.SetWidth(mm(VIA_D))
+            except TypeError:
+                v.SetWidth(pcbnew.F_Cu, mm(VIA_D))
+            v.SetNet(self.net(net))
+            self.board.Add(v)
+
+    def cells_of(self, items):
+        out = []
+        for item in items:
+            for layer in item.layers:
+                ii, jj = self.router.inside(item, layer).nonzero()
+                out += [(int(i), int(j), layer) for i, j in zip(ii, jj)]
+        return out
+
+    def commit(self, net, path, width):
+        segs, vias = self.router.to_geometry(path)
+        for a, b, layer in segs:
+            if a != b:
+                self.add_track(net, a, b, layer, width)
+        for x, y in vias:
+            self.add_via(net, x, y)
+        self.tree.setdefault(net, []).extend(path)
+
+    def route_net(self, net):
+        members = [m for m in design.nets()[net] if m in self.pad_items]
+        if len(members) < 2:
+            return
+        width = WIDE.get(net, TRACK)
+        power = net in POWER
+        self.router.track = width
+        self.router.layer_cost = (3, 1) if net in PREFER_BOTTOM else (1, 3)
+        tree_cells = list(self.cells_of(self.pad_items[members[0]]))
+        todo = list(members[1:])
+        while todo:
+            tx, ty = self.router.xy(sum(c[0] for c in tree_cells) / len(tree_cells),
+                                    sum(c[1] for c in tree_cells) / len(tree_cells))
+
+            def dist(m):
+                g = self.pad_items[m][0].geo
+                return (g["x"] - tx) ** 2 + (g["y"] - ty) ** 2
+            todo.sort(key=dist)
+            target = todo.pop(0)
+            goal_cells = set(self.cells_of(self.pad_items[target]))
+            if set(tree_cells) & goal_cells:
+                tree_cells += list(goal_cells)
+                continue
+            g = self.pad_items[target][0].geo
+            # The strips' current stays on the top layer: no via in its way.
+            path = self.router.search(net, tree_cells, lambda i, j, l: (i, j, l) in goal_cells, (g["x"], g["y"]),
+                                      via_ok=not power, allow_layers=(TOP,) if power else (TOP, BOTTOM))
+            if path is None:
+                self.failed.append((net, target))
+                print(f"    could not reach {target[0]}.{target[1]} on {net}", flush=True)
+                continue
+            self.commit(net, path, width)
+            tree_cells += path + list(goal_cells)
+
+    def stitch_gnd(self, refs=None):
+        """A via beside every surface-mount GND pad (of these parts, or all), into the bottom plane."""
+        self.router.track = TRACK
+        for (ref, num), items in self.pad_items.items():
+            item = items[0]
+            if item.net != "GND" or item.layers != {TOP} or (ref, num) in self.stitched:
+                continue
+            if any(len(it.layers) == 2 for it in items):
+                self.stitched.add((ref, num))    # a pad with its own vias (the RP2040's exposed pad)
+                continue
+            if refs is not None and ref not in refs:
+                continue
+            self.stitched.add((ref, num))
+            g = item.geo
+            hw, hh = (g["hw"], g["hh"]) if item.kind == "rect" else (g["r"], g["r"])
+            via_maps = self.router.blocked("GND", VIA_D / 2)
+
+            def ok(i, j, layer):
+                if layer != TOP or via_maps[TOP][i, j] or via_maps[BOTTOM][i, j]:
+                    return False
+                x, y = self.router.xy(i, j)
+                dx, dy = max(abs(x - g["x"]) - hw, 0), max(abs(y - g["y"]) - hh, 0)
+                return (dx * dx + dy * dy) ** 0.5 >= VIA_D / 2 + 0.1
+            path = self.router.search("GND", self.cells_of([item]), ok, (g["x"], g["y"]), via_ok=False,
+                                      allow_layers=(TOP,))
+            if path is None:
+                # No room for a via (a ground pin between others at 0.65 mm pitch): join it on
+                # top to a ground pad of the same part that has one.
+                others = [it for (r, n), its in self.pad_items.items() if r == ref and (r, n) in self.stitched
+                          and (r, n) != (ref, num) for it in its if it.net == "GND"]
+                goal = set(self.cells_of(others))
+                path = self.router.search("GND", self.cells_of([item]), lambda i, j, l: (i, j, l) in goal,
+                                          (g["x"], g["y"]), via_ok=False, allow_layers=(TOP,)) if goal else None
+                if path is None:
+                    self.failed.append(("GND via", (ref, num)))
+                else:
+                    self.commit("GND", path, TRACK)
+                continue
+            end = path[-1]
+            if len(path) > 1:
+                self.commit("GND", path, TRACK)
+            self.add_via("GND", *self.router.xy(end[0], end[1]))
+
+    def build(self, place_only=False, until=None):
+        if not self.dry:
+            self.titles()
+            self.outline()
+        self.place()
+        if place_only:
+            return self.failed
+        rest = sorted(n for n in design.nets() if n not in ORDER and n != "GND")
+        if rest:
+            print("  (not in ORDER, routed last:", ", ".join(rest) + ")")
+        for net in ORDER + rest:
+            self.route_net(net)
+            print(f"  routed {net}", flush=True)
+            if net == until:
+                return self.failed
+        self.stitch_gnd()
+        if not self.dry:
+            self.pours()
+            self.silk()
+        return self.failed
+
+    # ---------------------------------------------------------------- pcbnew only
+    def titles(self):
+        tb = pcbnew.TITLE_BLOCK()
+        tb.SetTitle(design.TITLE)
+        tb.SetRevision(design.REVISION)
+        tb.SetDate(design.DATE)
+        tb.SetComment(0, "Four RGBW zones and four addressable outputs, 20 A; RJ45 link to the sensor board")
+        tb.SetComment(1, "Generated from design.py by board.py; edit those, not this file")
+        self.board.SetTitleBlock(tb)
+        self.board.GetDesignSettings().SetAuxOrigin(V(0, H))
+
+    def outline(self, r=3.0):
+        """The board's edge: a rectangle with 3 mm rounded corners."""
+        corners = [(0.0, 0.0), (W, 0.0), (W, H), (0.0, H)]
+        ends = []
+        for k, (px, py) in enumerate(corners):
+            (ax, ay), (bx, by) = corners[k - 1], corners[(k + 1) % 4]
+            d1 = ((px - ax) / abs(px - ax + py - ay), (py - ay) / abs(px - ax + py - ay))
+            d2 = ((bx - px) / abs(bx - px + by - py), (by - py) / abs(bx - px + by - py))
+            a = (px - d1[0] * r, py - d1[1] * r)
+            b = (px + d2[0] * r, py + d2[1] * r)
+            cx, cy = a[0] + d2[0] * r, a[1] + d2[1] * r
+            m = (cx + (px - cx) / 2 ** 0.5, cy + (py - cy) / 2 ** 0.5)
+            s = pcbnew.PCB_SHAPE(self.board)
+            s.SetShape(pcbnew.SHAPE_T_ARC)
+            s.SetArcGeometry(V(*a), V(*m), V(*b))
+            s.SetLayer(pcbnew.Edge_Cuts)
+            s.SetWidth(mm(0.1))
+            self.board.Add(s)
+            ends.append((a, b))
+        for k in range(4):
+            s = pcbnew.PCB_SHAPE(self.board)
+            s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+            s.SetStart(V(*ends[k][1]))
+            s.SetEnd(V(*ends[(k + 1) % 4][0]))
+            s.SetLayer(pcbnew.Edge_Cuts)
+            s.SetWidth(mm(0.1))
+            self.board.Add(s)
+
+    def zone(self, net, layer, pts, priority=0, connection=None, spoke=0.5, clearance_mm=None):
+        z = pcbnew.ZONE(self.board)
+        z.SetLayer(layer)
+        z.SetNet(self.net(net))
+        ol = z.Outline()
+        ol.NewOutline()
+        for x, y in pts:
+            ol.Append(mm(x + OX), mm(y + OY))
+        z.SetMinThickness(mm(0.25))
+        z.SetThermalReliefGap(mm(0.4))
+        z.SetThermalReliefSpokeWidth(mm(spoke))
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL if connection is None else connection)
+        z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+        z.SetAssignedPriority(priority)
+        if clearance_mm is not None:
+            try:
+                z.SetLocalClearance(mm(clearance_mm))
+            except TypeError:
+                pass
+        self.board.Add(z)
+        return z
+
+    def pours(self):
+        inset = 0.3
+        whole = [(inset, inset), (W - inset, inset), (W - inset, H - inset), (inset, H - inset)]
+        # The 12 V bus on top, solidly joined to its pads (the fuse clips and J2 carry amps);
+        # ground everywhere else on top, and on the whole of the bottom. Surface-mount ground pads
+        # (the MOSFETs' sources) join the pour solidly too; through-hole ones through wide spokes,
+        # so they can still be soldered by hand.
+        self.zone("+12V", pcbnew.F_Cu, BUS, priority=1, connection=pcbnew.ZONE_CONNECTION_FULL, clearance_mm=POWER_CLEAR)
+        self.zone("VIN", pcbnew.F_Cu, VIN_POUR, priority=1, connection=pcbnew.ZONE_CONNECTION_FULL, clearance_mm=POWER_CLEAR)
+        for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+            self.zone("GND", layer, whole, priority=0, connection=pcbnew.ZONE_CONNECTION_THT_THERMAL, spoke=1.0,
+                      clearance_mm=0.3)
+        # The input's ground and the outputs' ground pins carry amps: solidly into the pour.
+        for ref, num in [("J2", "2")] + [(f"J{6 + n}", p) for n in range(1, design.PIXELS + 1) for p in ("3", "4")]:
+            for pad in self.fps[ref].Pads():
+                if pad.GetNumber() == num:
+                    pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+        # Bare board round the middle mounting holes, on both layers: they're in the 12 V bus.
+        for hx, hy in MIDDLE_HOLES:
+            ra = pcbnew.ZONE(self.board)
+            ra.SetIsRuleArea(True)
+            ra.SetDoNotAllowZoneFills(True)
+            ra.SetDoNotAllowTracks(True)
+            ra.SetDoNotAllowVias(True)
+            ra.SetLayerSet(pcbnew.LSET.AllCuMask())
+            ol = ra.Outline()
+            ol.NewOutline()
+            for k in range(16):
+                a = 2 * math.pi * k / 16
+                ol.Append(mm(hx + OX + 3.4 * math.cos(a)), mm(hy + OY + 3.4 * math.sin(a)))
+            self.board.Add(ra)
+        self.board.BuildConnectivity()
+        pcbnew.ZONE_FILLER(self.board).Fill(self.board.Zones())
+
+    def silk(self):
+        def text(s, x, y, size=1.0, rot=0, just=None):
+            t = pcbnew.PCB_TEXT(self.board)
+            t.SetText(s)
+            t.SetPosition(V(x, y))
+            t.SetLayer(pcbnew.F_SilkS)
+            t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size)))
+            t.SetTextThickness(mm(max(0.15, size * 0.15)))
+            t.SetTextAngleDegrees(rot)
+            if just == "left":
+                t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT)
+            elif just == "right":
+                t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_RIGHT)
+            self.board.Add(t)
+        # Every output pin labelled, on the board side of its connector.
+        for ref, names in PIN_LABELS.items():
+            pads = sorted((p for p in self.fps[ref].Pads() if p.GetNumber().isdigit()), key=lambda p: int(p.GetNumber()))
+            pts = [(pcbnew.ToMM(p.GetPosition().x) - OX, pcbnew.ToMM(p.GetPosition().y) - OY) for p in pads]
+            if abs(pts[0][0] - pts[-1][0]) < 0.1:            # a column on the right edge
+                for (px, py), name in zip(pts, names):
+                    text(name, px - 3.6, py, 0.8, just="right")
+            else:                                            # a row on the top or bottom edge
+                side = 1 if pts[0][1] < H / 2 else -1
+                for (px, py), name in zip(pts, names):
+                    text(name, px, py + side * 3.3, 0.8)
+        for z in range(1, design.ZONES + 1):
+            x, y, _ = PLACE[f"J{2 + z}"]
+            text(f"ZONE {z}", x + (-7.6 if z <= 2 else 7.6), y + (5.6 if z <= 2 else -5.6), 0.9)
+        text("J1 LINK: sensor board J6", 1.0, 18.2 - 1.6, 0.8, just="left")
+        text("patch cable - NOT ETHERNET", 1.0, 18.2 - 0.3, 0.8, just="left")
+        for z in range(1, design.ZONES + 1):
+            x, y, rot = PLACE[f"F{z}"]
+            text(f"F{z}", x + (1.7 if rot == 90 else -1.7), y + (-4.96 if rot == 90 else 4.96), 0.9)
+        text("F5", 88.0, 31.4, 0.9)
+        text("F6", 88.2, 83.1, 0.9)
+        lines = ["FUSES: mini blade (ATM), 7.5 A max,", "sized for each output's wire",
+                 "12V IN: own fuse, 10 A; heavy ground", "to the Pi supply's ground point",
+                 "ZONES: common-anode 12 V strips", "ADDR: 12 V addressable (WS2815)",
+                 "", f"{design.TITLE} r{design.REVISION}", "github.com/erod998/boatmfd"]
+        y = 42.0
+        for body in lines:
+            if body:
+                text(body, 52.0, y, 0.8, just="left")
+            y += 1.3 if body else 0.6
+
+    def save(self, path):
+        pcbnew.SaveBoard(str(path), self.board)
+
+    # ---------------------------------------------------------------- dry run
+    def preview(self, path, zoom=None):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
+        zw, zh = (zoom[2] - zoom[0], zoom[3] - zoom[1]) if zoom else (W, H)
+        fig, ax = plt.subplots(figsize=(14, 14 * zh / zw))
+        ax.add_patch(Rectangle((0, 0), W, H, fill=False, lw=1.5, ec="k"))
+        for poly in (BUS, VIN_POUR):
+            ax.add_patch(Polygon(poly, closed=True, fc=(1, 0.85, 0.6), ec="orange", lw=0.5, alpha=0.5))
+        for net, a, b, layer, w in self.tracks:
+            ax.plot([a[0], b[0]], [a[1], b[1]], color="tab:red" if layer == TOP else "tab:blue", lw=w * 7.2 * 0.8,
+                    solid_capstyle="round", alpha=0.75 if layer == TOP else 0.6)
+        for items in self.pad_items.values():
+            for it in items:
+                g = it.geo
+                col = "goldenrod" if len(it.layers) == 2 else "darkgoldenrod"
+                if it.kind == "circle":
+                    ax.add_patch(Circle((g["x"], g["y"]), g["r"], fc=col, ec="none"))
+                else:
+                    ax.add_patch(Rectangle((g["x"] - g["hw"], g["y"] - g["hh"]), 2 * g["hw"], 2 * g["hh"], fc=col,
+                                           ec="none"))
+        for net, x, y in self.vias:
+            ax.add_patch(Circle((x, y), VIA_D / 2, fc="gray", ec="k", lw=0.3))
+        for p in design.PARTS:
+            x0, y0, x1, y1 = self.courtyard(p.ref)
+            ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ec="purple", lw=0.4))
+            ax.text((x0 + x1) / 2, (y0 + y1) / 2, p.ref, fontsize=5 if zoom is None else 8, ha="center", va="center",
+                    color="purple", clip_on=True)
+        for hx, hy in HOLES:
+            ax.add_patch(Circle((hx, hy), 1.6, fc="white", ec="k"))
+        x0, y0, x1, y1 = zoom or (-2, -2, W + 2, H + 2)
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y1, y0)
+        ax.set_aspect("equal")
+        ax.set_title(f"{design.TITLE} r{design.REVISION} -- dry run (red: top, blue: bottom)")
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+
+
+def mm(v):
+    return pcbnew.FromMM(v)
+
+
+def V(x, y):
+    return pcbnew.VECTOR2I(mm(x + OX), mm(y + OY))
+
+
+def load_fp(fpid):
+    lib, name = fpid.split(":")
+    folder = HERE / f"{lib}.pretty" if lib == PROJECT else FOOTPRINTS / f"{lib}.pretty"
+    fp = pcbnew.FootprintLoad(str(folder), name)
+    if fp is None:
+        raise KeyError(fpid)
+    fp.SetFPID(pcbnew.LIB_ID(lib, name))
+    return fp
+
+
+def unquote(atom):
+    return atom[1:-1].replace('\\"', '"').replace("\\\\", "\\") if atom.startswith('"') else atom
+
+
+def unused_pins():
+    """(ref, pad) -> net name for every pin the schematic leaves unconnected, named as KiCad names
+    them ("unconnected-(U4-NC-Pad1)"), from the schematic's exported netlist."""
+    out = HERE / f"{PROJECT}.net"
+    subprocess.run([str(CLI), "sch", "export", "netlist", "-o", str(out), str(HERE / f"{PROJECT}.kicad_sch")],
+                   check=True, capture_output=True)
+    found = {}
+    tree = sexpr.parse(out.read_text(encoding="utf-8"))
+    for net in sexpr.find_all(sexpr.find(tree, "nets"), "net"):
+        name = unquote(sexpr.find(net, "name")[1])
+        if name.startswith("unconnected-("):
+            for node in sexpr.find_all(net, "node"):
+                found[(unquote(sexpr.find(node, "ref")[1]), unquote(sexpr.find(node, "pin")[1]))] = name
+    out.unlink()
+    return found
+
+
+def write_rules(path):
+    Path(path).write_text("""(version 1)
+
+# The strips' current: its nets keep 0.3 mm from everything else.
+(rule "strip power clearance"
+  (constraint clearance (min 0.3mm))
+  (condition "A.NetClass == 'POWER' && B.Net != A.Net"))
+""", encoding="utf-8")
+
+
+def write_project(path):
+    tpl = TEMPLATES / "RaspberryPi-HAT" / "RaspberryPi-HAT.kicad_pro"
+    pro = json.loads(tpl.read_text(encoding="utf-8"))
+    pro["meta"]["filename"] = Path(path).name
+    default = dict(pro["net_settings"]["classes"][0])
+    default.update({"name": "Default", "clearance": 0.2, "track_width": TRACK, "via_diameter": VIA_D, "via_drill": VIA_DRILL})
+    power = dict(default, name="POWER", clearance=POWER_CLEAR, track_width=1.5, priority=0)
+    pro["net_settings"]["classes"] = [default, power]
+    pro["net_settings"]["netclass_patterns"] = [{"netclass": "POWER", "pattern": pcb_net_name(n)} for n in design.POWER_NETS]
+    rules = pro["board"]["design_settings"]["rules"]
+    # PCBWay's standard 2-layer limits, as the sensor board (see sensor-board/board.py).
+    rules.update({"min_clearance": 0.15, "min_track_width": 0.15, "min_via_diameter": 0.6, "min_via_annular_width": 0.15,
+                  "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_to_hole": 0.41,
+                  "min_hole_clearance": 0.25, "min_text_height": 0.8, "min_text_thickness": 0.15})
+    pro["sheets"] = [[schematic.ROOT, "Root"]]
+    Path(path).write_text(json.dumps(pro, indent=2), encoding="utf-8")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true", help="place and route without KiCad, and draw a preview")
+    ap.add_argument("--place-only", action="store_true", help="with --dry-run: placement only, no routing")
+    ap.add_argument("--preview", default=str(HERE / "reports" / f"{PROJECT}-dry-run.png"))
+    ap.add_argument("--until", help="with --dry-run: stop after routing this net (to look at a problem)")
+    ap.add_argument("--zoom", help="x0,y0,x1,y1: draw only this part of the board (the preview's name gets -zoom)")
+    args = ap.parse_args()
+    b = Board(dry_run=args.dry_run or args.place_only)
+    failed = b.build(place_only=args.place_only, until=args.until)
+    clash = b.overlaps()
+    if b.dry:
+        Path(args.preview).parent.mkdir(parents=True, exist_ok=True)
+        b.preview(args.preview)
+        print("preview:", args.preview)
+        if args.zoom:
+            zp = args.preview.replace(".png", "-zoom.png")
+            b.preview(zp, tuple(float(v) for v in args.zoom.split(",")))
+            print("zoomed:", zp)
+        print(f"{len(b.tracks)} track segments, {len(b.vias)} vias")
+    else:
+        out = HERE / f"{PROJECT}.kicad_pcb"
+        b.save(out)
+        write_project(HERE / f"{PROJECT}.kicad_pro")
+        write_rules(HERE / f"{PROJECT}.kicad_dru")
+        print("wrote", out.name)
+    if clash:
+        print("OVERLAPPING COURTYARDS:", clash)
+    if failed:
+        print("UNROUTED:", failed)
+    if failed or clash:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

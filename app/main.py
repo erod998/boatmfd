@@ -33,7 +33,7 @@ from .celestial import moon_phase, sun_times
 from .chart_data import DETAIL_OFFSETS, ChartStore
 from .gps import make_gps_source
 from .guidance import GuidedPath
-from .lighting import COLOR_PRESETS, LightingController, PRESET_NAMES, Pca9685RgbDriver, WS281xDriver
+from .lighting import COLOR_PRESETS, LedBoardDriver, LightingController, PRESET_NAMES, Pca9685RgbDriver, WS281xDriver
 from .media import make_media_source
 from .n2k import make_n2k_node
 from .nav import relative_bearing
@@ -81,8 +81,15 @@ chart_store = ChartStore(CHARTS_DIR)
 
 def make_led_driver(settings):
     """Return (driver or None for the preview-only mock, pixel count)."""
-    pixels = 1 if settings.led_driver == "pwm" else settings.led_pixel_count  # a PWM strip is one color at a time
+    # A PWM strip is one color at a time; so is the LED board, whose addressable strips run their effects themselves.
+    pixels = 1 if settings.led_driver in ("pwm", "ledboard") else settings.led_pixel_count
     try:
+        if settings.led_driver == "ledboard":
+            return LedBoardDriver(bus_number=settings.led_i2c_bus, pca_address=settings.pca9685_address,
+                                  pixel_counts=[int(n) for n in settings.led_board_pixels.split(",")],
+                                  color_order=settings.led_board_order, max_amps=settings.led_board_max_amps,
+                                  zone_amps=settings.led_board_zone_amps, pixel_ma=settings.led_board_pixel_ma,
+                                  white=settings.led_board_white), pixels
         if settings.led_driver == "ws281x":
             return WS281xDriver(pixels, settings.led_gpio_pin), pixels
         if settings.led_driver == "pwm":

@@ -1,0 +1,20 @@
+; WS2812/WS2815 data at 800 kbit/s: each bit is 10 PIO cycles -- high for 3 then low for 7 (a 0),
+; or high for 6 then low for 4 (a 1). The same timing as Raspberry Pi's pico-examples/pio/ws2812.
+; 24 bits per pixel, most significant first, pulled automatically from the TX FIFO.
+
+.program ws2812
+.side_set 1
+
+.define public T1 3
+.define public T2 3
+.define public T3 4
+
+.wrap_target
+bitloop:
+    out x, 1       side 0 [T3 - 1] ; the line stays low while this waits for data
+    jmp !x do_zero side 1 [T1 - 1] ; every bit starts high
+do_one:
+    jmp  bitloop   side 1 [T2 - 1] ; a 1 stays high longer
+do_zero:
+    nop            side 0 [T2 - 1] ; a 0 goes low early
+.wrap

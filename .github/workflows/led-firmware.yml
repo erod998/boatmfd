@@ -1,0 +1,48 @@
+# Builds the LED board's RP2040 firmware (hardware/led-board/firmware) with Raspberry Pi's Pico SDK
+# and keeps the .uf2 as the run's artifact: download it from the run's page, hold BOOTSEL on the
+# board, press RESET, and copy it onto the drive that appears (LED_BOARD.md, "Firmware").
+name: LED board firmware
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "hardware/led-board/firmware/**"
+      - ".github/workflows/led-firmware.yml"
+  push:
+    branches: [main]
+    paths:
+      - "hardware/led-board/firmware/**"
+      - ".github/workflows/led-firmware.yml"
+
+permissions:
+  contents: read
+
+env:
+  PICO_SDK_REF: "2.1.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+
+      - name: Pico SDK
+        run: git clone --depth 1 --branch "$PICO_SDK_REF" https://github.com/raspberrypi/pico-sdk.git "$RUNNER_TEMP/pico-sdk"
+
+      - name: Build
+        run: |
+          export PICO_SDK_PATH="$RUNNER_TEMP/pico-sdk"
+          cmake -S hardware/led-board/firmware -B build
+          cmake --build build -j
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: led-board-firmware
+          path: build/led_board.uf2
