@@ -67,10 +67,13 @@ jobs:
       - name: Why it failed
         if: failure()
         run: |
-          # A run's logs need a GitHub login to read; its summary and annotations don't.
-          tail -n 150 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r' > "$RUNNER_TEMP/tail.txt"
-          { echo '```'; cat "$RUNNER_TEMP/tail.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          echo "::error title=Build log, last 150 lines::$(sed 's/%/%25/g' "$RUNNER_TEMP/tail.txt" | awk '{ printf "%s%%0A", $0 }')"
+          # A run's logs need a GitHub login to read; its annotations don't. Each is cut at about
+          # 4 KB, so the end of the log goes in pieces, oldest first.
+          tail -n 200 "$RUNNER_TEMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r' > "$RUNNER_TEMP/tail.txt"
+          (cd "$RUNNER_TEMP" && split -C 2500 -d -a 2 tail.txt part.)
+          for f in $(ls "$RUNNER_TEMP"/part.* | tail -n 8); do
+            echo "::error title=Build log ${f##*.}::$(sed 's/%/%25/g' "$f" | awk '{ printf "%s%%0A", $0 }')"
+          done
 
       - name: Find it
         id: out
