@@ -1,10 +1,11 @@
 #!/bin/bash
 # Opens the dashboard full screen on the Pi's own display: Chromium in kiosk mode.
 #
-#   From the desktop's autostart (see install-autostart.sh), or over SSH:
-#     ~/boatmfd/kiosk/start-kiosk.sh
-#   Close it with Alt+F4, or over SSH:
-#     ~/boatmfd/kiosk/start-kiosk.sh --stop
+#   Over SSH (or from a desktop's autostart):   ~/boatmfd/kiosk/start-kiosk.sh
+#   Close it:                                   ~/boatmfd/kiosk/start-kiosk.sh --stop
+#   The kiosk session (install-autostart.sh):   start-kiosk.sh --session
+#       keeps the dashboard up for as long as the session runs: closed (Alt+F4) or crashed, it's
+#       back a second later. --stop ends that too; start-kiosk.sh brings it back.
 #
 # It opens starting.html first, which says "Starting up" until the dashboard's server answers and
 # then switches to it, so at boot the screen never shows a "can't connect" page while the server
@@ -13,11 +14,18 @@ set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PROFILE="$HOME/.config/boatmfd-kiosk"      # its own profile: kept apart from normal browsing, and findable
 DASHBOARD_URL="${BOAT_KIOSK_URL:-http://127.0.0.1:8090/}"
+MODE="${1:-}"
 
-stop() { pkill -f -- "--user-data-dir=$PROFILE" 2>/dev/null; }
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+STOPPED="$XDG_RUNTIME_DIR/boatmfd-kiosk.stopped"   # --stop's note to the --session loop
+LOG="$XDG_RUNTIME_DIR/boatmfd-kiosk.log"
 
-if [ "${1:-}" = "--stop" ]; then
-    stop
+stop_browser() { pkill -f -- "--user-data-dir=$PROFILE" 2>/dev/null; }
+session_running() { pgrep -f -- "start-kiosk.sh --session" >/dev/null; }
+
+if [ "$MODE" = "--stop" ]; then
+    touch "$STOPPED"
+    stop_browser
     exit 0
 fi
 
@@ -28,7 +36,6 @@ BROWSER="$(command -v chromium || command -v chromium-browser)" || {
 
 # Over SSH there is no display in the environment: use the desktop session's (Wayland on current
 # Pi OS, X11 on older).
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
     sock="$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -E '^wayland-[0-9]+$' | head -n 1)"
     if [ -n "$sock" ]; then
@@ -45,27 +52,43 @@ else
     PLATFORM=x11
 fi
 
-# One kiosk at a time.
-stop
-sleep 0.5
+browser() {
+    # The power is cut with a switch, never a clean shutdown, so Chromium always thinks it
+    # crashed and offers to "restore pages". Tell it last time ended normally.
+    local prefs="$PROFILE/Default/Preferences"
+    if [ -f "$prefs" ]; then
+        sed -i -e 's/"exited_cleanly":false/"exited_cleanly":true/' -e 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$prefs"
+    fi
+    "$BROWSER" \
+        --user-data-dir="$PROFILE" \
+        --ozone-platform="$PLATFORM" \
+        --kiosk \
+        --noerrdialogs \
+        --disable-infobars \
+        --no-first-run \
+        --password-store=basic \
+        --check-for-update-interval=31536000 \
+        --disable-features=Translate \
+        --autoplay-policy=no-user-gesture-required \
+        "file://$DIR/starting.html#$DASHBOARD_URL" >"$LOG" 2>&1
+}
 
-# The power is cut with a switch, never a clean shutdown, so Chromium always thinks it crashed
-# and offers to "restore pages". Tell it last time ended normally.
-prefs="$PROFILE/Default/Preferences"
-if [ -f "$prefs" ]; then
-    sed -i -e 's/"exited_cleanly":false/"exited_cleanly":true/' -e 's/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$prefs"
+rm -f "$STOPPED"
+
+if [ "$MODE" = "--session" ]; then
+    while [ ! -e "$STOPPED" ]; do
+        browser
+        sleep 1
+    done
+    exit 0
 fi
 
-nohup "$BROWSER" \
-    --user-data-dir="$PROFILE" \
-    --ozone-platform="$PLATFORM" \
-    --kiosk \
-    --noerrdialogs \
-    --disable-infobars \
-    --no-first-run \
-    --password-store=basic \
-    --check-for-update-interval=31536000 \
-    --disable-features=Translate \
-    --autoplay-policy=no-user-gesture-required \
-    "file://$DIR/starting.html#$DASHBOARD_URL" >"$XDG_RUNTIME_DIR/boatmfd-kiosk.log" 2>&1 &
+# Run from SSH or a desktop's autostart. If the kiosk session is already keeping a browser up,
+# closing that one is a restart: the session opens it again.
+stop_browser
+if session_running; then
+    exit 0
+fi
+sleep 0.5
+browser &
 disown

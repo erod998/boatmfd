@@ -948,14 +948,19 @@ service -- one-time `chmod +x update.sh` first, or just `bash update.sh`).
 **Full screen on the Pi's own display** ([kiosk/](kiosk/)), from an SSH session on the Pi:
 
 - `kiosk/start-kiosk.sh` opens the dashboard in Chromium's kiosk mode on the display, now
-  (`--stop` closes it; so does Alt+F4). It finds the desktop session itself, so it works over
-  SSH, and first shows a "Starting up..." page that switches to the dashboard as soon as the
-  server answers.
-- `kiosk/install-autostart.sh`, once: the Pi boots straight into its desktop, logged in, and opens
-  the kiosk at every login (`--undo` to stop that).
+  (`--stop` closes it). It finds the desktop session itself, so it works over SSH, and first
+  shows a "Starting up..." page that switches to the dashboard as soon as the server answers.
+- `kiosk/install-autostart.sh`, once: the Pi logs straight in to a **kiosk session** -- no desktop
+  or taskbar, only the dashboard, which reopens itself if it's closed or crashes. `--desktop`
+  brings back the normal desktop (with the dashboard opened over it at login); `--undo`, neither.
 - `kiosk/quiet-boot.sh`, once, then `sudo reboot`: no rainbow square, logos or boot text -- a
   black screen that says "Starting up...", the same as the kiosk's first page, until the
   dashboard appears. Every boot file it touches is backed up first; `--undo` puts them back.
+- `kiosk/slim-down.sh`, once, then `sudo reboot`: turns off what a boat dashboard doesn't use --
+  cloud-init, waiting for WiFi at boot, remote desktop, automatic updates (an update cut short by
+  the power switch can leave the Pi unbootable), printing, Bluetooth, NFS. Disabled, not
+  uninstalled, and recorded: `--undo` turns back on exactly those. It saves boot time, not CPU:
+  measured, Chromium drawing the dashboard is nearly all of the Pi's CPU.
 
 ## Architecture
 
