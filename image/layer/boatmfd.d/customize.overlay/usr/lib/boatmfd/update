@@ -39,4 +39,4 @@ write boot.vfat boot
 write system.erofs system
 sync
 echo "Restarting into the new build, once. If it's good: sudo $0 --commit"
-systemctl reboot "0 tryboot"
+systemctl reboot --reboot-argument="0 tryboot"
