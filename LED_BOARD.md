@@ -18,13 +18,11 @@ Python, like the sensor board's; the RP2040's firmware in
 **Software:** `BOAT_LED_DRIVER=ledboard` ([app/lighting.py](app/lighting.py), `LedBoardDriver`;
 tested in [tests/test_led_board.py](tests/test_led_board.py)).
 
-> **Status: a design, not yet checked by KiCad.** The circuit, the schematic generator and the
-> layout are done, and the layout places and routes in board.py's dry run (which works from the
-> KiCad footprint files without KiCad itself). But KiCad's electrical rules check, design rules
-> check and schematic-parity check have not been run on it yet, so there are no KiCad files or
-> fabrication files here until `build.py` has been run under KiCad 10 and all three come back
-> clean. The firmware compiles; the driver is tested against a simulated board. Nothing has been
-> built.
+> **Status: a checked design, not a proven board.** KiCad's electrical rules check, design rules
+> check and schematic-parity check all come back clean, with nothing reported at any severity, and
+> the fabrication files are in [hardware/led-board/fab/](hardware/led-board/fab/) -- ordering notes in
+> [fab/pcbway/ORDER.md](hardware/led-board/fab/pcbway/ORDER.md) (2 oz copper). The firmware compiles;
+> the driver is tested against a simulated board. Nothing has been built yet.
 
 ---
 

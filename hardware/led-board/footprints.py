@@ -24,6 +24,13 @@ SOURCES = [("Resistor_SMD", "R_0402_1005Metric"), ("Resistor_SMD", "R_0805_2012M
            ("Package_TO_SOT_SMD", "SOT-23")]
 
 
+# The RP2040's package, its exposed pad's four vias drilled 0.3 mm with 0.6 mm pads: KiCad's are
+# 0.2 mm, under PCBWay's standard minimum. Moved in from 1.35 to 1.0 mm off the centre, so the
+# bigger pads stay inside the 3.2 mm exposed pad and take no more room underneath than it does.
+QFN = ("Package_DFN_QFN", "QFN-56-1EP_7x7mm_P0.4mm_EP3.2x3.2mm_ThermalVias")
+QFN_VIA_DRILL, QFN_VIA_PAD, QFN_VIA_AT = 0.3, 0.6, 1.0
+
+
 def build():
     # The KiCad format by name: guessing it from the path fails while the folder is still empty.
     io = pcbnew.PCB_IO_MGR.FindPlugin(pcbnew.PCB_IO_MGR.KICAD_SEXP)
@@ -38,6 +45,21 @@ def build():
                 g.SetLayer(pcbnew.F_Fab)
         fp.Reference().SetLayer(pcbnew.F_Fab)
         io.FootprintSave(str(LIB_DIR), fp)
+    fp = pcbnew.FootprintLoad(str(KICAD_FP / f"{QFN[0]}.pretty"), QFN[1])
+    fp.SetFPID(pcbnew.LIB_ID(LIB, QFN[1] + "_Drill0.3"))
+    fp.SetLibDescription(fp.GetLibDescription() + " -- exposed-pad vias drilled 0.3 mm")
+    for pad in fp.Pads():
+        if pad.GetAttribute() == pcbnew.PAD_ATTRIB_PTH:
+            pad.SetDrillSize(pcbnew.VECTOR2I(pcbnew.FromMM(QFN_VIA_DRILL), pcbnew.FromMM(QFN_VIA_DRILL)))
+            size = pcbnew.VECTOR2I(pcbnew.FromMM(QFN_VIA_PAD), pcbnew.FromMM(QFN_VIA_PAD))
+            try:
+                pad.SetSize(pcbnew.F_Cu, size)      # KiCad 9+: the padstack's all-layers size
+            except TypeError:
+                pad.SetSize(size)
+            at = pad.GetFPRelativePosition()
+            sx, sy = (1 if at.x > 0 else -1), (1 if at.y > 0 else -1)
+            pad.SetFPRelativePosition(pcbnew.VECTOR2I(sx * pcbnew.FromMM(QFN_VIA_AT), sy * pcbnew.FromMM(QFN_VIA_AT)))
+    io.FootprintSave(str(LIB_DIR), fp)
     (HERE / "fp-lib-table").write_text(
         '(fp_lib_table\n\t(version 7)\n'
         f'\t(lib (name "{LIB}") (type "KiCad") (uri "${{KIPRJMOD}}/{LIB}.pretty") (options "") '

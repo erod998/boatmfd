@@ -1,0 +1,54 @@
+Item #,*Designator,*Qty,Manufacturer,*Mfg Part #,Description / Value,*Package/Footprint,Type,Your Instructions / Notes
+1,"C1,C5,C11,C12,C14,C15,C16,C17,C18",9,Samsung Electro-Mechanics,CL21B104KBCNNNC,100n,0805,SMD,
+2,"C13,C19",2,Samsung Electro-Mechanics,CL31A226KAHNNNE,22u,1206,SMD,
+3,"C20,C23,C24,C25,C26,C27,C28,C31,C32",9,Samsung Electro-Mechanics,CL05B104KO5NNNC,100n,0402,SMD,
+4,"C21,C22",2,Samsung Electro-Mechanics,CL05C150JB5NNNC,15p,0402,SMD,
+5,"C29,C30",2,Samsung Electro-Mechanics,CL05A105KA5NQNC,1u,0402,SMD,
+6,C34,1,Samsung Electro-Mechanics,CL21A106KAYNNNE,10u,0805,SMD,
+7,"C6,C33",2,Samsung Electro-Mechanics,CL21B105KAFNNNE,1u,0805,SMD,
+8,C7,1,Panasonic,EEE-FK1V101P,100u 35V,CP,SMD,
+9,"C8,C9,C10",3,Samsung Electro-Mechanics,CL32B106KBJNNNE,10u,1210,SMD,
+10,D1,1,Littelfuse,SMCJ18A,SMCJ18A,SMC,SMD,
+11,D2,1,onsemi,SS14,SS14,SMA,SMD,
+12,"D3,D4,D5,D6",4,Nexperia,"BAT54S,215",BAT54S,SOT-23,SMD,
+13,D7,1,Lite-On,LTST-C171GKT,green,LED,SMD,
+14,D8,1,Lite-On,LTST-C171YKT,yellow,LED,SMD,
+15,J11,1,GCT,USB4105-GF-A,USB,USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal,SMD,"surface-mount, with through-hole shell pins"
+16,L1,1,Bourns,SRN6045TA-6R8M,6.8u,L,SMD,
+17,"Q1,Q2,Q3,Q4,Q5,Q6,Q7,Q8,Q9,Q10,Q11,Q12,Q13,Q14,Q15,Q16",16,Nexperia,BUK9M7R2-40EX,BUK9M7R2-40E,LFPAK33,SMD,
+18,"Q17,Q18",2,onsemi,BSS138,BSS138,SOT-23,SMD,
+19,"R1,R2,R3,R4,R5,R6,R7,R8,R9,R10,R11,R12,R13,R14,R15,R16",16,Yageo,RC0805FR-07100RL,100,0805,SMD,
+20,"R17,R18,R19,R20,R21,R22,R23,R24,R25,R26,R27,R28,R29,R30,R31,R32",16,Yageo,RC0805FR-0747KL,47k,0805,SMD,
+21,"R33,R35,R36,R38",4,Yageo,RC0805FR-07620RL,620,0805,SMD,
+22,"R34,R37",2,Yageo,RC0805FR-07120RL,120,0805,SMD,
+23,"R39,R40",2,Yageo,RC0805FR-074K7L,4.7k,0805,SMD,
+24,"R41,R42,R49",3,Yageo,RC0805FR-0710KL,10k,0805,SMD,
+25,"R43,R44,R45,R46",4,Yageo,RC1206FR-07330RL,330,1206,SMD,
+26,R47,1,Vishay Dale,WSK25121L000FEA,1m,2512 (4-terminal),SMD,four-terminal 1 mOhm shunt: pins 2 and 3 are the sense (Kelvin) terminals
+27,R48,1,Yageo,RC0402FR-071KL,1k,0402,SMD,
+28,"R50,R55",2,Yageo,RC0805FR-071KL,1k,0805,SMD,
+29,"R51,R52",2,Yageo,RC0402FR-0727RL,27,0402,SMD,
+30,"R53,R54",2,Yageo,RC0805FR-075K1L,5.1k,0805,SMD,
+31,R56,1,Yageo,RC0805FR-072K2L,2.2k,0805,SMD,
+32,SW1,1,C&K,KMR221GLFS,BOOTSEL,SW,SMD,
+33,SW2,1,C&K,KMR221GLFS,RESET,SW,SMD,
+34,U1,1,NXP,"PCA9615DP,118",PCA9615DP,TSSOP-10,SMD,
+35,U11,1,Diodes Incorporated,AP2112K-3.3TRG1,AP2112K-3.3,SOT-23-5,SMD,
+36,U2,1,Raspberry Pi,RP2040,RP2040,QFN-56-1EP,SMD,the flash (U3) is programmed over USB after assembly: no pre-programming
+37,U3,1,Winbond,W25Q16JVSSIQ,W25Q16JV,SOIC-8,SMD,
+38,U4,1,Texas Instruments,INA226AIDGSR,INA226,TSSOP-10,SMD,
+39,U5,1,NXP,"PCA9685PW,118",PCA9685PW,TSSOP-28,SMD,
+40,U6,1,Diodes Incorporated,AP63205WU-7,AP63205,TSOT-23-6,SMD,
+41,"U7,U8,U9,U10",4,Texas Instruments,SN74AHCT1G125DBVR,74AHCT1G125,SOT-23-5,SMD,
+42,Y1,1,Abracon,ABM8-272-T3,12MHz,3225-4Pin,SMD,"12 MHz, 3.2x2.5 mm, 10 pF load (Raspberry Pi's choice for the RP2040)"
+43,"F1,F2,F3,F4,F5,F6,F7,F8",8,Littelfuse,178.6165.0002,ATO,FuseHolder_Blade_ATO_Littelfuse_FLR_178.6165,THT,through-hole
+44,J1,1,Amphenol,54602-908LF,LINK,RJ45_Amphenol_54602-x08_Horizontal,THT,through-hole
+45,J10,1,Phoenix Contact,1776524,PIXEL 4,"PhoenixContact_MSTB_2,5_4-GF-5,08_1x04_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778001 is for the wiring, not the board"
+46,J2,1,METZ CONNECT,RT10N02HGLU,12V IN,TerminalBlock_MetzConnect_Type703_RT10N02HGLU_1x02_P9.52mm_Horizontal,THT,through-hole
+47,J3,1,Phoenix Contact,1776537,ZONE 1,"PhoenixContact_MSTB_2,5_5-GF-5,08_1x05_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778014 is for the wiring, not the board"
+48,J4,1,Phoenix Contact,1776537,ZONE 2,"PhoenixContact_MSTB_2,5_5-GF-5,08_1x05_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778014 is for the wiring, not the board"
+49,J5,1,Phoenix Contact,1776537,ZONE 3,"PhoenixContact_MSTB_2,5_5-GF-5,08_1x05_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778014 is for the wiring, not the board"
+50,J6,1,Phoenix Contact,1776537,ZONE 4,"PhoenixContact_MSTB_2,5_5-GF-5,08_1x05_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778014 is for the wiring, not the board"
+51,J7,1,Phoenix Contact,1776524,PIXEL 1,"PhoenixContact_MSTB_2,5_4-GF-5,08_1x04_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778001 is for the wiring, not the board"
+52,J8,1,Phoenix Contact,1776524,PIXEL 2,"PhoenixContact_MSTB_2,5_4-GF-5,08_1x04_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778001 is for the wiring, not the board"
+53,J9,1,Phoenix Contact,1776524,PIXEL 3,"PhoenixContact_MSTB_2,5_4-GF-5,08_1x04_P5.08mm_Horizontal_ThreadedFlange",THT,"through-hole; mating plug 1778001 is for the wiring, not the board"

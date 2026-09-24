@@ -190,7 +190,7 @@ def build_parts():
     for n, g in GPIO_PIXEL.items():
         mcu[RP2040_GPIO_PIN[g]] = f"PIX{n}"
     parts += [
-        Part("U2", "MCU_RaspberryPi:RP2040", "RP2040", "Package_DFN_QFN:QFN-56-1EP_7x7mm_P0.4mm_EP3.2x3.2mm_ThermalVias",
+        Part("U2", "MCU_RaspberryPi:RP2040", "RP2040", "led-board:QFN-56-1EP_7x7mm_P0.4mm_EP3.2x3.2mm_ThermalVias_Drill0.3",
              mcu, mpn="RP2040", note=f"runs the addressable outputs; I2C target at 0x{ADDR_RP2040:02X}"),
         Part("U3", "Memory_Flash:W25Q16JVSS", "W25Q16JV", "Package_SO:SOIC-8_5.3x5.3mm_P1.27mm",
              {"1": "QSPI_SS", "2": "QSPI_SD1", "3": "QSPI_SD2", "4": "GND", "5": "QSPI_SD0", "6": "QSPI_SCLK",

@@ -1,0 +1,12 @@
+(version 1)
+
+# The strips' current: its nets keep 0.3 mm from everything else.
+(rule "strip power clearance"
+  (constraint clearance (min 0.3mm))
+  (condition "A.NetClass == 'POWER' && B.Net != A.Net"))
+
+# Holes 0.25 mm from copper -- except the USB-C socket's locating pegs from its own ground pads:
+# 0.19 mm in GCT's land pattern for the USB4105, which is what the socket is made to fit.
+(rule "hole clearance"
+  (constraint hole_clearance (min 0.25mm))
+  (condition "A.Parent != 'J11' || B.Parent != 'J11'"))
