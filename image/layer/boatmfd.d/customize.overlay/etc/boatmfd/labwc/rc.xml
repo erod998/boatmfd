@@ -1,8 +1,9 @@
 <?xml version="1.0"?>
 <!-- labwc's settings for the boat MFD's display (boatmfd-kiosk.service): the defaults, and one
-     rule for a chart app of its own (BOAT_CHART_APP, kiosk/chart-app.py) -- GPS Nautical
-     Charts' Boating App, an X11 program whose windows are class boating-qt: no title bar, and
-     kept above the dashboard's full-screen window, over the dashboard's chart. -->
+     rule for a chart app of its own (BOAT_CHART_APP, kiosk/chart-app.py): GPS Nautical Charts'
+     Boating App, an X11 program whose windows are class boating-qt. No title bar, and kept above
+     the dashboard's full-screen window, over the dashboard's chart.
+     No double hyphen anywhere in a comment: XML forbids it, and labwc then ignores the file. -->
 <labwc_config>
   <windowRules>
     <windowRule identifier="boating-qt" serverDecoration="no" skipTaskbar="yes">

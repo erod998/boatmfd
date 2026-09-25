@@ -79,10 +79,10 @@ if it's out of stock, say so and wait rather than accept another part.
 | Qty | Part |
 | --- | --- |
 | 1 each | Phoenix Contact plugs: 1827761 (8-pos, J1), 1827732 (5-pos, J5) |
-| 2 | Phoenix Contact plug 1827703 (2-pos: J2 and J7) |
-| 1 | 12 V -> 5 V converter, 3 A or more, set to 5.1-5.2 V, with output overvoltage protection |
+| 1 | Phoenix Contact plug 1827703 (2-pos, J2). A second one for J7 only if a Pi without an SSD is powered through it |
+| 1 | 12 V -> 5 V **USB-C** converter for the Pi 5's own USB-C: **5 A**, 5.1-5.2 V, with output overvoltage protection, sealed, and a short USB-C cable rated 5 A. On the boat J7 stays unconnected (SENSOR_BOARD.md, "5 V in") |
 | 1 | NMEA 2000 drop cable with a female Micro-C end (cut the other end into J5's plug) |
-| 5 | M2.5 standoffs and screws |
+| 5 | M2.5 standoffs and screws, tall enough to stack over the Pi 5's M.2 SSD board |
 | 2 | inline fuse holder + 1 A fuse: the engine (J1.3) and house (J1.8) battery leads, one at each battery |
 | 1 | straight-through Cat5e/Cat6 patch cable, for J6 -- only once the LED board exists. **Never** plug J6 into a network switch or PoE injector |
 
