@@ -766,7 +766,7 @@ def make_sensor_sources(settings, data_dir, node=None):
         print("[sensors] BOAT_SENSORS=n2k needs the NMEA 2000 interface (set BOAT_CAN=can0 and bring it up); engine values will show no data")
 
     n2k = N2kEngineData(node, settings.n2k_engine_instance, settings.n2k_fuel_tank_instance, settings.n2k_temp_field) if node else None
-    env = N2kEnvData(node, settings.n2k_depth_instance) if node else None
+    env = N2kEnvData(node, settings.n2k_depth_source) if node else None
     hub = SensorHub(settings, cal, adc, tach, W1Probes(settings.w1_dir), n2k, env)
     hub.start()
     return RealEngineInfo(hub, settings.redline_rpm), RealBoatInfo(hub), hub

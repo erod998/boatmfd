@@ -13,6 +13,9 @@ from .nav import haversine_distance_nm
 from .storage import read_dict, write_json
 
 NM_TO_FT = 6076.12
+# Arriving is an event, not a condition that lasts: on its own it showed for one 1 Hz frame -- a
+# second of banner and beep. Held this long instead, as a boundary crossing is (main.py).
+ARRIVAL_HOLD_S = 8.0
 
 
 @dataclass
@@ -27,14 +30,18 @@ class NavAlarmSettings:
 
 
 class NavAlarmManager:
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(self, storage_path: Optional[Path] = None, clock=time.monotonic):
         self.storage_path = Path(storage_path) if storage_path else None
+        self._clock = clock
         self.settings = NavAlarmSettings()
-        self._load()
         self._arrived = False       # edge-detect "just arrived," so it fires once, not every tick
+        self._arrival = None        # (alert, shown until): the arrival being held on screen
         self._off_course = False
-        self._anchor_point = None   # {"lat", "lon"} or None: where the anchor was dropped
+        # {"lat", "lon"} or None: where the anchor was dropped. Saved with the settings, so a Pi
+        # that restarts at anchor overnight (a power blip) keeps watching rather than silently not.
+        self._anchor_point = None
         self._anchor_dragging = False
+        self._load()
 
     # ---------------- settings ----------------
     def _load(self):
@@ -58,10 +65,16 @@ class NavAlarmManager:
                 ok = value is None or isinstance(value, type(default))
             if key in saved and ok:
                 setattr(self.settings, key, value)
+        anchor = saved.get("anchor")
+        if (isinstance(anchor, dict)
+                and all(isinstance(anchor.get(k), (int, float)) and not isinstance(anchor.get(k), bool)
+                        and math.isfinite(anchor[k]) for k in ("lat", "lon"))
+                and -90 <= anchor["lat"] <= 90 and -180 <= anchor["lon"] <= 180):
+            self._anchor_point = {"lat": anchor["lat"], "lon": anchor["lon"]}
 
     def _save(self):
         if self.storage_path:
-            write_json(self.storage_path, asdict(self.settings))
+            write_json(self.storage_path, {**asdict(self.settings), "anchor": self._anchor_point})
 
     def update_settings(self, **kwargs):
         for key, value in kwargs.items():
@@ -81,21 +94,26 @@ class NavAlarmManager:
     def drop_anchor(self, lat, lon):
         self._anchor_point = {"lat": lat, "lon": lon}
         self._anchor_dragging = False
+        self._save()
         return dict(self._anchor_point)
 
     def raise_anchor(self):
         was_dropped = self._anchor_point is not None
         self._anchor_point = None
         self._anchor_dragging = False
+        if was_dropped:
+            self._save()
         return was_dropped
 
     # ---------------- evaluation ----------------
     def evaluate(self, fix, nav):
         """fix: the GPS Fix-like object (lat, lon, hdop, has_fix). nav: the dashboard's current
-        waypoint_nav() dict (bearing/distance/xte to the active waypoint), or None if there's no
-        active waypoint. Returns the list of alerts that should show right now."""
+        waypoint_nav() dict (bearing/distance/xte to the active waypoint, or the active route's
+        leg), with an optional "target_name", or None if nothing is being followed. Returns the
+        list of alerts that should show right now."""
         alerts = []
         s = self.settings
+        now = self._clock()
 
         if not fix.has_fix:
             self._arrived = self._off_course = self._anchor_dragging = False
@@ -105,7 +123,10 @@ class NavAlarmManager:
             if s.arrival_enabled:
                 arrived_now = nav["distance_nm"] <= s.arrival_radius_nm
                 if arrived_now and not self._arrived:
-                    alerts.append({"id": "arrival", "severity": "alarm", "message": "Arriving at destination"})
+                    name = nav.get("target_name")
+                    alert = {"id": "arrival", "severity": "alarm",
+                             "message": "Arriving at %s" % name if name else "Arriving at destination"}
+                    self._arrival = (alert, now + ARRIVAL_HOLD_S)
                 self._arrived = arrived_now
             if s.off_course_enabled and nav.get("xte_nm") is not None:
                 off_course_now = abs(nav["xte_nm"]) >= s.off_course_xte_nm
@@ -115,6 +136,11 @@ class NavAlarmManager:
                 self._off_course = off_course_now
         else:
             self._arrived = self._off_course = False
+        # Shown for ARRIVAL_HOLD_S whatever follows: a route's last leg stops the route at once.
+        if self._arrival and now < self._arrival[1]:
+            alerts.append(dict(self._arrival[0]))
+        elif self._arrival:
+            self._arrival = None
 
         if self._anchor_point is not None:
             drift_ft = haversine_distance_nm(fix.lat, fix.lon, self._anchor_point["lat"], self._anchor_point["lon"]) * NM_TO_FT

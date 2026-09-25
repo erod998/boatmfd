@@ -6,7 +6,7 @@ that source -- 127.0.0.1, port 10110 (the usual NMEA-over-IP port) unless BOAT_N
 BOAT_NMEA_TCP_HOST say otherwise. Once a second, from the same readings the dashboard shows:
 
     RMC, GGA, VTG   position, speed and course over ground (GPS)
-    HDM             heading, magnetic (the compass)
+    HDT             heading, true (the GPS's course over ground: this boat has no compass)
     DPT, DBT        depth below the transducer (the depth sounder)
     MTW             water temperature
 
@@ -29,16 +29,20 @@ def sentence(body):
     return "$%s*%s\r\n" % (body, checksum(body))
 
 
+def _degrees_minutes(v, width):
+    """ddmm.mmmm / dddmm.mmmm. Rounded as a whole, so minutes that round up to 60 carry into the
+    degrees: 86.9999995 is 08700.0000, not the 08660.0000 it used to be."""
+    minutes = round(abs(v) * 60.0, 4)
+    deg = int(minutes // 60)
+    return "%0*d%07.4f" % (width, deg, minutes - deg * 60)
+
+
 def _lat(v):
-    a = abs(v)
-    deg = int(a)
-    return "%02d%07.4f" % (deg, (a - deg) * 60.0), "N" if v >= 0 else "S"
+    return _degrees_minutes(v, 2), "N" if v >= 0 else "S"
 
 
 def _lon(v):
-    a = abs(v)
-    deg = int(a)
-    return "%03d%07.4f" % (deg, (a - deg) * 60.0), "E" if v >= 0 else "W"
+    return _degrees_minutes(v, 3), "E" if v >= 0 else "W"
 
 
 def _num(v, fmt="%.1f"):
@@ -66,7 +70,9 @@ def sentences(gps, boat, now=None):
         out.append(sentence("GPRMC,%s,V,,,,,,,%s,,,N" % (hms, dmy)))
         out.append(sentence("GPGGA,%s,,,,,0,00,,,M,,M,," % hms))
     if gps.get("heading_deg") is not None and gps.get("has_fix"):
-        out.append(sentence("HCHDM,%.1f,M" % (gps["heading_deg"] % 360.0)))
+        # True, not magnetic: the heading is the GPS's course, and as HDM a chart app would have
+        # turned it by the local variation.
+        out.append(sentence("GPHDT,%.1f,T" % (gps["heading_deg"] % 360.0)))
     depth_ft = boat.get("depth_ft")
     if depth_ft is not None:
         m = depth_ft * 0.3048

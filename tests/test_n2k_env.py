@@ -20,21 +20,22 @@ except ImportError:  # pragma: no cover
     can = None
 
 
-def depth_payload(depth_m, offset_m=None, instance=0):
+def depth_payload(depth_m, offset_m=None, sid=0xFF):
+    """PGN 128267 as canboat lays it out: SID, depth (0.01 m), offset (0.001 m), range."""
     depth_raw = 0xFFFFFFFF if depth_m is None else round(depth_m / 0.01)
     offset_raw = -32768 if offset_m is None else round(offset_m / 0.001)
-    return bytes([instance]) + depth_raw.to_bytes(4, "little") + offset_raw.to_bytes(2, "little", signed=True) + b"\xff"
+    return bytes([sid]) + depth_raw.to_bytes(4, "little") + offset_raw.to_bytes(2, "little", signed=True) + b"\xff"
 
 
-def env_payload(temp_c, source=0, instance=0):
+def env_payload(temp_c, source=0, sid=0xFF):
     temp_raw = 0xFFFF if temp_c is None else round((temp_c + 273.15) / 0.01)
-    return bytes([instance, source & 0x3F]) + temp_raw.to_bytes(2, "little") + b"\xff\xff\xff\xff"
+    return bytes([sid, source & 0x3F]) + temp_raw.to_bytes(2, "little") + b"\xff\xff\xff\xff"
 
 
 class TestDecoders(unittest.TestCase):
     def test_water_depth(self):
-        parsed = parse_water_depth(depth_payload(4.2, offset_m=0.3, instance=1))
-        self.assertEqual(parsed["instance"], 1)
+        parsed = parse_water_depth(depth_payload(4.2, offset_m=0.3, sid=7))
+        self.assertEqual(parsed["sid"], 7)
         self.assertAlmostEqual(parsed["depth_m"], 4.2, places=2)
         self.assertAlmostEqual(parsed["offset_m"], 0.3, places=3)
 
@@ -89,11 +90,20 @@ class TestEnvData(unittest.TestCase):
         plain = data.depth_ft()
         self.assertAlmostEqual(data.depth_ft(extra_offset_ft=-1.5), plain - 1.5, places=2)
 
-    def test_only_the_configured_instance_counts(self):
-        data = self.make(depth_instance=1)
-        self.node.send(PGN_WATER_DEPTH, 48, depth_payload(4.0, instance=0))
+    def test_the_sequence_id_is_not_an_instance(self):
+        # Byte 0 of PGN 128267 is a SID: 0xFF from a transducer that doesn't use it, or counting
+        # 0-252 from one that does. Neither may hide the depth (it used to be matched against an
+        # "instance" 0, which showed no depth at all, or one second in 253).
+        data = self.make()
+        for sid in (0xFF, 0, 1, 2, 137, 252):
+            self.node.send(PGN_WATER_DEPTH, 48, depth_payload(4.0, sid=sid))
+            self.assertAlmostEqual(data.depth_ft(), 4.0 / 0.3048, places=2)
+
+    def test_a_chosen_transducer_by_its_source_address(self):
+        data = self.make(depth_source=49)
+        self.node.send(PGN_WATER_DEPTH, 48, depth_payload(4.0))
         self.assertIsNone(data.depth_ft())
-        self.node.send(PGN_WATER_DEPTH, 48, depth_payload(6.0, instance=1))
+        self.node.send(PGN_WATER_DEPTH, 49, depth_payload(6.0))
         self.assertAlmostEqual(data.depth_ft(), 6.0 / 0.3048, places=2)
 
     def test_depth_goes_stale(self):
@@ -147,7 +157,7 @@ class FakeEnv:
         return self.temp
 
     def status(self):
-        return {"depths": [], "temps": [], "depth_instance": 0}
+        return {"depths": [], "temps": [], "depth_source": None}
 
 
 class FakeProbes:

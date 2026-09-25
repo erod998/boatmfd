@@ -77,9 +77,13 @@ void handlePostLighting() {
     preset = requested;
   }
   if (doc.containsKey("on")) powerOn = doc["on"].as<bool>();
-  if (doc.containsKey("brightness")) brightness = doc["brightness"].as<float>();
+  // Clamped like the dashboard's own API: out of range, a brightness of 2 or a red of 300 wrapped
+  // around when narrowed to a byte and showed some other level or colour entirely.
+  if (doc.containsKey("brightness")) brightness = constrain(doc["brightness"].as<float>(), 0.0f, 1.0f);
   if (doc.containsKey("r") && doc.containsKey("g") && doc.containsKey("b")) {
-    solidR = doc["r"]; solidG = doc["g"]; solidB = doc["b"];
+    solidR = constrain(doc["r"].as<int>(), 0, 255);
+    solidG = constrain(doc["g"].as<int>(), 0, 255);
+    solidB = constrain(doc["b"].as<int>(), 0, 255);
     preset = "solid";
   }
 

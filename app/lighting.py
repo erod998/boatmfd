@@ -205,9 +205,13 @@ class Pca9685RgbDriver:
         old = self.bus.read_i2c_block_data(address, self.REG_MODE1, 1)[0]
         self.bus.write_i2c_block_data(address, self.REG_MODE1, [(old & 0x7F) | 0x10])  # sleep so the prescaler can be set
         self.bus.write_i2c_block_data(address, self.REG_PRESCALE, [prescale])
-        self.bus.write_i2c_block_data(address, self.REG_MODE1, [old])
-        sleep(0.005)
-        self.bus.write_i2c_block_data(address, self.REG_MODE1, [old | 0xA1])  # restart, auto-increment
+        # Awake: SLEEP (bit 4) cleared, auto-increment on. The chip powers up asleep (MODE1 0x11),
+        # and this used to write that value back and then set RESTART on top of it -- which leaves
+        # SLEEP set, the oscillator stopped and every output dark after each power-up.
+        awake = (old & 0x6F) | 0x20
+        self.bus.write_i2c_block_data(address, self.REG_MODE1, [awake])
+        sleep(0.005)                                            # the oscillator needs 500 us
+        self.bus.write_i2c_block_data(address, self.REG_MODE1, [awake | 0x80])  # restart any PWM that was running
 
     def _duty(self, value):
         return round((max(0, min(255, value)) / 255.0) ** self.gamma * 4095)
@@ -271,7 +275,8 @@ class LedBoardDriver:
     SHUNT_OHMS = 0.001
     CURRENT_LSB = 0.001                # amps per count, with the calibration below
     MEASURE_S = 0.2
-    RAINBOW_LOAD = 0.5                 # a rainbow's pixels average half of full white
+    RAINBOW_LOAD = 0.45                # a rainbow's pixels, gamma-corrected, average under half of full white
+    MCU_RETRY_S = 2.0                  # how often to look for an RP2040 that stopped answering
 
     def __init__(self, bus=None, bus_number=7, pca_address=0x40, mcu_address=0x30, ina_address=0x45,
                  pixel_counts=(300, 300, 300, 300), color_order="GRB", max_amps=20.0, zone_amps=8.0,
@@ -296,6 +301,7 @@ class LedBoardDriver:
         self.estimate = 0.0
         self._measured_at = None
         self._mcu_sent = None
+        self._mcu_retry_at = 0.0
         self.mcu_ok = self._mcu_present()
         self.ina_ok = self._ina_init()
 
@@ -353,23 +359,36 @@ class LedBoardDriver:
         rgbw = self._rgbw(frame[0])
         duties = [self.pwm._duty(v) for v in rgbw]
         # What the strips would draw, unscaled: each zone colour's share of zone_amps by its duty,
-        # each pixel strip by its brightness and how much of full white its colour is.
+        # each pixel strip by how much of full white it shows. The RP2040 corrects its pixels with
+        # the same gamma as the zones' PWM (so a colour looks the same on both), so the pixels'
+        # current follows the gamma-corrected colour at this brightness too.
         zone_load = sum(d / 4095 for d in duties) / self.COLOURS * self.zone_amps * self.ZONES
         mode = "off" if not on else ("rainbow" if preset == "rainbow" else "solid")
-        whiteness = self.RAINBOW_LOAD if mode == "rainbow" else sum(color) / 765
-        pixel_load = 0.0 if mode == "off" else sum(self.pixel_counts) * self.pixel_ma / 1000 * brightness * whiteness
+        if mode == "rainbow":
+            whiteness = self.RAINBOW_LOAD * self.pwm._duty(255 * brightness) / 4095
+        else:
+            whiteness = sum(self.pwm._duty(c * brightness) for c in color) / (3 * 4095)
+        pixel_load = 0.0 if mode == "off" else sum(self.pixel_counts) * self.pixel_ma / 1000 * whiteness
         self.estimate = zone_load + pixel_load
         self.scale = min(1.0, self.max_amps / self.estimate) if self.estimate > 0 else 1.0
         k = self.scale * self.trim
-        zone = [self.pwm._duty(v * k) for v in rgbw]
+        # Current is proportional to duty, so the dimming scales the duty itself. Applied before
+        # the gamma (as it was) it cut the zones by k^2.2, not k: to 1.95 A instead of 4.2 A at
+        # full white, well under the budget and far dimmer than the pixel strips beside them.
+        zone = [round(d * k) for d in duties]
         self.pwm.set_duties(zone * self.ZONES)
         self._send_mcu(mode, color, brightness, k)
 
     def _send_mcu(self, mode, color, brightness, k):
+        now = self.clock()
         if not self.mcu_ok:
+            if now < self._mcu_retry_at:
+                return
             self.mcu_ok = self._mcu_present()
             if not self.mcu_ok:
+                self._mcu_retry_at = now + self.MCU_RETRY_S
                 return
+            print("[lighting] the LED board's RP2040 is answering again")
         level = max(0, min(255, round(brightness * 255)))
         regs = []
         for n in self.pixel_counts:
@@ -377,12 +396,21 @@ class LedBoardDriver:
             regs.append([self.MODES[mode], *color, level, 9, self.order, 0, n & 0xFF, n >> 8])
         limit = max(0, min(255, round(255 * k)))
         sent = (limit, regs)
-        now = self.clock()
         if sent == (self._mcu_sent[0] if self._mcu_sent else None) and now - self._mcu_sent[1] < 2.0:
             return
-        self.bus.write_i2c_block_data(self.mcu_address, self.REG_MCU_LIMIT, [limit])
-        for i, data in enumerate(regs):
-            self.bus.write_i2c_block_data(self.mcu_address, self.REG_MCU_OUTPUT + 0x10 * i, data)
+        try:
+            self.bus.write_i2c_block_data(self.mcu_address, self.REG_MCU_LIMIT, [limit])
+            for i, data in enumerate(regs):
+                self.bus.write_i2c_block_data(self.mcu_address, self.REG_MCU_OUTPUT + 0x10 * i, data)
+        except OSError as exc:
+            # Gone (unplugged, restarting, a firmware load): the zones carry on, the telemetry says
+            # so, and it's looked for again every MCU_RETRY_S -- rather than an exception out of
+            # every frame, 30 a second during a rainbow, with pixels_ok still claiming true.
+            print(f"[lighting] the LED board's RP2040 stopped answering ({exc}); the zones carry on")
+            self.mcu_ok = False
+            self._mcu_sent = None          # everything goes again once it's back
+            self._mcu_retry_at = now + self.MCU_RETRY_S
+            return
         self._mcu_sent = (sent, now)
 
     def telemetry(self):

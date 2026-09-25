@@ -131,6 +131,46 @@ class TestPixels(unittest.TestCase):
         driver.show([(7, 8, 9)])
         self.assertGreater(len([w for w in board.writes if w[0] == MCU]), sent)
 
+    def test_an_rp2040_that_stops_answering_is_reported_and_looked_for_again(self):
+        class Flaky(FakeBoard):
+            gone = False
+
+            def write_i2c_block_data(self, address, register, data):
+                if address == MCU and self.gone:
+                    raise OSError(121, "Remote I/O error")
+                super().write_i2c_block_data(address, register, data)
+
+            def read_i2c_block_data(self, address, register, length):
+                if address == MCU and self.gone:
+                    raise OSError(121, "Remote I/O error")
+                return super().read_i2c_block_data(address, register, length)
+
+        board = Flaky()
+        board, driver, clock = make(board)
+        driver.set_effect("rainbow", (0, 0, 0), 1.0, True)
+        driver.show([(255, 0, 0)])
+        board.gone = True
+        clock.t += 3.0
+        for _ in range(30):                        # a second of rainbow: no exception out of any frame
+            clock.t += 1 / 30
+            driver.show([(0, 255, 0)])
+        self.assertFalse(driver.telemetry()["pixels_ok"])
+        self.assertGreater(board.duties()[1], 3000)  # the zones carry on (a little dimmed: 21.5 A asked for)
+        board.gone = False
+        clock.t += 2.5
+        board.writes.clear()
+        driver.show([(0, 0, 255)])
+        self.assertTrue(driver.telemetry()["pixels_ok"])
+        self.assertEqual(board.mcu_register(0x10), 2)   # and it's told everything again
+
+    def test_pixels_are_budgeted_with_the_same_gamma_as_the_zones(self):
+        # The RP2040 gamma-corrects colour x brightness (firmware 1.1), so half brightness draws
+        # about a fifth of the current, not half.
+        board, driver, _ = make(pixel_counts=(300, 300, 300, 300))
+        driver.set_effect("solid", (255, 255, 255), 0.5, True)
+        driver.show([(0, 0, 0)])
+        self.assertAlmostEqual(driver.estimate, 30 * 0.5 ** 2.2, delta=0.1)
+
     def test_a_board_without_its_rp2040_still_runs_the_zones(self):
         board, driver, _ = make(FakeBoard(mcu=False))
         driver.show([(255, 0, 0)])
@@ -149,6 +189,16 @@ class TestBudget(unittest.TestCase):
         self.assertAlmostEqual(driver.scale, 20 / 38, places=3)
         self.assertEqual(board.mcu_register(0x08), round(255 * 20 / 38))
         self.assertLess(board.duties()[3], 4095)
+
+    def test_the_dimming_is_linear_in_current_so_the_board_lands_on_its_budget(self):
+        # It used to be applied before the gamma: the zones got k^2.2 of their current, not k,
+        # and full white came to 17.7 A of the 20 allowed.
+        board, driver, _ = make()
+        driver.set_effect("solid", (255, 255, 255), 1.0, True)
+        driver.show([(255, 255, 255)])
+        zones = 4 * 8.0 / 4 * board.duties()[3] / 4095                   # white LEDs only
+        pixels = 1200 * 0.025 * board.mcu_register(0x08) / 255
+        self.assertAlmostEqual(zones + pixels, 20.0, delta=0.1)
 
     def test_zones_at_full_rgb_with_no_white_leds(self):
         board, driver, _ = make(pixel_counts=(), white=False)

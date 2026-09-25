@@ -217,8 +217,8 @@ class FusionMedia:
             self._last_request = time.monotonic()
             try:
                 self._send(fusion.request_status())
-            except RuntimeError:
-                pass  # address not claimed yet; retried next tick
+            except (RuntimeError, OSError):
+                pass  # address not claimed yet, or the bus is down; retried next tick
 
     def _current_source(self):
         with self._lock:

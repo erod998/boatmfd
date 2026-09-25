@@ -201,7 +201,7 @@ class WaypointIn(BaseModel):
 
 
 class LightingIn(BaseModel):
-    preset: Optional[str] = Field(default=None, max_length=40)
+    preset: Optional[Literal[tuple(PRESET_NAMES)]] = None   # checked here, before any of the rest is applied
     r: Optional[int] = Field(default=None, ge=0, le=255)
     g: Optional[int] = Field(default=None, ge=0, le=255)
     b: Optional[int] = Field(default=None, ge=0, le=255)
@@ -931,18 +931,26 @@ def _full_frame():
         trip_tracker.tick(fix.lat, fix.lon, fix.sog_kn, engine.get("fuel_gph"))
 
     nav = None
-    if waypoint is not None and fix.has_fix:
-        if waypoint["guide"] is None:   # set before the first fix: the line starts where the boat first is
-            waypoint["guide"] = GuidedPath([(fix.lat, fix.lon), (waypoint["lat"], waypoint["lon"])])
-        guide = waypoint["guide"]
+    wp = waypoint   # once: a request can clear or replace the Go To while this frame is being built
+    if wp is not None and fix.has_fix:
+        if wp["guide"] is None:   # set before the first fix: the line starts where the boat first is
+            wp["guide"] = GuidedPath([(fix.lat, fix.lon), (wp["lat"], wp["lon"])])
+        guide = wp["guide"]
         nav = guide.tick(fix.lat, fix.lon, fix.sog_kn, fix.cog_deg)
-        nav["waypoint"] = {"lat": waypoint["lat"], "lon": waypoint["lon"], "name": waypoint["name"],
+        nav["waypoint"] = {"lat": wp["lat"], "lon": wp["lon"], "name": wp["name"],
                            "path": [[round(a, 6), round(b, 6)] for a, b in guide.points] if nav["legs"] > 1 else None}
         nav["relative_bearing_deg"] = relative_bearing(fix.heading_deg, nav["bearing_deg"])
 
     route_nav = route_tracker.tick(fix.lat, fix.lon, fix.sog_kn, fix.cog_deg) if fix.has_fix else None
     if route_nav and route_nav["finished"]:
         route_tracker.stop()
+    # Arrival and Off Course watch whichever is being followed: the Go To, or the route's leg.
+    if nav:
+        followed = {**nav, "target_name": nav["waypoint"]["name"]}
+    elif route_nav:
+        followed = {**route_nav, "target_name": route_nav["leg_name"]}
+    else:
+        followed = None
 
     if fix.has_fix:
         track.append({"lat": fix.lat, "lon": fix.lon, "t": fix.timestamp})
@@ -959,7 +967,7 @@ def _full_frame():
         _recent_boundary_events[e["id"]] = (e, now + BOUNDARY_EVENT_HOLD_S)
     for stale_id in [bid for bid, (_, expires) in _recent_boundary_events.items() if expires <= now]:
         del _recent_boundary_events[stale_id]
-    nav_alerts = nav_alarms.evaluate(fix, nav) + [
+    nav_alerts = nav_alarms.evaluate(fix, followed) + [
         {"id": "boundary_%s" % e["id"], "severity": "warning", "message": "%s: %s the boundary" % (e["name"], e["event"])}
         for e, _ in _recent_boundary_events.values()
     ]
@@ -1013,8 +1021,18 @@ async def _broadcast(message):
     for ws in list(_clients):
         try:
             await asyncio.wait_for(ws.send_text(text), timeout=2.0)
-        except Exception:  # a screen that went away (or stalled) is dropped; it reconnects on its own
+        except Exception:  # a screen that went away (or stalled) is dropped, and told so
             _clients.discard(ws)
+            # Closed, not just forgotten: a stalled tablet on weak WiFi used to keep an open
+            # connection that nothing was sent on again, so it sat on its last frame with no
+            # "Reconnecting" banner. Closing makes it reconnect (and the page's own watchdog,
+            # static/js/chrome.js, catches a close that never arrives).
+            asyncio.create_task(_close_quietly(ws))
+
+
+async def _close_quietly(ws):
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(ws.close(code=1011), timeout=2.0)
 
 
 async def _paced(period, work):
@@ -1036,7 +1054,10 @@ async def _paced(period, work):
 
 async def _fast_loop():
     async def work():
-        await _broadcast(_fast_frame())
+        # In a thread, like the full frame: reading the sensors and TelMute's stereo commands are
+        # I/O, and a CAN send can wait up to 2 s for the bus -- on the event loop that stalled
+        # every screen and request with it.
+        await _broadcast(await asyncio.to_thread(_fast_frame))
     await _paced(FAST_PERIOD_S, work)
 
 

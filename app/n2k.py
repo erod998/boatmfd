@@ -133,7 +133,8 @@ class N2kNode:
         self.devices = {}  # source address -> NAME seen in address claims
         self._assembler = FastPacketAssembler()
         self._seq = {}
-        self._send_lock = threading.Lock()
+        self._send_lock = threading.Lock()      # one CAN frame at a time
+        self._message_lock = threading.Lock()   # one fast-packet message at a time: see send_fast
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._claimed_at = 0.0
@@ -168,17 +169,28 @@ class N2kNode:
         # N2K requires waiting 250 ms after claiming an address before transmitting anything else.
         if not self._ready.wait(timeout=2):
             raise RuntimeError("NMEA 2000 address not claimed yet")
-        seq = self._seq.get(pgn, 0)
-        self._seq[pgn] = (seq + 1) & 0x7
-        for frame in fast_packet_frames(seq, payload):
-            self._send_frame(priority, pgn, dest, frame)
+        # A message's frames go out together, and its sequence number is its own. Two threads
+        # sending the same PGN at once (the volume boost and a tap on the volume slider) used to
+        # interleave their frames, and the stereo lost or spliced one of the commands.
+        with self._message_lock:
+            seq = self._seq.get(pgn, 0)
+            self._seq[pgn] = (seq + 1) & 0x7
+            for frame in fast_packet_frames(seq, payload):
+                self._send_frame(priority, pgn, dest, frame)
 
     def _send_frame(self, priority, pgn, dest, data):
+        """Send one frame. A failure raises OSError, as every caller expects of I/O: python-can's
+        own errors (CanOperationError, "Transmit buffer full" when nothing on the bus acknowledges,
+        or the interface bus-off) are not OSErrors, and used to escape the callers' handlers --
+        out of the telemetry loop, which then froze the gauges on their last values."""
         import can
 
         msg = can.Message(arbitration_id=make_can_id(priority, pgn, self.address, dest), is_extended_id=True, data=data)
-        with self._send_lock:
-            self.bus.send(msg)
+        try:
+            with self._send_lock:
+                self.bus.send(msg)
+        except can.CanError as exc:
+            raise OSError(f"CAN send failed: {exc}") from exc
 
     def _send_address_claim(self):
         self._claimed_at = time.monotonic()

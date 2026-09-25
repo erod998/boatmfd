@@ -376,6 +376,25 @@ class TestPwmRgbDriver(unittest.TestCase):
         self.assertEqual(blue[:2], [0, 0])
         self.assertEqual((blue[3] << 8) | blue[2], round((128 / 255) ** 2.2 * 4095))
 
+    def test_wakes_a_chip_that_has_just_powered_up(self):
+        # Power-up MODE1 is 0x11: SLEEP set. Left set, the oscillator is off and every output dark.
+        class FreshChip(FakePwmBus):
+            mode1 = 0x11
+
+            def read_i2c_block_data(self, address, register, length):
+                return [self.mode1]
+
+            def write_i2c_block_data(self, address, register, data):
+                super().write_i2c_block_data(address, register, data)
+                if register == 0x00:
+                    self.mode1 = data[0] & 0x7F   # RESTART clears itself
+
+        chip = FreshChip()
+        Pca9685RgbDriver(bus=chip, sleep=lambda s: None)
+        self.assertFalse(chip.mode1 & 0x10, "left asleep")
+        self.assertTrue(chip.mode1 & 0x20, "auto-increment off")
+        self.assertIn((0xFE, [5]), chip.writes)
+
     def test_works_with_the_lighting_controller(self):
         bus = FakePwmBus()
         driver = Pca9685RgbDriver(bus=bus, sleep=lambda s: None)

@@ -13,12 +13,13 @@
  *   0x02-0x03  firmware version, major/minor read-only
  *   0x04       status: bit 0 running        read-only
  *   0x05       frame counter                read-only, wraps at 255
- *   0x08       limit, 0-255 (default 255)   scales every output: the Pi lowers it to hold the
- *                                           board under its current budget
+ *   0x08       limit, 0-255 (default 255)   scales every output's current, linearly: the Pi
+ *                                           lowers it to hold the board under its current budget
  *   0x10 + 0x10*n, output n = 0..3 (J7..J10):
  *     +0 mode        0 off, 1 solid, 2 rainbow
  *     +1..+3 R G B   the solid colour
- *     +4 brightness  0-255
+ *     +4 brightness  0-255 (colour x brightness is gamma-corrected, 2.2, as the Pi's PWM zones
+ *                    are, so a colour and a brightness look the same on both)
  *     +5 speed       rainbow: full colour cycles per minute (default 9)
  *     +6 order       the strip's byte order: 0 GRB (WS2812/WS2815), 1 RGB, 2 BRG, 3 RBG, 4 GBR, 5 BGR
  *     +7 flags       bit 0: run the rainbow the other way along the strip
@@ -33,6 +34,7 @@
  * Pins (hardware/led-board/design.py): GPIO0-3 the four outputs' data (J7-J10), GPIO4/5 I2C0
  * SDA/SCL (through the BSS138 level shift) (buffered to 5 V by U7-U10), GPIO6 the status LED (D8).
  */
+#include <math.h>
 #include <string.h>
 
 #include "hardware/clocks.h"
@@ -48,7 +50,7 @@
 #include "ws2812.pio.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 0
+#define VERSION_MINOR 1
 
 #define I2C_ADDRESS 0x30
 #define PIN_SDA 4
@@ -154,9 +156,26 @@ static void hue_to_rgb(uint8_t hue, uint8_t rgb[3]) {
 // Which of R, G, B goes out first, second and third, for each byte order.
 static const uint8_t ORDER[6][3] = {{1, 0, 2}, {0, 1, 2}, {2, 0, 1}, {0, 2, 1}, {1, 2, 0}, {2, 1, 0}};
 
-static uint32_t pack(const uint8_t rgb[3], uint32_t scale, uint8_t order) {
+// Perceived level to LED duty: the same 2.2 gamma as the Pi applies to the zones' PWM
+// (app/lighting.py), so orange is the same orange, and 60 % the same 60 %, on both.
+static uint8_t gamma_table[256];
+
+static void gamma_init(void) {
+    for (int i = 0; i < 256; i++) {
+        gamma_table[i] = (uint8_t)(powf(i / 255.0f, 2.2f) * 255.0f + 0.5f);
+    }
+}
+
+// A channel: gamma-correct the colour at this brightness, then scale by the current limit, which
+// is linear in current (the Pi's budget works in amps).
+static uint32_t level(uint8_t value, uint8_t brightness, uint8_t limit) {
+    return (uint32_t)gamma_table[value * brightness / 255] * limit / 255;
+}
+
+static uint32_t pack(const uint8_t rgb[3], uint8_t brightness, uint8_t limit, uint8_t order) {
     const uint8_t *o = ORDER[order < 6 ? order : 0];
-    uint32_t a = rgb[o[0]] * scale / 255, b = rgb[o[1]] * scale / 255, c = rgb[o[2]] * scale / 255;
+    uint32_t a = level(rgb[o[0]], brightness, limit), b = level(rgb[o[1]], brightness, limit),
+             c = level(rgb[o[2]], brightness, limit);
     return (a << 24) | (b << 16) | (c << 8);    // the PIO shifts out the top 24 bits, MSB first
 }
 
@@ -168,13 +187,13 @@ static uint pixel_count(const uint8_t *o) {
 static void draw(int n, uint64_t now_us) {
     const uint8_t *o = &live[REG_OUTPUT + OUTPUT_STRIDE * n];
     uint count = pixel_count(o);
-    uint32_t scale = (uint32_t)o[O_BRIGHTNESS] * live[REG_LIMIT] / 255;
+    uint8_t brightness = o[O_BRIGHTNESS], limit = live[REG_LIMIT];
     uint8_t rgb[3];
     if (o[O_MODE] == MODE_SOLID) {
         rgb[0] = o[O_R];
         rgb[1] = o[O_G];
         rgb[2] = o[O_B];
-        uint32_t word = pack(rgb, scale, o[O_ORDER]);
+        uint32_t word = pack(rgb, brightness, limit, o[O_ORDER]);
         for (uint i = 0; i < count; i++) {
             frame_buf[n][i] = word;
         }
@@ -185,7 +204,7 @@ static void draw(int n, uint64_t now_us) {
         for (uint i = 0; i < count; i++) {
             uint k = reverse ? count - 1 - i : i;
             hue_to_rgb((uint8_t)(k * 256 / count + offset), rgb);
-            frame_buf[n][i] = pack(rgb, scale, o[O_ORDER]);
+            frame_buf[n][i] = pack(rgb, brightness, limit, o[O_ORDER]);
         }
     } else {
         memset(frame_buf[n], 0, count * sizeof(uint32_t));
@@ -253,6 +272,7 @@ int main(void) {
     gpio_init(PIN_STATUS);
     gpio_set_dir(PIN_STATUS, GPIO_OUT);
     defaults();
+    gamma_init();
 
     gpio_init(PIN_SDA);
     gpio_init(PIN_SCL);

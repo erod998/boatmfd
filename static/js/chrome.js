@@ -871,19 +871,35 @@ banner.textContent = "Reconnecting to the boat computer…";
 banner.hidden = true;
 $("stage").appendChild(banner);
 
+// The server sends five frames a second. Nothing for this long and the link is dead even if the
+// socket never says so -- a tablet on weak WiFi can sit on a half-open connection for minutes,
+// showing its last gauges and alarms as if they were live -- so it's dropped and made again.
+const LINK_SILENT_MS = 5000;
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws/telemetry`);
+  let watchdog = null;
+  let done = false;
+  const retry = () => {
+    if (done) return;   // once per socket, whichever of close, error or silence comes first
+    done = true;
+    clearTimeout(watchdog);
+    banner.hidden = false;
+    ws.onclose = ws.onerror = ws.onmessage = null;
+    try { ws.close(); } catch (e) { /* already closing */ }
+    setTimeout(connect, 1500);
+  };
+  const arm = () => { clearTimeout(watchdog); watchdog = setTimeout(retry, LINK_SILENT_MS); };
+  arm();   // covers a connection that never opens, too
   ws.onopen = () => {
     banner.hidden = true;
     alarmRev = -1;  // a restarted server counts its settings revisions from the start again, so take whatever it says first
   };
-  ws.onclose = () => {
-    banner.hidden = false;
-    setTimeout(connect, 1500);
-  };
-  ws.onerror = () => ws.close();
+  ws.onclose = retry;
+  ws.onerror = retry;
   ws.onmessage = (evt) => {
+    arm();
     const data = JSON.parse(evt.data);
     if (data.type === "fast") {
       renderFast(data);

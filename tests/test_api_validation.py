@@ -206,5 +206,46 @@ class TestGoToPath(unittest.TestCase):
         with self.assertRaises(ValidationError):
             WaypointIn(**HERE, path=[[36.3, -86.5]] * 5001)
 
+
+class TestLightingPreset(unittest.TestCase):
+    def test_only_a_known_preset_gets_in(self):
+        # Unchecked, an unknown one raised out of the endpoint (HTTP 500) after the rest of the
+        # request -- power, brightness, colour -- had already been applied.
+        self.assertEqual(LightingIn(preset="rainbow").preset, "rainbow")
+        with self.assertRaises(ValidationError):
+            LightingIn(preset="strobe", on=True)
+
+
+class TestStalledScreens(unittest.TestCase):
+    def test_a_screen_that_stalls_is_closed_not_just_forgotten(self):
+        # Forgotten but left open, it never reconnected: its last frame stayed up as if live.
+        import asyncio
+
+        from app import main
+
+        class Stalled:
+            closed = None
+
+            async def send_text(self, text):
+                await asyncio.sleep(10)
+
+            async def close(self, code=1000):
+                self.closed = code
+
+        async def run():
+            ws = Stalled()
+            main._clients.add(ws)
+            try:
+                await main._broadcast({"type": "fast"})
+                await asyncio.sleep(0.05)
+            finally:
+                main._clients.discard(ws)
+            return ws
+
+        ws = asyncio.run(run())
+        self.assertNotIn(ws, main._clients)
+        self.assertIsNotNone(ws.closed)
+
+
 if __name__ == "__main__":
     unittest.main()

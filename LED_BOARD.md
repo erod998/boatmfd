@@ -196,8 +196,8 @@ a write takes effect at the end of the transfer):
 | 0x02-0x03 | firmware version, major / minor |
 | 0x04 | status: bit 0 running |
 | 0x05 | frame counter |
-| 0x08 | limit, 0-255: scales every output (the budget) |
-| 0x10 + 0x10·n | output n (0-3 = J7-J10): +0 mode (0 off, 1 solid, 2 rainbow), +1..+3 R G B, +4 brightness, +5 rainbow speed (turns a minute), +6 byte order (0 GRB, 1 RGB, 2 BRG, 3 RBG, 4 GBR, 5 BGR), +7 flags (bit 0 reverse), +8..+9 pixel count (up to 600) |
+| 0x08 | limit, 0-255: scales every output's current, linearly (the budget) |
+| 0x10 + 0x10·n | output n (0-3 = J7-J10): +0 mode (0 off, 1 solid, 2 rainbow), +1..+3 R G B, +4 brightness (colour × brightness is gamma-corrected, 2.2, like the zones' PWM, from firmware 1.1), +5 rainbow speed (turns a minute), +6 byte order (0 GRB, 1 RGB, 2 BRG, 3 RBG, 4 GBR, 5 BGR), +7 flags (bit 0 reverse), +8..+9 pixel count (up to 600) |
 | 0x7E | write 0xB0: restart as the USB drive, to load new firmware |
 | 0x7F | write 0x5A: restart |
 

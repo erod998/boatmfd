@@ -47,7 +47,7 @@
     <div id="n2kFuel" class="heard"></div>
     <p data-mode="n2k">Your engine converter (for example the CX5003) should appear above with its RPM, trim, oil pressure and temperature. If nothing shows, check that the CAN interface is up (<code>BOAT_CAN=can0</code>), the converter has power, and the backbone has a terminator at each end. If a value is heard under an instance number other than the one in use, set <code>BOAT_N2K_ENGINE_INSTANCE</code> (RPM, trim, oil, temperature) or <code>BOAT_N2K_FUEL_TANK_INSTANCE</code> (fuel level) to match. If the temperature arrives as an oil temperature rather than an engine temperature, set <code>BOAT_N2K_TEMP=oil</code>.</p>
     <p data-mode="real">A fuel-flow sensor sends fuel rate (used for GPH and MPG). A tank-level adapter sends the tank level (used for the fuel gauge, ahead of any analog sender). If your device shows up here with a different instance number than the settings expect, set <code>BOAT_N2K_ENGINE_INSTANCE</code> (flow sensor) or <code>BOAT_N2K_FUEL_TANK_INSTANCE</code> (tank level) to match.</p>
-    <p>A depth transducer shows up here too (and its sea temperature, if it sends one). If it's under a different instance number than the one in use, set <code>BOAT_N2K_DEPTH_INSTANCE</code> to match.</p>
+    <p>A depth transducer shows up here too (and its sea temperature, if it sends one). With more than one on the bus, the freshest is used; to pick one, set <code>BOAT_N2K_DEPTH_SOURCE</code> to its device number.</p>
   </div>
 
   <div class="card"><h2>Depth</h2>
@@ -204,8 +204,8 @@ function renderN2k(n2k, engine, env) {
   n2k.fuel_flow.filter((f) => f.flow_sensor).forEach((f) => add(`Fuel flow from device ${f.source}, engine instance ${f.instance}${inUse(f.instance, n2k.engine_instance)}: ${num(f.gph, 1)} GPH (${f.age_s}s ago)`));
   n2k.tank_levels.forEach((t) => add(`Tank level from device ${t.source}, ${t.type} tank instance ${t.instance}${t.type === "fuel" ? inUse(t.instance, n2k.tank_instance) : ""}: ${num(t.level_pct, 1)}%${t.capacity_gal == null ? "" : `, ${num(t.capacity_gal, 0)} gal capacity`} (${t.age_s}s ago)`));
   if (env) {
-    env.depths.forEach((d) => add(`Depth from device ${d.source}, instance ${d.instance}${inUse(d.instance, env.depth_instance)}: ${num(d.depth_ft, 1)} ft${d.offset_ft == null ? "" : ` (device offset ${d.offset_ft >= 0 ? "+" : ""}${num(d.offset_ft, 2)} ft)`} (${d.age_s}s ago)`));
-    env.temps.forEach((t) => add(`Sea temperature from device ${t.source}, instance ${t.instance}: ${num(t.water_temp_f, 0)} F (${t.age_s}s ago)`));
+    env.depths.forEach((d) => add(`Depth from device ${d.source}${env.depth_source == null || d.source === env.depth_source ? "" : "  <- not the device in use"}: ${num(d.depth_ft, 1)} ft${d.offset_ft == null ? "" : ` (device offset ${d.offset_ft >= 0 ? "+" : ""}${num(d.offset_ft, 2)} ft)`} (${d.age_s}s ago)`));
+    env.temps.forEach((t) => add(`Sea temperature from device ${t.source}: ${num(t.water_temp_f, 0)} F (${t.age_s}s ago)`));
   }
   if (!n2k.engines.length && !n2k.tank_levels.length && !n2k.fuel_flow.length && !(env && (env.depths.length || env.temps.length))) add("Connected, but no engine, fuel flow, tank level or depth messages heard yet. Check that the device is powered and on the backbone.");
   add(`Now using: ${engine.fuel_gph == null ? "no fuel rate" : `${engine.fuel_gph} GPH (${engine.fuel_gph_est ? "estimated from RPM" : "measured"})`}`);

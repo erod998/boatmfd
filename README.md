@@ -696,9 +696,10 @@ transducer picked out (an Airmar DST800, thru-hull) if you're buying one.
   (that PGN is shared with outside air, cabin and other temperatures from other instruments,
   so the rest are ignored) and, if a transducer sends it, wins over the DS18B20 water probe,
   the same "bus beats a local sensor" rule used for engine temperature and fuel level.
-- The `/calibrate` page lists what it hears, with the device address, instance number, and
-  the raw depth and offset the transducer itself reports. If your transducer is under a
-  different instance number, set `BOAT_N2K_DEPTH_INSTANCE` to match.
+- The `/calibrate` page lists what it hears, with the device address and the raw depth and
+  offset the transducer itself reports. Depth messages carry no instance number, so with more
+  than one transducer on the bus the freshest is used; to pick one, set
+  `BOAT_N2K_DEPTH_SOURCE` to its device address.
 - If the depth is off by a fixed amount (a transducer's own offset is often left at its
   factory default), type the true depth — from a lead line, a marked dock piling, or a known
   chart depth at your slip — into the Depth card; that's a *further* correction added on top

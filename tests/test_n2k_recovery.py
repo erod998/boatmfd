@@ -111,5 +111,55 @@ class TestReceiveLoopSurvives(unittest.TestCase):
             self.assertTrue(wait_for(lambda: dispatch.call_count == 2), "one bad frame stopped the loop")
 
 
+class TestSending(unittest.TestCase):
+    """What a send does when the bus is not well, and when two threads send at once."""
+
+    class Bus:
+        def __init__(self, error=None):
+            self.sent, self.error = [], error
+
+        def send(self, msg):
+            if self.error:
+                raise self.error
+            self.sent.append(bytes(msg.data))
+            time.sleep(0.001)                 # a frame's time on the wire, with the GIL let go
+
+        def recv(self, timeout=None):
+            return None
+
+        def shutdown(self):
+            pass
+
+    @unittest.skipIf(can is None, "python-can is only installed where CAN is used")
+    def test_a_can_error_is_an_oserror_like_any_other_io_failure(self):
+        # python-can raises CanOperationError ("Transmit buffer full", bus-off), which is not an
+        # OSError; the callers' `except (ValueError, RuntimeError, OSError)` let it through.
+        node = N2kNode(self.Bus(can.CanOperationError("Transmit buffer full")), encode_name(1))
+        node._ready.set()
+        with self.assertRaises(OSError):
+            node.send_fast(126720, bytes(12))
+
+    @unittest.skipIf(can is None, "python-can is only installed where CAN is used")
+    def test_two_threads_sending_the_same_pgn_do_not_mix_their_frames(self):
+        from app.n2k import FastPacketAssembler
+        for _ in range(20):
+            bus = self.Bus()
+            node = N2kNode(bus, encode_name(1))
+            node._ready.set()
+            a, b = bytes([1] * 12), bytes([2] * 12)
+            go = threading.Barrier(2)
+
+            def send(payload):
+                go.wait()
+                node.send_fast(126720, payload)
+
+            threads = [threading.Thread(target=send, args=(p,)) for p in (a, b)]
+            [t.start() for t in threads]
+            [t.join() for t in threads]
+            assembler = FastPacketAssembler()
+            got = [m for f in bus.sent if (m := assembler.feed(42, 126720, f))]
+            self.assertEqual(sorted(got), [a, b])
+
+
 if __name__ == "__main__":
     unittest.main()

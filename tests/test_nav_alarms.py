@@ -30,12 +30,25 @@ class TestArrival(unittest.TestCase):
         mgr = NavAlarmManager()
         self.assertNotIn("arrival", ids(mgr.evaluate(fix(), nav(distance_nm=2.0))))
 
-    def test_fires_once_on_arrival_not_every_tick(self):
-        mgr = NavAlarmManager()
+    def test_fires_once_on_arrival_and_is_held_long_enough_to_see(self):
+        # It used to show for one 1 Hz frame: a second of banner and beep.
+        now = [0.0]
+        mgr = NavAlarmManager(clock=lambda: now[0])
         first = mgr.evaluate(fix(), nav(distance_nm=0.05))
-        second = mgr.evaluate(fix(), nav(distance_nm=0.04))
         self.assertIn("arrival", ids(first))
-        self.assertNotIn("arrival", ids(second))
+        for _ in range(7):
+            now[0] += 1.0
+            self.assertIn("arrival", ids(mgr.evaluate(fix(), nav(distance_nm=0.04))))
+        now[0] += 1.5
+        self.assertNotIn("arrival", ids(mgr.evaluate(fix(), nav(distance_nm=0.04))))   # still there: not again
+
+    def test_names_what_it_is_arriving_at_and_outlasts_a_finished_route(self):
+        now = [0.0]
+        mgr = NavAlarmManager(clock=lambda: now[0])
+        alerts = mgr.evaluate(fix(), {**nav(distance_nm=0.04), "target_name": "Fuel dock"})
+        self.assertEqual([a["message"] for a in alerts if a["id"] == "arrival"], ["Arriving at Fuel dock"])
+        now[0] += 2.0
+        self.assertIn("arrival", ids(mgr.evaluate(fix(), None)))   # the route stopped on arrival
 
     def test_fires_again_after_leaving_and_re_arriving(self):
         mgr = NavAlarmManager()
@@ -163,3 +176,19 @@ class TestSettingsPersistence(unittest.TestCase):
             path.write_text("not json")
             mgr = NavAlarmManager(path)
             self.assertTrue(mgr.settings.arrival_enabled)
+
+
+class TestAnchorSurvivesARestart(unittest.TestCase):
+    def test_a_dropped_anchor_is_still_watched_after_a_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nav_alarms.json"
+            NavAlarmManager(path).drop_anchor(LAT, LON)
+            again = NavAlarmManager(path)
+            self.assertTrue(again.anchor_dropped)
+            self.assertIn("anchor_drag", ids(again.evaluate(fix(lat=LAT + 0.01), None)))
+            again.raise_anchor()
+            self.assertFalse(NavAlarmManager(path).anchor_dropped)
+
+
+if __name__ == "__main__":
+    unittest.main()

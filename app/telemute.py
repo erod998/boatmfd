@@ -9,6 +9,7 @@ from pathlib import Path
 from .storage import read_dict, write_json
 
 MUTE_SECONDS = 8.0  # how long a fresh alarm keeps the stereo muted; a new alarm during that window extends it
+RETRY_S = 5.0       # an unmute that didn't reach the stereo (the bus down) is tried again this often
 
 
 class AlarmMute:
@@ -18,6 +19,7 @@ class AlarmMute:
         self._clock = clock
         self.enabled = True
         self._muted_until = 0.0
+        self._retry_at = 0.0
         self._we_muted = False
         self._seen_alarm_ids = set()
         self._load()
@@ -35,8 +37,8 @@ class AlarmMute:
 
     def set_enabled(self, on):
         on = bool(on)
-        if not on and self._we_muted:
-            self._unmute()
+        if not on and self._we_muted and not self._unmute():
+            self._we_muted = False   # switched off: the retry is up to whoever turned it off
         self.enabled = on
         self._save()
 
@@ -46,12 +48,17 @@ class AlarmMute:
         if not on:
             self._we_muted = False
 
-    def _unmute(self):
+    def _unmute(self, now=None):
+        """Unmute, if the stereo can be reached. If not (the bus is down), the mute this class put
+        on is kept on the books and tried again every RETRY_S -- forgetting it would leave the
+        stereo muted for good -- and not every tick, since a send can wait for the bus."""
         try:
             self._media.handle("mute", False)
         except (ValueError, RuntimeError, OSError):
-            pass
+            self._retry_at = (self._clock() if now is None else now) + RETRY_S
+            return False
         self._we_muted = False
+        return True
 
     def tick(self, active_alarms, now=None):
         """Call often (the dashboard evaluates alarms 5 times a second) with alarms.active()."""
@@ -69,5 +76,5 @@ class AlarmMute:
                     return
                 self._we_muted = True
             self._muted_until = now + MUTE_SECONDS
-        elif self._we_muted and now >= self._muted_until:
-            self._unmute()
+        elif self._we_muted and now >= self._muted_until and now >= self._retry_at:
+            self._unmute(now)

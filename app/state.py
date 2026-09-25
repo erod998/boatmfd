@@ -9,6 +9,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -67,7 +68,9 @@ class Settings:
     n2k_engine_instance: int = int(os.environ.get("BOAT_N2K_ENGINE_INSTANCE", "0"))  # for the engine converter and fuel-flow sensor
     n2k_fuel_tank_instance: int = int(os.environ.get("BOAT_N2K_FUEL_TANK_INSTANCE", "0"))  # for the converter's fuel input or a tank-level adapter
     n2k_temp_field: str = os.environ.get("BOAT_N2K_TEMP", "engine")  # which NMEA 2000 temperature is the coolant: engine | oil
-    n2k_depth_instance: int = int(os.environ.get("BOAT_N2K_DEPTH_INSTANCE", "0"))  # for a depth transducer
+    # Which depth transducer, by its NMEA 2000 source address, when there is more than one; empty = any
+    # (the freshest). Depth messages carry no instance number to choose by.
+    n2k_depth_source: Optional[int] = int(os.environ["BOAT_N2K_DEPTH_SOURCE"]) if os.environ.get("BOAT_N2K_DEPTH_SOURCE") else None
     sender_ref_ohms: float = float(os.environ.get("BOAT_SENDER_REF_OHMS", "240"))  # reference resistor above each sender
     rail_volts: float = float(os.environ.get("BOAT_RAIL_VOLTS", "3.3"))
     batt_r_top: float = float(os.environ.get("BOAT_BATT_R_TOP", "47000"))
