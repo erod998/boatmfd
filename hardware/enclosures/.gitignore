@@ -1,0 +1,5 @@
+# Raspberry Pi's Pi 5 model (77 MB; see README.md) and what enclosures.py writes that is large or regenerated
+models/
+out/*-assembly.step
+out/led-board.step
+out/sensor-board.step
