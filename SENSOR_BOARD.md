@@ -225,6 +225,22 @@ the header would double them up.
 - J7 and these parts sit on a **tab above the header's left half** (see Ordering): the Pi's 5 V
   pins are at that corner, and the tab keeps the 5 V run to them short.
 
+**On the boat: the Pi 5 and its SSD run from the Pi's own USB-C, not J7.** A Pi 5 with an NVMe
+SSD (the M.2 board under this one, see below) can draw more than the 2.5 A J7 and the header are
+built for. So the boat's Pi 5 takes its power the usual way, through its USB-C, from a 12 V -> 5 V
+converter good for **5 A**, and the Pi feeds the SSD board and this board through the header, as
+Raspberry Pi's own M.2 HAT+ is fed. **J7 stays unconnected** (still fitted, for a Pi on its own).
+The ideal diode keeps the Pi's 5 V from reaching J7's terminals. J7 remains the way to power a
+Pi 4, or a Pi 5 without an SSD.
+
+**Stacked on an M.2 SSD board.** The boat's Pi 5 boots from an NVMe SSD on a PCIe-to-M.2 board
+(Waveshare PCIe TO M.2 HAT+, 2230/2242 drives). That board sits on the Pi, over its Active Cooler,
+with a stacking header passing the 40 pins up, and this board plugs onto that header. Nothing
+clashes. The only part on this board's underside is its header socket, apart from the
+connectors' solder joints: check those clear the SSD. The M.2 board's own ID EEPROM is the only one, since this
+board has none. Its INA219 power monitor sits at I²C address 0x40, while this board's ADCs are at
+0x48 and 0x49. Use standoffs tall enough for the two levels.
+
 ### Lights connector (J6): the link to the LED board
 
 The LED controllers are deliberately **not** on this board: 20 A of switched strip current would
@@ -446,9 +462,10 @@ check reports anything.
    on top of the gray wire's at the back of the tach gauge, to **J2 TACH**, and a second from the
    tach gauge's **G** terminal to **J2 GND**. Twist the two together. The tach gauge stays
    connected.
-5. **Power:** the dashboard switch's 12 V output feeds the 12 V -> 5 V converter (through its
-   own fuse); the converter's output goes to **J7: +5V and GND** -- that powers the Pi and the
-   whole board; leave the Pi's USB-C unplugged.
+5. **Power:** the dashboard switch's 12 V output feeds the 12 V -> 5 V **USB-C** converter
+   (5 A, through its own fuse), plugged into the **Pi 5's USB-C**. That powers the Pi, the SSD
+   board and this board. Leave J7 unconnected. (A Pi without an SSD can take a 3 A converter on
+   J7 instead, with the USB-C left unplugged.)
 6. **Batteries:** a wire from each battery's **+** terminal, through a 1 A inline fuse right at
    the battery: the engine battery to **J1.3 ENG+**, the house battery to **J1.8 HSE+**. Not from
    a switched feed: these read with everything off.
@@ -465,7 +482,8 @@ Do these in order, and don't connect the gauges until the board has passed the b
    header pins 2 and 4 read about 5.08 V to GND. Swap the supply's leads: they read 0 V, and the
    supply sees no load (the ideal diode blocks). Then set the real converter to 5.1-5.2 V the same
    way before connecting it.
-2. **Converters.** Board on the Pi, powered from J7, nothing plugged into J1 or J2. Enable I²C
+2. **Converters.** Board on the Pi (powered from its USB-C, or from J7), nothing plugged into J1
+   or J2. Enable I²C
    (`sudo raspi-config nonint do_i2c 0`, reboot), then `i2cdetect -y 1` must show **48** and **49**.
 3. **One tap, on the bench.** A 12 V supply into J1.4 and its negative to J1.7. The calibration
    page (`http://<pi>:8090/calibrate`, with the software settings below) should show **about
