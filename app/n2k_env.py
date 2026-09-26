@@ -5,9 +5,14 @@ transducer, such as an Airmar DST800 or DST810.
   the waterline (positive) or the keel (negative) — the device is configured with this at
   install time, but it is often left at 0 and corrected on the display instead (see the
   `depth.offset_ft` calibration value in sensors.py).
-- PGN 130311 "Environmental Parameters": a generic multi-source temperature message, kept only
-  when its Temperature Source field says "Sea Temperature" (0) — the same PGN also carries
-  outside air, cabin and other temperatures from other instruments.
+- Sea temperature, in whichever of four messages the transducer uses. Garmin's NMEA 2000
+  reference takes water temperature from 130310, 130311 or 130312 (a GDT 43 sends one of these),
+  and 130316 is 130312's extended-range successor:
+    130310 "Environmental Parameters (obsolete)": water temperature has a field of its own.
+    130311 "Environmental Parameters", 130312 "Temperature", 130316 "Temperature, Extended
+    Range": multi-source messages, kept only when their Temperature Source says "Sea
+    Temperature" (0) -- the same PGNs also carry outside air, cabin, engine room and other
+    temperatures from other instruments.
 
 Field layouts are from canboat's PGN database. Values a device marks as not available come
 back as None (never as a number).
@@ -16,7 +21,11 @@ import threading
 import time
 
 PGN_WATER_DEPTH = 128267
+PGN_ENVIRONMENTAL_OLD = 130310
 PGN_ENVIRONMENTAL = 130311
+PGN_TEMPERATURE = 130312
+PGN_TEMPERATURE_EXT = 130316
+TEMPERATURE_PGNS = (PGN_ENVIRONMENTAL_OLD, PGN_ENVIRONMENTAL, PGN_TEMPERATURE, PGN_TEMPERATURE_EXT)
 METERS_PER_FOOT = 0.3048
 TEMP_SOURCE_SEA = 0
 
@@ -49,10 +58,47 @@ def parse_environmental(payload):
     raw_temp = int.from_bytes(payload[2:4], "little")
     if raw_temp >= 0xFFFD:
         return None
-    celsius = raw_temp * 0.01 - 273.15
-    if not -10.0 <= celsius <= 60.0:  # outside anything a real sea temperature could be: a filler value
+    return _sea({"sid": payload[0], "water_temp_c": raw_temp * 0.01 - 273.15})   # byte 0 is the SID here too
+
+
+def _sea(parsed):
+    """The reading, unless it's outside anything a real sea temperature could be: a filler value."""
+    return parsed if -10.0 <= parsed["water_temp_c"] <= 60.0 else None
+
+
+def parse_environmental_old(payload):
+    """PGN 130310: SID, water temperature (0.01 K), outside air temperature, pressure. Water
+    temperature has its own field, so there is no source to check."""
+    if len(payload) < 3:
         return None
-    return {"sid": payload[0], "water_temp_c": celsius}   # byte 0 is the SID here too
+    raw_temp = int.from_bytes(payload[1:3], "little")
+    if raw_temp >= 0xFFFD:
+        return None
+    return _sea({"sid": payload[0], "water_temp_c": raw_temp * 0.01 - 273.15})
+
+
+def parse_temperature(payload):
+    """PGN 130312: SID, instance, source, actual temperature (0.01 K), set temperature."""
+    if len(payload) < 5 or payload[2] != TEMP_SOURCE_SEA:
+        return None
+    raw_temp = int.from_bytes(payload[3:5], "little")
+    if raw_temp >= 0xFFFD:
+        return None
+    return _sea({"sid": payload[0], "water_temp_c": raw_temp * 0.01 - 273.15})
+
+
+def parse_temperature_extended(payload):
+    """PGN 130316: SID, instance, source, temperature (24 bits, 0.001 K), set temperature."""
+    if len(payload) < 6 or payload[2] != TEMP_SOURCE_SEA:
+        return None
+    raw_temp = int.from_bytes(payload[3:6], "little")
+    if raw_temp >= 0xFFFFFD:
+        return None
+    return _sea({"sid": payload[0], "water_temp_c": raw_temp * 0.001 - 273.15})
+
+
+TEMPERATURE_PARSERS = {PGN_ENVIRONMENTAL_OLD: parse_environmental_old, PGN_ENVIRONMENTAL: parse_environmental,
+                       PGN_TEMPERATURE: parse_temperature, PGN_TEMPERATURE_EXT: parse_temperature_extended}
 
 
 def c_to_f(celsius):
@@ -62,7 +108,7 @@ def c_to_f(celsius):
 class N2kEnvData:
     """Keeps the latest depth and sea-temperature readings seen on the bus; stale readings count as no data."""
 
-    STALE_S = {PGN_WATER_DEPTH: 3.0, PGN_ENVIRONMENTAL: 4.0}
+    STALE_S = {PGN_WATER_DEPTH: 3.0, "temperature": 4.0}
     REPORT_S = 30.0  # how long the calibration page keeps listing a device that has gone quiet
 
     def __init__(self, node, depth_source=None, clock=time.monotonic):
@@ -71,7 +117,7 @@ class N2kEnvData:
         self._depth = {}   # source -> (time seen, depth_m, offset_m)
         self._temp = {}    # source -> (time seen, water_temp_c)
         self._lock = threading.Lock()
-        node.subscribe(PGN_WATER_DEPTH, PGN_ENVIRONMENTAL)  # both are single-frame PGNs
+        node.subscribe(PGN_WATER_DEPTH, *TEMPERATURE_PGNS)  # all single-frame PGNs
         node.add_listener(self._on_message)
 
     def _on_message(self, pgn, source, payload):
@@ -85,8 +131,8 @@ class N2kEnvData:
                     self._depth.pop(source, None)  # "not available": don't let an old depth linger
                 else:
                     self._depth[source] = (now, parsed["depth_m"], parsed["offset_m"])
-        elif pgn == PGN_ENVIRONMENTAL:
-            parsed = parse_environmental(payload)
+        elif pgn in TEMPERATURE_PARSERS:
+            parsed = TEMPERATURE_PARSERS[pgn](payload)
             if parsed:
                 with self._lock:
                     self._temp[source] = (now, parsed["water_temp_c"])
@@ -106,7 +152,7 @@ class N2kEnvData:
     def water_temp_f(self):
         now = self._clock()
         with self._lock:
-            fresh = [(t, c) for (t, c) in self._temp.values() if now - t <= self.STALE_S[PGN_ENVIRONMENTAL]]
+            fresh = [(t, c) for (t, c) in self._temp.values() if now - t <= self.STALE_S["temperature"]]
         return c_to_f(max(fresh)[1]) if fresh else None
 
     def heard(self):

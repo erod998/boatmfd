@@ -692,10 +692,13 @@ transducer picked out (an Airmar DST800, thru-hull) if you're buying one.
 - PGN 128267 (Water Depth) gives the raw depth below the transducer and the transducer's
   own configured offset (positive: to the waterline; negative: to the keel) — the two are
   added together for what the dashboard shows.
-- PGN 130311 (Environmental Parameters) is filtered to just the "Sea Temperature" reading
-  (that PGN is shared with outside air, cabin and other temperatures from other instruments,
-  so the rest are ignored) and, if a transducer sends it, wins over the DS18B20 water probe,
-  the same "bus beats a local sensor" rule used for engine temperature and fuel level.
+- Sea temperature is read from whichever message the transducer uses: PGN 130310
+  (Environmental Parameters, old), 130311 (Environmental Parameters), 130312 (Temperature) or
+  130316 (Temperature, Extended Range). Garmin's own displays take it from 130310-130312, so a
+  Garmin GDT 43 works as well as an Airmar. The multi-source ones are filtered to just the "Sea
+  Temperature" reading (they also carry outside air, cabin and engine room temperatures from
+  other instruments). If a transducer sends it, it wins over the DS18B20 water probe, the same
+  "bus beats a local sensor" rule used for engine temperature and fuel level.
 - The `/calibrate` page lists what it hears, with the device address and the raw depth and
   offset the transducer itself reports. Depth messages carry no instance number, so with more
   than one transducer on the bus the freshest is used; to pick one, set
@@ -1015,7 +1018,7 @@ app/
   artwork.py   Cached background album-art lookup (iTunes Search API)
   n2k.py       Minimal shared NMEA 2000 node: CAN IDs, fast-packet, address claim
   n2k_engine.py  Engine (127488, 127489) and tank level (127505) decoders + latest-value store
-  n2k_env.py   Depth (128267) and sea-temperature (130311) decoders + latest-value store
+  n2k_env.py   Depth (128267) and sea-temperature (130310-130312, 130316) decoders + latest-value store
   state.py     Settings (env vars) + the simulated engine/battery/depth/water-temp
   trips.py     Start/stop trip logging, saved to data/trips.json
   tracks.py    Saved chart tracks (name, save, list, delete), saved to data/tracks.json
@@ -1102,7 +1105,7 @@ Browser libraries therefore live in `static/vendor/`, committed. See
   its instance numbers, its temperature field, its trim scaling and what it
   sends for an unwired sender are all things to confirm on `/calibrate`.
 - Fuel GPH is an estimate until a NMEA 2000 fuel-flow sensor is added.
-- The depth and sea-temperature decoding (PGN 128267, 130311) follows canboat's PGN layouts
+- The depth and sea-temperature decoding (PGN 128267, 130310-130312, 130316) follows canboat's PGN layouts
   and is tested against a fake transducer on a virtual CAN bus, **not against a real
   transducer**: confirm its instance number and offset sign on `/calibrate` before trusting it.
 - Chart rotation (Heading Up and Course Up) uses [leaflet-rotate](https://github.com/Raruto/leaflet-rotate),

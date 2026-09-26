@@ -9,7 +9,8 @@ import unittest
 from pathlib import Path
 
 from app.n2k import N2kNode, encode_name, make_can_id
-from app.n2k_env import N2kEnvData, PGN_ENVIRONMENTAL, PGN_WATER_DEPTH, parse_environmental, parse_water_depth
+from app.n2k_env import (N2kEnvData, PGN_ENVIRONMENTAL, PGN_ENVIRONMENTAL_OLD, PGN_TEMPERATURE, PGN_TEMPERATURE_EXT,
+                         PGN_WATER_DEPTH, parse_environmental, parse_water_depth)
 from app.sensors import Calibration, SensorHub, make_sensor_sources
 from app.state import Settings
 from tests.test_n2k_fuel import FakeNode
@@ -268,6 +269,60 @@ class TestOverTheBus(unittest.TestCase):
         finally:
             node.shutdown()
             transducer.shutdown()
+
+
+def env_old_payload(temp_c, sid=0xFF):
+    """PGN 130310: SID, water temperature (0.01 K), outside air (0.01 K), pressure (100 Pa)."""
+    raw = 0xFFFF if temp_c is None else round((temp_c + 273.15) / 0.01)
+    return bytes([sid]) + raw.to_bytes(2, "little") + b"\xff\xff\xff\xff\xff"
+
+
+def temperature_payload(temp_c, source=0, sid=0xFF, instance=0):
+    """PGN 130312: SID, instance, source, actual temperature (0.01 K), set temperature."""
+    raw = 0xFFFF if temp_c is None else round((temp_c + 273.15) / 0.01)
+    return bytes([sid, instance, source]) + raw.to_bytes(2, "little") + b"\xff\xff\xff"
+
+
+def temperature_ext_payload(temp_c, source=0, sid=0xFF, instance=0):
+    """PGN 130316: SID, instance, source, temperature (24 bits, 0.001 K), set temperature."""
+    raw = 0xFFFFFF if temp_c is None else round((temp_c + 273.15) / 0.001)
+    return bytes([sid, instance, source]) + raw.to_bytes(3, "little") + b"\xff\xff"
+
+
+class TestEverySeaTemperatureMessage(unittest.TestCase):
+    """Garmin's displays take water temperature from 130310, 130311 or 130312, and a Garmin
+    transducer (the GDT 43) sends one of them; 130316 is 130312's successor. Only 130311 used
+    to be read, so a transducer using another showed its depth and no water temperature."""
+
+    def setUp(self):
+        self.now = [100.0]
+        self.node = FakeNode()
+        self.data = N2kEnvData(self.node, clock=lambda: self.now[0])
+
+    def test_all_four_are_listened_for(self):
+        self.assertTrue({PGN_ENVIRONMENTAL_OLD, PGN_ENVIRONMENTAL, PGN_TEMPERATURE, PGN_TEMPERATURE_EXT} <= self.node.subscribed)
+
+    def test_each_gives_the_sea_temperature(self):
+        for pgn, payload in ((PGN_ENVIRONMENTAL_OLD, env_old_payload(18.5)),
+                             (PGN_TEMPERATURE, temperature_payload(18.5)),
+                             (PGN_TEMPERATURE_EXT, temperature_ext_payload(18.5))):
+            with self.subTest(pgn=pgn):
+                data = N2kEnvData(FakeNode(), clock=lambda: 100.0)
+                data._on_message(pgn, 35, payload)
+                self.assertAlmostEqual(data.water_temp_f(), 18.5 * 9 / 5 + 32, places=1)
+
+    def test_other_sources_and_not_available_are_ignored(self):
+        self.node.send(PGN_TEMPERATURE, 35, temperature_payload(4.0, source=3))       # engine room
+        self.node.send(PGN_TEMPERATURE_EXT, 35, temperature_ext_payload(30.0, source=1))  # outside air
+        self.node.send(PGN_TEMPERATURE, 35, temperature_payload(None))
+        self.node.send(PGN_ENVIRONMENTAL_OLD, 35, env_old_payload(None))
+        self.assertIsNone(self.data.water_temp_f())
+
+    def test_goes_stale(self):
+        self.node.send(PGN_TEMPERATURE, 35, temperature_payload(18.5))
+        self.assertIsNotNone(self.data.water_temp_f())
+        self.now[0] += 5.0
+        self.assertIsNone(self.data.water_temp_f())
 
 
 if __name__ == "__main__":
